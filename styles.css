@@ -753,6 +753,14 @@ button {
   color: var(--danger);
 }
 
+.menu.confirming-clear > :not(#cancel-clear-button):not(#clear-button) {
+  display: none;
+}
+
+.menu.confirming-clear #clear-button {
+  background: var(--danger-soft);
+}
+
 .theme-button {
   position: fixed;
   right: max(14px, env(safe-area-inset-right));

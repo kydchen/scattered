@@ -12,6 +12,8 @@ const lassoPath = document.querySelector("#lasso-path");
 const template = document.querySelector("#node-template");
 const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
+const clearButton = document.querySelector("#clear-button");
+const cancelClearButton = document.querySelector("#cancel-clear-button");
 const themeButton = document.querySelector("#theme-button");
 const themeColor = document.querySelector('meta[name="theme-color"]');
 const toast = document.querySelector("#toast");
@@ -84,15 +86,18 @@ window.addEventListener("blur", () => {
 
 menuButton.addEventListener("click", (event) => {
   event.stopPropagation();
-  menu.hidden = !menu.hidden;
-  menuButton.setAttribute("aria-expanded", String(!menu.hidden));
+  setMenuOpen(menu.hidden);
 });
 themeButton.addEventListener("click", toggleTheme);
 
 document.querySelector("#export-button").addEventListener("click", exportBoard);
 document.querySelector("#import-button").addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
-document.querySelector("#clear-button").addEventListener("click", clearBoard);
+clearButton.addEventListener("click", clearBoard);
+cancelClearButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  disarmClear();
+});
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 fitButton.addEventListener("click", fitBoard);
@@ -172,8 +177,7 @@ function onPointerDown(event) {
   if (event.pointerType === "touch" && activeEditor && performance.now() < palmGuardUntil) return;
   if (mode?.type === "lasso" && event.pointerType === "touch") return;
 
-  menu.hidden = true;
-  menuButton.setAttribute("aria-expanded", "false");
+  setMenuOpen(false);
 
   const handle = event.target.closest(".link-handle");
   const resizeHandle = event.target.closest(".resize-handle");
@@ -502,6 +506,18 @@ function toggleTheme(event) {
     localStorage.setItem(THEME_KEY, next);
   } catch {}
   updateThemeControl();
+}
+
+function setMenuOpen(open) {
+  menu.hidden = !open;
+  menuButton.setAttribute("aria-expanded", String(open));
+  if (!open) disarmClear();
+}
+
+function disarmClear() {
+  menu.classList.remove("confirming-clear");
+  cancelClearButton.hidden = true;
+  clearButton.setAttribute("aria-label", "清空画布");
 }
 
 function updateThemeControl() {
@@ -1062,6 +1078,11 @@ function onKeyDown(event) {
     hideColorPalette();
     return;
   }
+  if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
+    event.preventDefault();
+    disarmClear();
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
     event.preventDefault();
     clearEdgeSelection();
@@ -1184,7 +1205,7 @@ function exportBoard() {
   link.download = `散点-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
-  menu.hidden = true;
+  setMenuOpen(false);
 }
 
 async function importBoard(event) {
@@ -1204,12 +1225,17 @@ async function importBoard(event) {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "无法导入这个文件");
   } finally {
-    menu.hidden = true;
+    setMenuOpen(false);
   }
 }
 
 function clearBoard() {
-  if (!confirm("清空所有卡片和连线？")) return;
+  if (!menu.classList.contains("confirming-clear")) {
+    menu.classList.add("confirming-clear");
+    cancelClearButton.hidden = false;
+    clearButton.setAttribute("aria-label", "确认清空画布");
+    return;
+  }
   checkpoint();
   board = blankBoard();
   selectedIds.clear();
@@ -1218,7 +1244,7 @@ function clearBoard() {
   renderAll();
   applyView();
   scheduleSave();
-  menu.hidden = true;
+  setMenuOpen(false);
 }
 
 function showToast(message) {
