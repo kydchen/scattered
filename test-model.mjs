@@ -90,6 +90,8 @@ const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
 const applyResizeSource = app.match(/function applyResize[\s\S]*?\n}/)?.[0] ?? "";
+const pointerDownSource = app.match(/function onPointerDown[\s\S]*?\n}\n\nfunction onPointerMove/)?.[0] ?? "";
+const doubleClickSource = app.match(/function onDoubleClick[\s\S]*?\n}\n\nfunction createNode/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
   app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? ""
@@ -104,6 +106,8 @@ editorFocusSources.forEach((source) => {
 assert.doesNotMatch(app, /isDoubleTap|shouldProtectPenTap/);
 assert.doesNotMatch(app, /confirm\(/);
 assert.match(app, /addEventListener\("dblclick", onDoubleClick\)/);
+assert.match(pointerDownSource, /if \(!node\) \{\s*if \(activeEditor\) selectNode\(null\);\s*finishEditing\(\);/);
+assert.match(doubleClickSource, /event\.target\.closest\("\.node"\)\s*\?\?\s*document\.elementFromPoint/);
 assert.doesNotMatch(app, /showToast\((?:"|`)已/);
 assert.doesNotMatch(app, /未写完的想法/);
 assert.doesNotMatch(html, /id="hint"|\stitle=/);

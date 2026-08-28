@@ -309,6 +309,7 @@ function onPointerDown(event) {
   }
 
   if (!node) {
+    if (activeEditor) selectNode(null);
     finishEditing();
     mode = event.pointerType === "pen"
       ? { type: "lasso", pointerId: event.pointerId, pointerType: event.pointerType, points: [{ x: event.clientX, y: event.clientY }], moved: false, toggle: selectionMode }
@@ -541,7 +542,8 @@ function onDoubleClick(event) {
     return;
   }
   const fromPen = performance.now() - lastPenUpAt < 500;
-  const node = event.target.closest(".node");
+  const node = event.target.closest(".node")
+    ?? document.elementFromPoint(event.clientX, event.clientY)?.closest(".node");
   if (node) {
     editNode(node.dataset.id, false, fromPen);
     return;
