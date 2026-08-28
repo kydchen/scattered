@@ -1,0 +1,12 @@
+{
+  "name": "scattered",
+  "version": "1.0.0",
+  "description": "A minimalist cross-platform canvas for notes and connections.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test-model.mjs",
+    "start": "python3 -m http.server 4173",
+    "debug": "python3 debug_server.py 4173"
+  }
+}

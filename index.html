@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="散点" />
+    <meta name="description" content="Scattered is a minimalist, cross-platform canvas for freely arranging and connecting notes." />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>散点</title>
+  </head>
+  <body>
+    <main id="viewport" aria-label="自由思考画布">
+      <div id="gesture-surface" aria-hidden="true"></div>
+      <div id="world" aria-live="polite">
+        <svg id="connections" aria-label="标签连线">
+          <defs>
+            <marker id="edge-arrowhead" markerWidth="14" markerHeight="14" refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" overflow="visible">
+              <path class="arrowhead" d="M2 1 9 5 2 9"></path>
+            </marker>
+          </defs>
+          <g id="edge-layer"></g>
+          <path id="link-preview" hidden></path>
+        </svg>
+        <div id="node-layer"></div>
+      </div>
+
+      <svg id="lasso-overlay" aria-hidden="true">
+        <path id="lasso-path" hidden></path>
+      </svg>
+
+      <header class="app-mark" aria-label="画布标题">
+        <span class="mark-dot" aria-hidden="true"></span>
+        <button id="board-title" type="button" aria-label="画布标题，双击编辑">Untitled</button>
+        <input id="board-title-editor" type="text" maxlength="120" aria-label="编辑画布标题" spellcheck="false" hidden />
+      </header>
+
+      <section id="empty-state" class="empty-state" hidden>
+        <div class="empty-state-visuals" aria-hidden="true">
+          <svg viewBox="0 0 64 56">
+            <rect x="8" y="15" width="48" height="30" rx="7"></rect>
+            <circle cx="47" cy="13" r="3"></circle>
+            <circle class="soft" cx="47" cy="13" r="8"></circle>
+          </svg>
+          <svg viewBox="0 0 64 56">
+            <rect class="soft dashed" x="7" y="25" width="38" height="24" rx="6"></rect>
+            <rect x="19" y="7" width="38" height="24" rx="6"></rect>
+            <path d="M17 36 9 44m0-6v6h6"></path>
+          </svg>
+          <svg viewBox="0 0 64 56">
+            <rect x="4" y="8" width="25" height="19" rx="5"></rect>
+            <rect x="35" y="29" width="25" height="19" rx="5"></rect>
+            <path d="M28 20c10 0 8 18 18 18"></path>
+          </svg>
+        </div>
+        <p>双击任意位置创建卡片 <span aria-hidden="true">·</span> Double-tap anywhere to create a note</p>
+      </section>
+
+      <nav id="history-tools" class="history-tools" aria-label="视图、撤销与重做" hidden>
+        <button id="fit-button" class="quiet-button" type="button" aria-label="居中显示全部标签" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
+            <circle cx="12" cy="12" r="2.5"></circle>
+          </svg>
+        </button>
+        <button id="undo-button" class="quiet-button" type="button" aria-label="撤销" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"></path>
+          </svg>
+        </button>
+        <button id="redo-button" class="quiet-button" type="button" aria-label="重做" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m15 7 5 5-5 5M19 12h-8a6 6 0 0 0-6 6"></path>
+          </svg>
+        </button>
+      </nav>
+
+      <button id="menu-button" class="quiet-button menu-button" type="button" aria-label="画布菜单" aria-expanded="false">•••</button>
+      <section id="menu" class="menu" hidden aria-label="画布菜单">
+        <button id="export-button" type="button" aria-label="导出备份">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
+          </svg>
+        </button>
+        <button id="import-button" type="button" aria-label="导入备份">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v12M8 11l4 4 4-4M5 19h14"></path>
+          </svg>
+        </button>
+        <input id="import-input" type="file" accept="application/json,.json" hidden />
+        <a id="github-link" href="https://github.com/kydchen/scattered" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" stroke="none" d="M12 .7a11.3 11.3 0 0 0-3.58 22c.57.1.78-.25.78-.55v-2.17c-3.18.69-3.85-1.35-3.85-1.35-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.75 1.18 1.75 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.54-.29-5.21-1.27-5.21-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.11 1.17A10.8 10.8 0 0 1 12 6.37c.96 0 1.93.13 2.83.38 2.15-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.73.8 1.18 1.82 1.18 3.07 0 4.4-2.68 5.36-5.23 5.65.41.36.78 1.06.78 2.14v3.18c0 .3.2.66.79.55A11.3 11.3 0 0 0 12 .7Z"></path>
+          </svg>
+        </a>
+        <button id="clear-button" class="danger" type="button" aria-label="清空画布">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
+          </svg>
+        </button>
+      </section>
+
+      <section id="selection-bar" class="selection-bar" aria-label="多选操作" hidden>
+        <button id="color-selection" class="selection-action" type="button" aria-label="更改所选标签颜色">
+          <svg class="color-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="9" cy="9" r="5" fill="#e8cc66"></circle>
+            <circle cx="15" cy="9" r="5" fill="#8fc9b0"></circle>
+            <circle cx="12" cy="15" r="5" fill="#82a9df"></circle>
+          </svg>
+        </button>
+        <button id="disconnect-selection" class="selection-action" type="button" aria-label="断开所选标签的全部连线">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="4" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
+            <circle cx="20" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
+            <path d="M6.5 12h3M14.5 12h3M10.5 8.5l3 7M13.5 8.5l-3 7"></path>
+          </svg>
+        </button>
+        <button id="delete-selection" class="selection-action danger" type="button" aria-label="删除所选标签">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
+          </svg>
+        </button>
+      </section>
+
+      <section id="edge-toolbar" class="edge-toolbar" aria-label="连线操作" hidden>
+        <button id="edge-arrow" type="button" aria-label="切换箭头" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12h15M14 7l5 5-5 5"></path>
+          </svg>
+        </button>
+        <button id="edge-label" type="button" aria-label="编辑连线文字" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 6h14M12 6v13M8.5 19h7"></path>
+          </svg>
+        </button>
+        <button id="edge-delete" class="danger" type="button" aria-label="断开这条连线">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="4" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
+            <circle cx="20" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
+            <path d="M6.5 12h3M14.5 12h3M10.5 8.5l3 7M13.5 8.5l-3 7"></path>
+          </svg>
+        </button>
+      </section>
+      <input id="edge-label-editor" class="edge-label-editor" type="text" maxlength="120" aria-label="连线文字" hidden />
+
+      <section id="color-palette" class="color-palette" aria-label="标签颜色" hidden>
+        <button class="color-swatch" data-color="plain" type="button" aria-label="原白" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="yellow" type="button" aria-label="暖黄" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="mint" type="button" aria-label="薄荷绿" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="blue" type="button" aria-label="雾蓝" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="rose" type="button" aria-label="淡莓" aria-pressed="false"></button>
+      </section>
+
+      <div id="toast" class="toast" role="status" hidden></div>
+    </main>
+
+    <template id="node-template">
+      <article class="node" tabindex="0">
+        <div class="node-actions" role="toolbar" aria-label="标签操作">
+          <button class="card-action color-handle" type="button" aria-label="更改标签颜色">
+            <svg class="color-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="9" cy="9" r="5" fill="#e8cc66"></circle>
+              <circle cx="15" cy="9" r="5" fill="#8fc9b0"></circle>
+              <circle cx="12" cy="15" r="5" fill="#82a9df"></circle>
+            </svg>
+          </button>
+          <button class="card-action node-delete danger" type="button" aria-label="删除这张卡片">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="node-text"></div>
+        <textarea class="node-editor" rows="1" aria-label="想法内容" spellcheck="true" hidden></textarea>
+        <button class="resize-handle" type="button" aria-label="调整标签宽度">
+          <svg viewBox="0 0 36 18" aria-hidden="true">
+            <path d="M2 9h32M7 4 2 9l5 5M29 4l5 5-5 5"></path>
+          </svg>
+        </button>
+        <button class="link-handle" type="button" aria-label="拖到另一张卡片建立连接"></button>
+      </article>
+    </template>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
