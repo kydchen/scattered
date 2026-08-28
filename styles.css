@@ -446,17 +446,37 @@ button {
   left: max(14px, env(safe-area-inset-left));
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 1px;
   color: #657186;
   z-index: 3;
 }
 
-.mark-dot {
-  width: 7px;
-  height: 7px;
+.app-logo {
+  width: 30px;
+  height: 24px;
   flex: none;
-  border-radius: 50%;
-  background: var(--thread);
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-logo-thread {
+  fill: none;
+  stroke: var(--thread);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.app-logo-card {
+  fill: var(--paper);
+  stroke: #cbd4e1;
+  stroke-width: 1.2;
+}
+
+.app-logo-dot {
+  fill: var(--thread);
+  stroke: var(--paper);
+  stroke-width: 1;
 }
 
 #board-title,
