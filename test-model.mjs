@@ -90,14 +90,23 @@ const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
 const applyResizeSource = app.match(/function applyResize[\s\S]*?\n}/)?.[0] ?? "";
+const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
+  app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? ""
+));
 assert.doesNotMatch(app, /function queueResize/);
 assert.match(applyResizeSource, /style\.setProperty/);
 assert.match(applyResizeSource, /queueEdgeRender\(\)/);
+editorFocusSources.forEach((source) => {
+  assert.match(source, /\.focus\(\)/);
+  assert.doesNotMatch(source, /requestAnimationFrame/);
+});
 assert.doesNotMatch(app, /isDoubleTap|shouldProtectPenTap/);
 assert.match(app, /addEventListener\("dblclick", onDoubleClick\)/);
 assert.doesNotMatch(app, /showToast\((?:"|`)已/);
 assert.doesNotMatch(app, /未写完的想法/);
 assert.doesNotMatch(html, /id="hint"|\stitle=/);
+assert.match(html, /localStorage\.getItem\("scattered-theme"\)/);
+assert.match(html, /id="theme-button"[\s\S]*?theme-moon[\s\S]*?theme-sun/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
@@ -107,6 +116,10 @@ assert.match(html, /id="board-title"[\s\S]*?>Untitled</);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*30px;[^}]*height:\s*24px;/s);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
+assert.match(app, /const THEME_KEY = "scattered-theme"/);
+assert.match(app, /function toggleTheme[\s\S]*?localStorage\.setItem\(THEME_KEY, next\)/);
+assert.match(css, /html\[data-theme="dark"\]\s*\{[^}]*--canvas:\s*#16150f;[^}]*--paper:\s*#211f18;[^}]*--ink:\s*#eae4d6;/s);
+assert.match(css, /html\[data-theme="dark"\][\s\S]*?--note-yellow:\s*#3a321b;[\s\S]*?--note-mint:\s*#193129;[\s\S]*?--note-blue:\s*#1b2c43;[\s\S]*?--note-rose:\s*#3a222a;/);
 assert.match(css, /#connections \.edge\s*\{[^}]*outline:\s*none;[^}]*-webkit-tap-highlight-color:\s*transparent;/s);
 
 console.log("model checks passed");

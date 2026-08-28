@@ -1,6 +1,7 @@
 import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnectionsToTarget } from "./model.js";
 
 const STORAGE_KEY = "scattered-board-v1";
+const THEME_KEY = "scattered-theme";
 const viewport = document.querySelector("#viewport");
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
@@ -11,6 +12,8 @@ const lassoPath = document.querySelector("#lasso-path");
 const template = document.querySelector("#node-template");
 const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
+const themeButton = document.querySelector("#theme-button");
+const themeColor = document.querySelector('meta[name="theme-color"]');
 const toast = document.querySelector("#toast");
 const historyTools = document.querySelector("#history-tools");
 const fitButton = document.querySelector("#fit-button");
@@ -50,6 +53,7 @@ const redoStack = [];
 renderAll();
 applyView();
 updateHistoryControls();
+updateThemeControl();
 
 viewport.addEventListener("pointerdown", onPointerDown);
 viewport.addEventListener("pointermove", onPointerMove);
@@ -83,6 +87,7 @@ menuButton.addEventListener("click", (event) => {
   menu.hidden = !menu.hidden;
   menuButton.setAttribute("aria-expanded", String(!menu.hidden));
 });
+themeButton.addEventListener("click", toggleTheme);
 
 document.querySelector("#export-button").addEventListener("click", exportBoard);
 document.querySelector("#import-button").addEventListener("click", () => importInput.click());
@@ -489,6 +494,23 @@ function handleCanvasTap() {
   selectNode(null);
 }
 
+function toggleTheme(event) {
+  event.stopPropagation();
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {}
+  updateThemeControl();
+}
+
+function updateThemeControl() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  themeButton.setAttribute("aria-pressed", String(dark));
+  themeButton.setAttribute("aria-label", dark ? "切换到浅色模式" : "切换到暗色模式");
+  themeColor.content = dark ? "#16150f" : "#f5f7fb";
+}
+
 function handleNodeTap(id) {
   selectNode(id);
 }
@@ -551,10 +573,8 @@ function editBoardTitle() {
   boardTitleEditor.value = board.title || "Untitled";
   boardTitle.hidden = true;
   boardTitleEditor.hidden = false;
-  requestAnimationFrame(() => {
-    boardTitleEditor.focus();
-    boardTitleEditor.select();
-  });
+  boardTitleEditor.focus();
+  boardTitleEditor.select();
 }
 
 function finishBoardTitle(cancel = false) {
@@ -622,10 +642,8 @@ function editNode(id, isNew = false, fromPen = false) {
   element.querySelector(".node-text").hidden = true;
   editor.hidden = false;
   resizeEditor(element);
-  requestAnimationFrame(() => {
-    editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-  });
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
 }
 
 function finishEditing(onlyId = null, explicitCancel = false) {
@@ -719,10 +737,8 @@ function openEdgeLabelEditor(event) {
   edgeToolbar.hidden = true;
   edgeLabelEditor.hidden = false;
   positionEdgeControls();
-  requestAnimationFrame(() => {
-    edgeLabelEditor.focus();
-    edgeLabelEditor.select();
-  });
+  edgeLabelEditor.focus();
+  edgeLabelEditor.select();
 }
 
 function finishEdgeLabel(cancel = false) {
