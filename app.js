@@ -957,7 +957,7 @@ function edgeGeometry(edge) {
   let to = nodeAnchor(edge.to, fromCenter);
   if (edge.arrow) {
     const distance = Math.hypot(from.x - to.x, from.y - to.y);
-    const inset = 3 / board.view.scale;
+    const inset = 5 / board.view.scale;
     if (distance > inset) {
       to = {
         x: to.x + (from.x - to.x) / distance * inset,
@@ -1011,12 +1011,12 @@ function applyView() {
   const { x, y, scale } = board.view;
   world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
   world.style.setProperty("--control-scale", String(1 / scale));
-  world.style.setProperty("--direct-control-offset", `${-(22 + 14 / scale)}px`);
-  world.style.setProperty("--node-actions-top", `${-(26 + 30 / scale)}px`);
+  world.style.setProperty("--direct-control-offset", `${-(22 + 34 / scale)}px`);
+  world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);
   viewport.style.setProperty("--grid-x", `${x}px`);
   viewport.style.setProperty("--grid-y", `${y}px`);
   viewport.style.setProperty("--grid-size", `${28 * scale}px`);
-  const markerSize = 14 / scale;
+  const markerSize = 12 / scale;
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);
   positionEdgeControls();

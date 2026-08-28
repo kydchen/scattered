@@ -23,7 +23,6 @@
   --lasso-fill: rgba(78, 116, 184, 0.08);
   --visual-fill: rgba(255, 255, 255, 0.7);
   --visual-stroke: #7183a1;
-  --logo-border: #cbd4e1;
   --swatch-border: rgba(80, 91, 108, 0.2);
   --toast-bg: #273040;
   --toast-ink: #ffffff;
@@ -69,7 +68,6 @@ html[data-theme="dark"] {
   --lasso-fill: rgba(127, 162, 220, 0.12);
   --visual-fill: rgba(33, 31, 24, 0.78);
   --visual-stroke: #899ab4;
-  --logo-border: #555145;
   --swatch-border: rgba(234, 228, 214, 0.28);
   --toast-bg: #eae4d6;
   --toast-ink: #16150f;
@@ -174,7 +172,7 @@ button {
 #link-preview {
   fill: none;
   stroke: var(--thread);
-  stroke-width: 2;
+  stroke-width: 1.85;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
@@ -195,15 +193,12 @@ button {
 
 #connections .edge.selected .edge-line,
 #connections .edge:focus-visible .edge-line {
-  stroke-width: 3.5;
+  stroke-width: 2.8;
 }
 
 #connections .arrowhead {
-  fill: none;
-  stroke: var(--thread);
-  stroke-width: 1.65;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  fill: var(--thread);
+  stroke: none;
 }
 
 #connections .edge-label {
@@ -378,7 +373,7 @@ button {
 }
 
 .node-actions {
-  top: var(--node-actions-top, -56px);
+  top: var(--node-actions-top, -66px);
   left: 50%;
   align-items: center;
   gap: 2px;
@@ -455,7 +450,7 @@ button {
 
 .resize-handle {
   left: 50%;
-  bottom: var(--direct-control-offset, -36px);
+  bottom: var(--direct-control-offset, -56px);
   width: 64px;
   height: 44px;
   align-items: center;
@@ -536,7 +531,7 @@ button {
 }
 
 .app-logo {
-  width: 30px;
+  width: 31px;
   height: 24px;
   flex: none;
   overflow: visible;
@@ -544,24 +539,16 @@ button {
   user-select: none;
 }
 
-.app-logo-thread {
-  fill: none;
-  stroke: var(--thread);
-  stroke-width: 1.7;
-  stroke-linecap: round;
-}
-
-.app-logo-card {
-  fill: var(--paper);
-  stroke: var(--logo-border);
-  stroke-width: 1.2;
-}
-
 .app-logo-dot {
   fill: var(--thread);
-  stroke: var(--paper);
-  stroke-width: 1;
 }
+
+.app-logo .dot-1 { opacity: 0.48; }
+.app-logo .dot-2 { opacity: 0.72; }
+.app-logo .dot-3 { opacity: 1; }
+.app-logo .dot-4 { opacity: 0.42; }
+.app-logo .dot-5 { opacity: 0.78; }
+.app-logo .dot-6 { opacity: 0.58; }
 
 #board-title,
 #board-title-editor {
