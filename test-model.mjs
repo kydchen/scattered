@@ -90,6 +90,7 @@ const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
 const applyResizeSource = app.match(/function applyResize[\s\S]*?\n}/)?.[0] ?? "";
+const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
   app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? ""
 ));
@@ -107,6 +108,7 @@ assert.doesNotMatch(app, /未写完的想法/);
 assert.doesNotMatch(html, /id="hint"|\stitle=/);
 assert.match(html, /localStorage\.getItem\("scattered-theme"\)/);
 assert.match(html, /id="theme-button"[\s\S]*?theme-moon[\s\S]*?theme-sun/);
+assert.doesNotMatch(menuMarkup, /theme-button/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
@@ -115,6 +117,7 @@ assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg
 assert.doesNotMatch(html, /mark-dot/);
 assert.match(html, /id="board-title"[\s\S]*?>Untitled</);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
+assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[\s\S]*?class="arrowhead"[\s\S]*?Z/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));

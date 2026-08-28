@@ -157,7 +157,7 @@ function onPointerDown(event) {
   if (event.target.closest(".app-mark")) return;
   if (event.target.closest(".edge-toolbar, .edge-label-editor")) return;
   if (!edgeLabelEditor.hidden) finishEdgeLabel();
-  if (event.target.closest(".menu, .menu-button, .history-tools, .selection-bar, .color-palette, .node-actions")) return;
+  if (event.target.closest(".menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions")) return;
 
   const edgeElement = event.target.closest(".edge");
   if (edgeElement) {
@@ -516,7 +516,7 @@ function handleNodeTap(id) {
 }
 
 function onDoubleClick(event) {
-  if (event.target.closest(".app-mark, .menu, .menu-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor")) return;
+  if (event.target.closest(".app-mark, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor")) return;
   event.preventDefault();
   const edgeElement = event.target.closest(".edge");
   if (edgeElement) {
