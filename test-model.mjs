@@ -118,6 +118,7 @@ assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
 assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg>/);
 assert.doesNotMatch(html, /mark-dot/);
 assert.match(html, /id="board-title"[\s\S]*?>Untitled</);
+assert.match(html, /<title>Scattered<\/title>/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[\s\S]*?class="arrowhead"[\s\S]*?Z/);
