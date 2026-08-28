@@ -100,6 +100,14 @@ export function removeConnectionsForNodes(edges, nodeIds) {
   return edges.filter((edge) => !ids.has(edge.from) && !ids.has(edge.to));
 }
 
+export function toggleArrowsForNodes(edges, nodeIds) {
+  const ids = new Set(nodeIds);
+  const targets = edges.filter((edge) => ids.has(edge.from) || ids.has(edge.to));
+  if (targets.length === 0) return edges;
+  const arrow = !targets.every((edge) => edge.arrow);
+  return edges.map((edge) => ids.has(edge.from) || ids.has(edge.to) ? { ...edge, arrow } : edge);
+}
+
 export function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;

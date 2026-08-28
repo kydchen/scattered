@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 
 const STORAGE_KEY = "scattered-board-v1";
 const THEME_KEY = "scattered-theme";
@@ -23,6 +23,7 @@ const undoButton = document.querySelector("#undo-button");
 const redoButton = document.querySelector("#redo-button");
 const selectionBar = document.querySelector("#selection-bar");
 const colorSelectionButton = document.querySelector("#color-selection");
+const arrowSelectionButton = document.querySelector("#arrow-selection");
 const colorPalette = document.querySelector("#color-palette");
 const disconnectSelectionButton = document.querySelector("#disconnect-selection");
 const edgeToolbar = document.querySelector("#edge-toolbar");
@@ -110,6 +111,7 @@ colorPalette.addEventListener("click", (event) => {
   const swatch = event.target.closest(".color-swatch");
   if (swatch) applyColor(swatch.dataset.color);
 });
+arrowSelectionButton.addEventListener("click", toggleSelectionArrows);
 disconnectSelectionButton.addEventListener("click", disconnectSelection);
 document.querySelector("#delete-selection").addEventListener("click", deleteSelection);
 edgeArrowButton.addEventListener("click", toggleSelectedEdgeArrow);
@@ -806,7 +808,12 @@ function updateSelection() {
 function updateSelectionBar() {
   const visible = selectionMode && selectedIds.size > 0;
   selectionBar.hidden = !visible;
-  disconnectSelectionButton.disabled = !board.edges.some((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
+  const selectedEdges = board.edges.filter((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
+  const arrowsEnabled = selectedEdges.length > 0 && selectedEdges.every((edge) => edge.arrow);
+  arrowSelectionButton.disabled = selectedEdges.length === 0;
+  arrowSelectionButton.setAttribute("aria-pressed", String(arrowsEnabled));
+  arrowSelectionButton.setAttribute("aria-label", arrowsEnabled ? "关闭所选标签的连线箭头" : "开启所选标签的连线箭头");
+  disconnectSelectionButton.disabled = selectedEdges.length === 0;
 }
 
 function openColorPalette(ids, anchor, preferBelow = false) {
@@ -849,6 +856,16 @@ function applyColor(color) {
 function disconnectSelection() {
   const nextEdges = removeConnectionsForNodes(board.edges, selectedIds);
   if (nextEdges.length === board.edges.length) return;
+  checkpoint();
+  board.edges = nextEdges;
+  renderEdges();
+  scheduleSave();
+}
+
+function toggleSelectionArrows(event) {
+  event?.stopPropagation();
+  const nextEdges = toggleArrowsForNodes(board.edges, selectedIds);
+  if (nextEdges === board.edges) return;
   checkpoint();
   board.edges = nextEdges;
   renderEdges();

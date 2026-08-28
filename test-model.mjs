@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, applyLassoSelection, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, applyLassoSelection, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -13,6 +13,11 @@ assert.deepEqual(edges, [{ id: "a-c", from: "a", to: "c" }, { id: "b-c", from: "
 edges = toggleConnectionsToTarget(edges, ["a", "b"], "c");
 assert.deepEqual(edges, []);
 assert.deepEqual(removeConnectionsForNodes([{ id: "a-b", from: "a", to: "b" }, { id: "c-d", from: "c", to: "d" }], ["b"]), [{ id: "c-d", from: "c", to: "d" }]);
+const mixedArrows = [{ id: "a-b", from: "a", to: "b", arrow: false }, { id: "b-c", from: "b", to: "c", arrow: true }, { id: "c-d", from: "c", to: "d", arrow: false }];
+const enabledArrows = toggleArrowsForNodes(mixedArrows, ["a", "b"]);
+assert.deepEqual(enabledArrows.map((edge) => edge.arrow), [true, true, false]);
+assert.deepEqual(toggleArrowsForNodes(enabledArrows, ["a", "b"]).map((edge) => edge.arrow), [false, false, false]);
+assert.equal(toggleArrowsForNodes(mixedArrows, ["missing"]), mixedArrows);
 
 assert.deepEqual(screenToWorld({ x: 120, y: 80 }, { x: 20, y: 30, scale: 2 }), { x: 50, y: 25 });
 assert.deepEqual(fitBoundsToViewport(
@@ -129,6 +134,8 @@ assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[\s\S]*?class="arrowhead"[\s\S]*?Z/);
+assert.match(html, /id="color-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
+assert.match(html, /id="arrow-selection"[\s\S]*?M4 12h15M14 7l5 5-5 5/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));

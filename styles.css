@@ -429,6 +429,11 @@ button {
   stroke-width: 2;
 }
 
+#arrow-selection svg {
+  width: 23px;
+  height: 23px;
+}
+
 .card-action.danger {
   color: var(--danger);
 }
@@ -873,6 +878,7 @@ html[data-theme="dark"] .theme-sun {
   touch-action: manipulation;
 }
 
+.selection-bar button[aria-pressed="true"],
 .edge-toolbar button[aria-pressed="true"] {
   background: var(--thread-soft);
   color: var(--thread);
