@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 
 const STORAGE_KEY = "scattered-board-v1";
 const THEME_KEY = "scattered-theme";
@@ -12,6 +12,10 @@ const lassoPath = document.querySelector("#lasso-path");
 const template = document.querySelector("#node-template");
 const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
+const cancelExportButton = document.querySelector("#cancel-export-button");
+const exportJsonButton = document.querySelector("#export-json-button");
+const exportPdfButton = document.querySelector("#export-pdf-button");
+const exportMermaidButton = document.querySelector("#export-mermaid-button");
 const clearButton = document.querySelector("#clear-button");
 const cancelClearButton = document.querySelector("#cancel-clear-button");
 const themeButton = document.querySelector("#theme-button");
@@ -84,6 +88,7 @@ window.addEventListener("blur", () => {
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
 });
+window.addEventListener("beforeprint", preparePrintView);
 
 menuButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -91,7 +96,11 @@ menuButton.addEventListener("click", (event) => {
 });
 themeButton.addEventListener("click", toggleTheme);
 
-document.querySelector("#export-button").addEventListener("click", exportBoard);
+document.querySelector("#export-button").addEventListener("click", showExportChoices);
+cancelExportButton.addEventListener("click", disarmExport);
+exportJsonButton.addEventListener("click", exportBoard);
+exportPdfButton.addEventListener("click", exportPdf);
+exportMermaidButton.addEventListener("click", exportMermaid);
 document.querySelector("#import-button").addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
 clearButton.addEventListener("click", clearBoard);
@@ -514,13 +523,32 @@ function toggleTheme(event) {
 function setMenuOpen(open) {
   menu.hidden = !open;
   menuButton.setAttribute("aria-expanded", String(open));
-  if (!open) disarmClear();
+  if (!open) {
+    disarmClear();
+    disarmExport();
+  }
 }
 
 function disarmClear() {
   menu.classList.remove("confirming-clear");
   cancelClearButton.hidden = true;
   clearButton.setAttribute("aria-label", "清空画布");
+}
+
+function showExportChoices(event) {
+  event.stopPropagation();
+  menu.classList.add("choosing-export");
+  [cancelExportButton, exportJsonButton, exportPdfButton, exportMermaidButton].forEach((button) => {
+    button.hidden = false;
+  });
+}
+
+function disarmExport(event) {
+  event?.stopPropagation();
+  menu.classList.remove("choosing-export");
+  [cancelExportButton, exportJsonButton, exportPdfButton, exportMermaidButton].forEach((button) => {
+    button.hidden = true;
+  });
 }
 
 function updateThemeControl() {
@@ -742,7 +770,7 @@ function toggleSelectedEdgeArrow(event) {
   const edge = findEdge(selectedEdgeId, false);
   if (!edge) return;
   checkpoint();
-  edge.arrow = !edge.arrow;
+  edge.arrow = nextArrowState(edge.arrow);
   renderEdges();
   scheduleSave();
 }
@@ -808,12 +836,26 @@ function updateSelection() {
 function updateSelectionBar() {
   const visible = selectionMode && selectedIds.size > 0;
   selectionBar.hidden = !visible;
-  const selectedEdges = board.edges.filter((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
-  const arrowsEnabled = selectedEdges.length > 0 && selectedEdges.every((edge) => edge.arrow);
-  arrowSelectionButton.disabled = selectedEdges.length === 0;
-  arrowSelectionButton.setAttribute("aria-pressed", String(arrowsEnabled));
-  arrowSelectionButton.setAttribute("aria-label", arrowsEnabled ? "关闭所选标签的连线箭头" : "开启所选标签的连线箭头");
-  disconnectSelectionButton.disabled = selectedEdges.length === 0;
+  const connectedEdges = board.edges.filter((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
+  const boundaryEdges = connectedEdges.filter((edge) => selectedIds.has(edge.from) !== selectedIds.has(edge.to));
+  const directions = new Set(boundaryEdges.map((edge) => edge.arrow || "none"));
+  const direction = directions.size > 1 ? "mixed" : directions.values().next().value || "none";
+  arrowSelectionButton.disabled = boundaryEdges.length === 0;
+  updateArrowButton(arrowSelectionButton, direction, true);
+  disconnectSelectionButton.disabled = connectedEdges.length === 0;
+}
+
+function updateArrowButton(button, direction, multiple = false) {
+  button.dataset.direction = direction;
+  button.setAttribute("aria-pressed", direction === "none" ? "false" : direction === "mixed" ? "mixed" : "true");
+  const action = direction === "forward"
+    ? "反转箭头"
+    : direction === "reverse"
+      ? "移除箭头"
+      : direction === "mixed"
+        ? "统一为正向箭头"
+        : "添加正向箭头";
+  button.setAttribute("aria-label", multiple ? `为所选标签的连线${action}` : action);
 }
 
 function openColorPalette(ids, anchor, preferBelow = false) {
@@ -924,7 +966,8 @@ function renderEdges() {
     const linePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     linePath.classList.add("edge-line");
     linePath.setAttribute("d", pathData);
-    if (edge.arrow) linePath.setAttribute("marker-end", "url(#edge-arrowhead)");
+    if (edge.arrow === "forward") linePath.setAttribute("marker-end", "url(#edge-arrowhead)");
+    if (edge.arrow === "reverse") linePath.setAttribute("marker-start", "url(#edge-arrowhead)");
     group.append(hitPath, linePath);
 
     if (edge.label) {
@@ -988,16 +1031,23 @@ function edgeGeometry(edge) {
   const fromCenter = nodeCenter(edge.from);
   const toCenter = nodeCenter(edge.to);
   if (!fromCenter || !toCenter) return null;
-  const from = nodeAnchor(edge.from, toCenter);
+  let from = nodeAnchor(edge.from, toCenter);
   let to = nodeAnchor(edge.to, fromCenter);
   if (edge.arrow) {
     const distance = Math.hypot(from.x - to.x, from.y - to.y);
     const inset = 5 / board.view.scale;
     if (distance > inset) {
-      to = {
-        x: to.x + (from.x - to.x) / distance * inset,
-        y: to.y + (from.y - to.y) / distance * inset,
-      };
+      if (edge.arrow === "reverse") {
+        from = {
+          x: from.x + (to.x - from.x) / distance * inset,
+          y: from.y + (to.y - from.y) / distance * inset,
+        };
+      } else {
+        to = {
+          x: to.x + (from.x - to.x) / distance * inset,
+          y: to.y + (from.y - to.y) / distance * inset,
+        };
+      }
     }
   }
   const curve = connectionCurve(from, to);
@@ -1038,7 +1088,7 @@ function positionEdgeControls() {
   target.style.left = `${left}px`;
   target.style.top = `${top}px`;
   edgeToolbar.hidden = !edgeLabelEditor.hidden;
-  edgeArrowButton.setAttribute("aria-pressed", String(edge.arrow));
+  updateArrowButton(edgeArrowButton, edge.arrow || "none");
   edgeLabelButton.setAttribute("aria-pressed", String(Boolean(edge.label)));
 }
 
@@ -1069,6 +1119,13 @@ function fitBoard() {
 }
 
 function fittedView() {
+  const bounds = boardBounds();
+  return bounds
+    ? fitBoundsToViewport(bounds, { width: viewport.clientWidth, height: viewport.clientHeight }, 72)
+    : null;
+}
+
+function boardBounds() {
   if (board.nodes.length === 0) return null;
   const bounds = board.nodes.reduce((result, node) => {
     const element = nodeElements.get(node.id);
@@ -1079,9 +1136,7 @@ function fittedView() {
     result.bottom = Math.max(result.bottom, node.y + element.offsetHeight);
     return result;
   }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
-  return Number.isFinite(bounds.left)
-    ? fitBoundsToViewport(bounds, { width: viewport.clientWidth, height: viewport.clientHeight }, 72)
-    : null;
+  return Number.isFinite(bounds.left) ? bounds : null;
 }
 
 function onKeyDown(event) {
@@ -1095,6 +1150,11 @@ function onKeyDown(event) {
   if (event.key === "Escape" && !colorPalette.hidden) {
     event.preventDefault();
     hideColorPalette();
+    return;
+  }
+  if (event.key === "Escape" && menu.classList.contains("choosing-export")) {
+    event.preventDefault();
+    disarmExport();
     return;
   }
   if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
@@ -1214,17 +1274,59 @@ function updateHistoryControls() {
   historyTools.hidden = board.nodes.length === 0 && undoStack.length === 0 && redoStack.length === 0;
 }
 
-function exportBoard() {
+function prepareExport() {
   finishBoardTitle();
   finishEdgeLabel();
   finishEditing();
-  const blob = new Blob([JSON.stringify(board, null, 2)], { type: "application/json" });
+  setMenuOpen(false);
+}
+
+function exportBoard() {
+  prepareExport();
+  downloadText(JSON.stringify(board, null, 2), "application/json", "json");
+}
+
+function exportMermaid() {
+  prepareExport();
+  downloadText(boardToMermaidMarkdown(board), "text/markdown;charset=utf-8", "md");
+}
+
+function exportPdf() {
+  prepareExport();
+  preparePrintView();
+  window.print();
+}
+
+function preparePrintView() {
+  const bounds = boardBounds();
+  const printWidth = 273 / 25.4 * 96;
+  const printHeight = 186 / 25.4 * 96;
+  const view = bounds
+    ? fitBoundsToViewport(bounds, { width: printWidth, height: printHeight }, 36)
+    : { x: printWidth / 2, y: printHeight / 2, scale: 1 };
+  world.style.setProperty("--print-x", `${view.x}px`);
+  world.style.setProperty("--print-y", `${view.y}px`);
+  world.style.setProperty("--print-scale", String(view.scale));
+}
+
+function downloadText(content, type, extension) {
+  const blob = new Blob([content], { type });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `散点-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `${exportFileName()}.${extension}`;
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(link.href);
-  setMenuOpen(false);
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1_000);
+}
+
+function exportFileName() {
+  const title = (board.title || "Scattered")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "Scattered";
+  return `${title}-${new Date().toISOString().slice(0, 10)}`;
 }
 
 async function importBoard(event) {

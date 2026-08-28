@@ -30,7 +30,7 @@
       <div id="world" aria-live="polite">
         <svg id="connections" aria-label="标签连线">
           <defs>
-            <marker id="edge-arrowhead" markerWidth="12" markerHeight="12" refX="10.4" refY="6" orient="auto" markerUnits="userSpaceOnUse" viewBox="0 0 12 12" overflow="visible">
+            <marker id="edge-arrowhead" markerWidth="12" markerHeight="12" refX="10.4" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse" viewBox="0 0 12 12" overflow="visible">
               <path class="arrowhead" d="M1.4 1.5 10.4 6 1.4 10.5 4.2 6Z"></path>
             </marker>
           </defs>
@@ -104,6 +104,29 @@
             <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
           </svg>
         </button>
+        <button id="cancel-export-button" class="export-choice" type="button" aria-label="取消导出" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 7l10 10M17 7 7 17"></path>
+          </svg>
+        </button>
+        <button id="export-json-button" class="export-choice" type="button" aria-label="导出 JSON 备份" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 4H8a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h1M15 4h1a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-1"></path>
+          </svg>
+        </button>
+        <button id="export-pdf-button" class="export-choice" type="button" aria-label="导出矢量 PDF" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 3h7l4 4v14H7zM14 3v5h5M10 13h5M10 17h5"></path>
+          </svg>
+        </button>
+        <button id="export-mermaid-button" class="export-choice" type="button" aria-label="导出 Mermaid Markdown" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="6" cy="6" r="2.5"></circle>
+            <circle cx="18" cy="6" r="2.5"></circle>
+            <circle cx="12" cy="18" r="2.5"></circle>
+            <path d="M8.5 6h7M7.5 8l3.2 7.5M16.5 8l-3.2 7.5"></path>
+          </svg>
+        </button>
         <button id="import-button" type="button" aria-label="导入备份">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3v12M8 11l4 4 4-4M5 19h14"></path>
@@ -145,9 +168,11 @@
             <circle cx="12" cy="15" r="5" fill="#82a9df"></circle>
           </svg>
         </button>
-        <button id="arrow-selection" class="selection-action" type="button" aria-label="开启所选标签的连线箭头" aria-pressed="false">
+        <button id="arrow-selection" class="selection-action" type="button" aria-label="为所选标签的连线添加正向箭头" aria-pressed="false" data-direction="none">
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 12h15M14 7l5 5-5 5"></path>
+            <path d="M4 12h16"></path>
+            <path class="arrow-head arrow-head-forward" d="M15 7l5 5-5 5"></path>
+            <path class="arrow-head arrow-head-reverse" d="M9 7l-5 5 5 5"></path>
           </svg>
         </button>
         <button id="disconnect-selection" class="selection-action" type="button" aria-label="断开所选标签的全部连线">
@@ -165,9 +190,11 @@
       </section>
 
       <section id="edge-toolbar" class="edge-toolbar" aria-label="连线操作" hidden>
-        <button id="edge-arrow" type="button" aria-label="切换箭头" aria-pressed="false">
+        <button id="edge-arrow" type="button" aria-label="添加正向箭头" aria-pressed="false" data-direction="none">
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 12h15M14 7l5 5-5 5"></path>
+            <path d="M4 12h16"></path>
+            <path class="arrow-head arrow-head-forward" d="M15 7l5 5-5 5"></path>
+            <path class="arrow-head arrow-head-reverse" d="M9 7l-5 5 5 5"></path>
           </svg>
         </button>
         <button id="edge-label" type="button" aria-label="编辑连线文字" aria-pressed="false">

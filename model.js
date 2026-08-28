@@ -1,4 +1,4 @@
-export const BOARD_VERSION = 3;
+export const BOARD_VERSION = 4;
 export const EMPTY_NOTE_PROMPTS = [
   "遇有所得，即书投囊中",
   "Catch the thought.",
@@ -51,7 +51,7 @@ export function normalizeBoard(value) {
           id,
           from: edge.from,
           to: edge.to,
-          arrow: edge.arrow === true,
+          arrow: normalizeArrow(edge.arrow),
           label: typeof edge.label === "string" ? edge.label.slice(0, 120) : "",
         }];
       })
@@ -87,12 +87,24 @@ export function toggleConnectionsToTarget(edges, sourceIds, target, idFactory = 
   const sourceKeys = new Set(sources.map((source) => edgeKey(source, target)));
   const allConnected = sources.every((source) => edges.some((edge) => edgeKey(edge.from, edge.to) === edgeKey(source, target)));
   if (allConnected) return edges.filter((edge) => !sourceKeys.has(edgeKey(edge.from, edge.to)));
+  if (sources.length === 1) {
+    return [...edges, { id: idFactory(), from: sources[0], to: target, arrow: false, label: "" }];
+  }
 
-  const existing = new Set(edges.map((edge) => edgeKey(edge.from, edge.to)));
+  const anchored = edges.map((edge) => {
+    if (!sourceKeys.has(edgeKey(edge.from, edge.to)) || edge.from === target) return edge;
+    return {
+      ...edge,
+      from: target,
+      to: edge.from,
+      arrow: edge.arrow === "forward" ? "reverse" : edge.arrow === "reverse" ? "forward" : false,
+    };
+  });
+  const existing = new Set(anchored.map((edge) => edgeKey(edge.from, edge.to)));
   return sources.reduce((next, source) => {
     const key = edgeKey(source, target);
-    return existing.has(key) ? next : [...next, { id: idFactory(), from: source, to: target, arrow: false, label: "" }];
-  }, edges);
+    return existing.has(key) ? next : [...next, { id: idFactory(), from: target, to: source, arrow: false, label: "" }];
+  }, anchored);
 }
 
 export function removeConnectionsForNodes(edges, nodeIds) {
@@ -102,10 +114,47 @@ export function removeConnectionsForNodes(edges, nodeIds) {
 
 export function toggleArrowsForNodes(edges, nodeIds) {
   const ids = new Set(nodeIds);
-  const targets = edges.filter((edge) => ids.has(edge.from) || ids.has(edge.to));
+  const targets = edges.filter((edge) => ids.has(edge.from) !== ids.has(edge.to));
   if (targets.length === 0) return edges;
-  const arrow = !targets.every((edge) => edge.arrow);
-  return edges.map((edge) => ids.has(edge.from) || ids.has(edge.to) ? { ...edge, arrow } : edge);
+  const states = new Set(targets.map((edge) => edge.arrow));
+  const arrow = states.size === 1 ? nextArrowState(targets[0].arrow) : "forward";
+  return edges.map((edge) => ids.has(edge.from) !== ids.has(edge.to) ? { ...edge, arrow } : edge);
+}
+
+export function nextArrowState(state) {
+  if (state === "forward") return "reverse";
+  if (state === "reverse") return false;
+  return "forward";
+}
+
+export function boardToMermaidMarkdown(value) {
+  const board = normalizeBoard(value);
+  const nodeIds = new Map(board.nodes.map((node, index) => [node.id, `note_${index + 1}`]));
+  const lines = [
+    `# ${markdownText(board.title)}`,
+    "",
+    "_Exported from Scattered_",
+    "",
+    "---",
+    "",
+    "```mermaid",
+    "flowchart TB",
+    "    accTitle: Scattered Note Relationships",
+    "    accDescr: Notes and connections exported from Scattered.",
+    "",
+    ...board.nodes.map((node, index) => `    note_${index + 1}[\"${mermaidText(node.text || "Untitled note", true)}\"]`),
+  ];
+  if (board.nodes.length > 0 && board.edges.length > 0) lines.push("");
+  board.edges.forEach((edge) => {
+    const reverse = edge.arrow === "reverse";
+    const from = nodeIds.get(reverse ? edge.to : edge.from);
+    const to = nodeIds.get(reverse ? edge.from : edge.to);
+    const connector = edge.arrow ? "-->" : "---";
+    const label = edge.label ? `|${mermaidText(edge.label, false)}|` : "";
+    lines.push(`    ${from} ${connector}${label} ${to}`);
+  });
+  lines.push("```", "");
+  return lines.join("\n");
 }
 
 export function createId() {
@@ -207,6 +256,26 @@ export function connectionCurve(from, to) {
 
 function finiteNumber(value, fallback) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
+}
+
+function normalizeArrow(value) {
+  if (value === "reverse") return "reverse";
+  return value === true || value === "forward" ? "forward" : false;
+}
+
+function markdownText(value) {
+  return String(value || "Untitled").replace(/[\r\n]+/g, " ").trim() || "Untitled";
+}
+
+function mermaidText(value, multiline) {
+  const escaped = String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/`/g, "&#96;")
+    .replace(/\|/g, "&#124;");
+  return multiline ? escaped.replace(/\r?\n/g, "<br/>") : escaped.replace(/[\r\n]+/g, " ");
 }
 
 function edgeKey(a, b) {

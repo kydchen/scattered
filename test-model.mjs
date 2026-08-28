@@ -1,23 +1,45 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, applyLassoSelection, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
 assert.deepEqual(edges, [{ id: "edge-1", from: "a", to: "b", arrow: false, label: "" }]);
 edges = toggleConnection(edges, "b", "a");
 assert.deepEqual(edges, []);
+assert.deepEqual(
+  toggleConnectionsToTarget([], ["a"], "b", () => "a-b"),
+  [{ id: "a-b", from: "a", to: "b", arrow: false, label: "" }],
+);
 
 edges = toggleConnectionsToTarget([{ id: "a-c", from: "a", to: "c" }], ["a", "b"], "c", () => "b-c");
-assert.deepEqual(edges, [{ id: "a-c", from: "a", to: "c" }, { id: "b-c", from: "b", to: "c", arrow: false, label: "" }]);
+assert.deepEqual(edges, [{ id: "a-c", from: "c", to: "a", arrow: false }, { id: "b-c", from: "c", to: "b", arrow: false, label: "" }]);
 edges = toggleConnectionsToTarget(edges, ["a", "b"], "c");
 assert.deepEqual(edges, []);
+assert.deepEqual(
+  toggleConnectionsToTarget([{ id: "a-c", from: "a", to: "c", arrow: "forward", label: "" }], ["a", "b"], "c", () => "b-c"),
+  [{ id: "a-c", from: "c", to: "a", arrow: "reverse", label: "" }, { id: "b-c", from: "c", to: "b", arrow: false, label: "" }],
+);
 assert.deepEqual(removeConnectionsForNodes([{ id: "a-b", from: "a", to: "b" }, { id: "c-d", from: "c", to: "d" }], ["b"]), [{ id: "c-d", from: "c", to: "d" }]);
-const mixedArrows = [{ id: "a-b", from: "a", to: "b", arrow: false }, { id: "b-c", from: "b", to: "c", arrow: true }, { id: "c-d", from: "c", to: "d", arrow: false }];
-const enabledArrows = toggleArrowsForNodes(mixedArrows, ["a", "b"]);
-assert.deepEqual(enabledArrows.map((edge) => edge.arrow), [true, true, false]);
-assert.deepEqual(toggleArrowsForNodes(enabledArrows, ["a", "b"]).map((edge) => edge.arrow), [false, false, false]);
-assert.equal(toggleArrowsForNodes(mixedArrows, ["missing"]), mixedArrows);
+const arrowEdges = [
+  { id: "a-b", from: "a", to: "b", arrow: false },
+  { id: "b-c", from: "b", to: "c", arrow: false },
+  { id: "a-d", from: "a", to: "d", arrow: false },
+  { id: "c-d", from: "c", to: "d", arrow: false },
+];
+const forwardArrows = toggleArrowsForNodes(arrowEdges, ["a", "b"]);
+assert.deepEqual(forwardArrows.map((edge) => edge.arrow), [false, "forward", "forward", false]);
+const reverseArrows = toggleArrowsForNodes(forwardArrows, ["a", "b"]);
+assert.deepEqual(reverseArrows.map((edge) => edge.arrow), [false, "reverse", "reverse", false]);
+assert.deepEqual(toggleArrowsForNodes(reverseArrows, ["a", "b"]).map((edge) => edge.arrow), [false, false, false, false]);
+assert.deepEqual(
+  toggleArrowsForNodes([{ ...arrowEdges[1], arrow: "forward" }, { ...arrowEdges[2], arrow: "reverse" }], ["a", "b"]).map((edge) => edge.arrow),
+  ["forward", "forward"],
+);
+assert.equal(toggleArrowsForNodes(arrowEdges, ["missing"]), arrowEdges);
+assert.equal(nextArrowState(false), "forward");
+assert.equal(nextArrowState("forward"), "reverse");
+assert.equal(nextArrowState("reverse"), false);
 
 assert.deepEqual(screenToWorld({ x: 120, y: 80 }, { x: 20, y: 30, scale: 2 }), { x: 50, y: 25 });
 assert.deepEqual(fitBoundsToViewport(
@@ -78,9 +100,33 @@ assert.equal(restored.nodes.length, 2);
 assert.deepEqual(restored.nodes.map((node) => node.color), ["yellow", "plain"]);
 assert.deepEqual(restored.nodes.map((node) => node.width), [340, 218]);
 assert.equal(restored.edges.length, 1);
-assert.deepEqual(restored.edges[0], { id: "a\u0000b", from: "a", to: "b", arrow: true, label: "支持" });
+assert.deepEqual(restored.edges[0], { id: "a\u0000b", from: "a", to: "b", arrow: "forward", label: "支持" });
 assert.deepEqual(restored.view, { x: 12, y: 0, scale: 2 });
 assert.equal(normalizeBoard({ nodes: [], edges: [] }).title, "Untitled");
+assert.equal(normalizeBoard({ nodes, edges: [{ from: "a", to: "b", arrow: "reverse" }] }).edges[0].arrow, "reverse");
+
+const mermaid = boardToMermaidMarkdown({
+  title: "Ideas",
+  nodes: [
+    { id: "a", text: "Parent \"quote\"\nline" },
+    { id: "b", text: "Child | one" },
+    { id: "c", text: "Third `note`" },
+  ],
+  edges: [
+    { from: "a", to: "b", arrow: "forward", label: "supports" },
+    { from: "a", to: "c", arrow: "reverse", label: "" },
+    { from: "b", to: "c", arrow: false, label: "either | way" },
+  ],
+});
+assert.match(mermaid, /^# Ideas\n\n_Exported from Scattered_/);
+assert.match(mermaid, /```mermaid\nflowchart TB/);
+assert.match(mermaid, /accTitle: Scattered Note Relationships/);
+assert.match(mermaid, /note_1\["Parent &quot;quote&quot;<br\/>line"\]/);
+assert.match(mermaid, /note_1 -->\|supports\| note_2/);
+assert.match(mermaid, /note_3 --> note_1/);
+assert.match(mermaid, /note_2 ---\|either &#124; way\| note_3/);
+assert.match(mermaid, /note_3\["Third &#96;note&#96;"\]/);
+assert.match(mermaid, /```\n$/);
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const nodeTextCss = css.match(/\.node-text\s*\{([^}]*)\}/s)?.[1] ?? "";
@@ -120,6 +166,7 @@ assert.match(html, /localStorage\.getItem\("scattered-theme"\)/);
 assert.match(html, /id="theme-button"[\s\S]*?theme-moon[\s\S]*?theme-sun/);
 assert.doesNotMatch(menuMarkup, /theme-button/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
+assert.match(menuMarkup, /id="cancel-export-button"[\s\S]*?id="export-json-button"[\s\S]*?id="export-pdf-button"[\s\S]*?id="export-mermaid-button"/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
@@ -133,10 +180,14 @@ assert.match(html, /data-cf-beacon='\{"token": "41d9c0c044944ad6b1bd274d2f27d9b7
 assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
-assert.match(html, /id="edge-arrowhead"[\s\S]*?class="arrowhead"[\s\S]*?Z/);
+assert.match(html, /id="edge-arrowhead"[^>]*?orient="auto-start-reverse"[\s\S]*?class="arrowhead"/);
 assert.match(html, /id="color-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
-assert.match(html, /id="arrow-selection"[\s\S]*?M4 12h15M14 7l5 5-5 5/);
+assert.match(html, /id="arrow-selection"[\s\S]*?data-direction="none"[\s\S]*?arrow-head-forward[\s\S]*?arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
+assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
+assert.match(css, /@media print/);
+assert.match(app, /boardToMermaidMarkdown/);
+assert.match(app, /window\.print\(\)/);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
 assert.match(app, /const THEME_KEY = "scattered-theme"/);
