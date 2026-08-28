@@ -109,6 +109,7 @@ assert.match(html, /localStorage\.getItem\("scattered-theme"\)/);
 assert.match(html, /id="theme-button"[\s\S]*?theme-moon[\s\S]*?theme-sun/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
+assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
 assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg>/);
 assert.doesNotMatch(html, /mark-dot/);
