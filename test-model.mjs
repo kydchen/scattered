@@ -119,6 +119,9 @@ assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg
 assert.doesNotMatch(html, /mark-dot/);
 assert.match(html, /id="board-title"[\s\S]*?>Untitled</);
 assert.match(html, /<title>Scattered<\/title>/);
+assert.match(html, /src="https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js"/);
+assert.match(html, /data-cf-beacon='\{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"\}'/);
+assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[\s\S]*?class="arrowhead"[\s\S]*?Z/);
