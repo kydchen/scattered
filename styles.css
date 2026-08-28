@@ -249,6 +249,15 @@ button {
   -webkit-touch-callout: none;
 }
 
+.node.empty-note .node-text,
+.node-editor::placeholder {
+  color: #98a1ae;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+  opacity: 1;
+}
+
 .node-editor {
   display: block;
   min-height: 24px;

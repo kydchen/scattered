@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { applyLassoSelection, connectionCurve, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, applyLassoSelection, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -46,6 +46,11 @@ assert.equal(shouldDiscardDraft("", true, false), false);
 assert.equal(shouldDiscardDraft("", true, true), true);
 assert.equal(shouldDiscardDraft("内容", true, true), false);
 
+assert.equal(EMPTY_NOTE_PROMPTS.length, 5);
+assert.equal(emptyNotePrompt("same-note"), emptyNotePrompt("same-note"));
+assert.equal(new Set(Array.from({ length: 50 }, (_, index) => emptyNotePrompt(`note-${index}`))).size, 5);
+assert.ok(EMPTY_NOTE_PROMPTS.every((prompt) => [...prompt].length <= 24));
+
 assert.deepEqual([...applyLassoSelection(["a"], ["b"], false)], ["b"]);
 assert.deepEqual([...applyLassoSelection(["a"], [], false)], []);
 assert.deepEqual([...applyLassoSelection(["a"], ["b"], true)], ["a", "b"]);
@@ -79,6 +84,7 @@ assert.match(nodeTextCss, /(?:^|\n)\s*user-select:\s*none;/);
 assert.match(nodeTextCss, /-webkit-user-select:\s*none;/);
 assert.match(nodeEditorCss, /(?:^|\n)\s*user-select:\s*text;/);
 assert.match(nodeEditorCss, /-webkit-user-select:\s*text;/);
+assert.match(css, /\.node\.empty-note \.node-text,[\s\S]*?font-style:\s*italic;[\s\S]*?font-weight:\s*400;/);
 
 const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
@@ -90,6 +96,7 @@ assert.match(applyResizeSource, /queueEdgeRender\(\)/);
 assert.doesNotMatch(app, /isDoubleTap|shouldProtectPenTap/);
 assert.match(app, /addEventListener\("dblclick", onDoubleClick\)/);
 assert.doesNotMatch(app, /showToast\((?:"|`)已/);
+assert.doesNotMatch(app, /未写完的想法/);
 assert.doesNotMatch(html, /id="hint"|\stitle=/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);

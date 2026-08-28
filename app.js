@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleConnectionsToTarget } from "./model.js";
 
 const STORAGE_KEY = "scattered-board-v1";
 const viewport = document.querySelector("#viewport");
@@ -577,8 +577,8 @@ function renderNode(node, isNew = false) {
   element.dataset.new = String(isNew);
   element.dataset.color = node.color || "plain";
   element.style.setProperty("--node-width", `${node.width || 218}px`);
-  element.querySelector(".node-text").textContent = node.text || "未写完的想法";
   element.querySelector(".node-editor").value = node.text;
+  syncNodeContent(element, node);
   element.querySelector(".node-delete").addEventListener("click", (event) => {
     event.stopPropagation();
     deleteNode(node.id);
@@ -643,7 +643,7 @@ function finishEditing(onlyId = null, explicitCancel = false) {
       return;
     }
     element.dataset.new = "false";
-    element.querySelector(".node-text").textContent = node.text || "未写完的想法";
+    syncNodeContent(element, node);
     element.querySelector(".node-text").hidden = false;
     editor.hidden = true;
     scheduleSave();
@@ -652,6 +652,14 @@ function finishEditing(onlyId = null, explicitCancel = false) {
       updateHistoryControls();
     });
   });
+}
+
+function syncNodeContent(element, node) {
+  const prompt = emptyNotePrompt(node.id);
+  const empty = !node.text.trim();
+  element.classList.toggle("empty-note", empty);
+  element.querySelector(".node-text").textContent = empty ? prompt : node.text;
+  element.querySelector(".node-editor").placeholder = prompt;
 }
 
 function resizeEditor(element) {

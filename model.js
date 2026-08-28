@@ -1,4 +1,11 @@
 export const BOARD_VERSION = 3;
+export const EMPTY_NOTE_PROMPTS = [
+  "遇有所得，即书投囊中",
+  "Catch the thought.",
+  "Anota lo que aparece.",
+  "Notez ce qui vient.",
+  "ひらめきを、ここに。",
+];
 const NOTE_COLORS = new Set(["plain", "yellow", "mint", "blue", "rose"]);
 
 export function blankBoard() {
@@ -96,6 +103,11 @@ export function removeConnectionsForNodes(edges, nodeIds) {
 export function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function emptyNotePrompt(id) {
+  const hash = [...id].reduce((value, character) => Math.imul(value, 31) + character.charCodeAt(0) | 0, 0);
+  return EMPTY_NOTE_PROMPTS[(hash >>> 0) % EMPTY_NOTE_PROMPTS.length];
 }
 
 export function screenToWorld(point, view) {
