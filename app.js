@@ -1,5 +1,5 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
-import { createBoardPdf } from "./pdf-export.js";
+import { createBoardSvg } from "./svg-export.js";
 
 const STORAGE_KEY = "scattered-board-v1";
 const THEME_KEY = "scattered-theme";
@@ -15,7 +15,7 @@ const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
 const cancelExportButton = document.querySelector("#cancel-export-button");
 const exportJsonButton = document.querySelector("#export-json-button");
-const exportPdfButton = document.querySelector("#export-pdf-button");
+const exportSvgButton = document.querySelector("#export-svg-button");
 const exportMermaidButton = document.querySelector("#export-mermaid-button");
 const clearButton = document.querySelector("#clear-button");
 const cancelClearButton = document.querySelector("#cancel-clear-button");
@@ -98,7 +98,7 @@ themeButton.addEventListener("click", toggleTheme);
 document.querySelector("#export-button").addEventListener("click", showExportChoices);
 cancelExportButton.addEventListener("click", disarmExport);
 exportJsonButton.addEventListener("click", exportBoard);
-exportPdfButton.addEventListener("click", exportPdf);
+exportSvgButton.addEventListener("click", exportSvg);
 exportMermaidButton.addEventListener("click", exportMermaid);
 document.querySelector("#import-button").addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
@@ -537,7 +537,7 @@ function disarmClear() {
 function showExportChoices(event) {
   event.stopPropagation();
   menu.classList.add("choosing-export");
-  [cancelExportButton, exportJsonButton, exportPdfButton, exportMermaidButton].forEach((button) => {
+  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
     button.hidden = false;
   });
 }
@@ -545,7 +545,7 @@ function showExportChoices(event) {
 function disarmExport(event) {
   event?.stopPropagation();
   menu.classList.remove("choosing-export");
-  [cancelExportButton, exportJsonButton, exportPdfButton, exportMermaidButton].forEach((button) => {
+  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
     button.hidden = true;
   });
 }
@@ -1290,35 +1290,25 @@ function exportMermaid() {
   downloadText(boardToMermaidMarkdown(board), "text/markdown;charset=utf-8", "md");
 }
 
-async function exportPdf(event) {
+async function exportSvg(event) {
   event.stopPropagation();
-  prepareExport(false);
-  exportPdfButton.disabled = true;
-  exportPdfButton.classList.add("exporting");
-  exportPdfButton.setAttribute("aria-busy", "true");
+  prepareExport();
   try {
-    const bytes = await createBoardPdf(board);
-    const filename = `${exportFileName()}.pdf`;
-    const file = new File([bytes], filename, { type: "application/pdf" });
+    const filename = `${exportFileName()}.svg`;
+    const file = new File([createBoardSvg(board)], filename, { type: "image/svg+xml" });
     const shareData = { files: [file], title: board.title || "Scattered" };
     const canShare = navigator.maxTouchPoints > 0 && navigator.share && navigator.canShare?.(shareData);
     if (canShare) {
       try {
         await navigator.share(shareData);
-        setMenuOpen(false);
         return;
       } catch (error) {
         if (error.name === "AbortError") return;
       }
     }
     downloadBlob(file, filename);
-    setMenuOpen(false);
   } catch {
-    showToast("PDF 导出失败");
-  } finally {
-    exportPdfButton.disabled = false;
-    exportPdfButton.classList.remove("exporting");
-    exportPdfButton.removeAttribute("aria-busy");
+    showToast("SVG 导出失败");
   }
 }
 

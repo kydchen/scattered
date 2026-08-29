@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { EMPTY_NOTE_PROMPTS, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
-import { fitPdfPage, wrapPdfText } from "./pdf-export.js";
+import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -91,11 +91,27 @@ assert.deepEqual(forwardCurve.midpoint, reverseCurve.midpoint);
 assert.notDeepEqual(forwardCurve.midpoint, { x: 50, y: 50 });
 assert.ok(forwardCurve.control1 && forwardCurve.control2);
 
-const fittedPdf = fitPdfPage({ left: -2000, top: -1000, right: 4500, bottom: 2500 });
-assert.ok(fittedPdf.width <= 1440 && fittedPdf.height <= 1080);
-assert.ok(fittedPdf.offsetX >= 36 && fittedPdf.offsetY >= 36);
-assert.equal((fittedPdf.width - (4500 - -2000) * fittedPdf.scale) / 2, fittedPdf.offsetX);
-assert.deepEqual(wrapPdfText("中文测试\nlongword", 20, (value) => [...value].length * 10), ["中文", "测试", "lo", "ng", "wo", "rd"]);
+assert.deepEqual(wrapSvgText("中文测试\nlongword", 20, (value) => [...value].length * 10), ["中文", "测试", "lo", "ng", "wo", "rd"]);
+const exportedSvg = createBoardSvg({
+  title: "Ideas & links",
+  nodes: [
+    { id: "a", text: "中文<&", x: -2000, y: -1000, width: 220, color: "yellow" },
+    { id: "b", text: "A distant idea", x: 4500, y: 2500, width: 260, color: "blue" },
+  ],
+  edges: [{ id: "e", from: "a", to: "b", arrow: "forward", label: "支持 & extends" }],
+}, (value, size) => [...value].length * size * 0.6);
+const viewBox = exportedSvg.match(/viewBox="([^"]+)"/)?.[1].split(" ").map(Number) || [];
+const displaySize = exportedSvg.match(/<svg[^>]*width="([^"]+)" height="([^"]+)"/)?.slice(1).map(Number) || [];
+assert.equal(viewBox.length, 4);
+assert.ok(displaySize[0] <= 1600 && displaySize[1] <= 1200);
+assert.ok(viewBox[0] <= -2048 && viewBox[1] <= -1048);
+assert.ok(viewBox[0] + viewBox[2] >= 4808 && viewBox[1] + viewBox[3] >= 2596);
+assert.match(exportedSvg, /^<\?xml version="1\.0"/);
+assert.match(exportedSvg, /marker-end="url\(#arrowhead\)"/);
+assert.match(exportedSvg, /<tspan/);
+assert.match(exportedSvg, /Ideas &amp; links/);
+assert.match(exportedSvg, /中文&lt;&amp;/);
+assert.doesNotMatch(exportedSvg, /foreignObject|data:image/);
 
 const restored = normalizeBoard({
   title: "  Project  ",
@@ -174,9 +190,13 @@ assert.match(html, /localStorage\.getItem\("scattered-theme"\)/);
 assert.match(html, /id="theme-button"[\s\S]*?theme-moon[\s\S]*?theme-sun/);
 assert.doesNotMatch(menuMarkup, /theme-button/);
 assert.match(html, /id="export-button"[\s\S]*?<svg/);
-assert.match(menuMarkup, /id="cancel-export-button"[\s\S]*?id="export-json-button"[\s\S]*?id="export-pdf-button"[\s\S]*?id="export-mermaid-button"/);
+assert.match(html, /id="export-button"[\s\S]*?M12 3v12M8 11l4 4 4-4M5 19h14/);
+assert.match(menuMarkup, /id="cancel-export-button"[\s\S]*?id="export-json-button"[\s\S]*?id="export-svg-button"[\s\S]*?id="export-mermaid-button"/);
+assert.match(menuMarkup, /id="export-svg-button"[\s\S]*?<rect[\s\S]*?<circle[\s\S]*?m6\.5 16/);
+assert.match(menuMarkup, /id="export-mermaid-button"[\s\S]*?m9 7-5 5 5 5/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
+assert.match(html, /id="import-button"[\s\S]*?M12 15V3M8 7l4-4 4 4M5 19h14/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
 assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg>/);
@@ -195,16 +215,16 @@ assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
-assert.match(app, /createBoardPdf\(board\)/);
+assert.match(app, /createBoardSvg\(board\)/);
 assert.match(app, /navigator\.canShare/);
-assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView/);
+assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v21/);
-assert.match(serviceWorker, /\.\/pdf-export\.js/);
-assert.doesNotMatch(serviceWorker, /pdf-lib-1\.17\.1|NotoSansSC-Regular/);
-assert.ok(statSync(new URL("./vendor/pdf-lib-1.17.1.min.js", import.meta.url)).size > 500_000);
-assert.ok(statSync(new URL("./vendor/fontkit-1.1.1.min.js", import.meta.url)).size > 700_000);
-assert.ok(statSync(new URL("./fonts/NotoSansSC-Regular.ttf", import.meta.url)).size > 10_000_000);
+assert.match(serviceWorker, /scattered-v22/);
+assert.match(serviceWorker, /\.\/svg-export\.js/);
+assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
+assert.equal(existsSync(new URL("./pdf-export.js", import.meta.url)), false);
+assert.equal(existsSync(new URL("./vendor", import.meta.url)), false);
+assert.equal(existsSync(new URL("./fonts", import.meta.url)), false);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
 assert.match(app, /const THEME_KEY = "scattered-theme"/);

@@ -1022,14 +1022,6 @@ html[data-theme="dark"] .theme-sun {
   }
 }
 
-#export-pdf-button.exporting svg {
-  animation: export-pulse 0.8s ease-in-out infinite alternate;
-}
-
-@keyframes export-pulse {
-  to { opacity: 0.28; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
