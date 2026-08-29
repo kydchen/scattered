@@ -1,8 +1,9 @@
-import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
+import { captureRecovery, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, switchDocument } from "./workspace.js";
 
-const STORAGE_KEY = "scattered-board-v1";
 const THEME_KEY = "scattered-theme";
+const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const viewport = document.querySelector("#viewport");
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
@@ -40,8 +41,26 @@ const importInput = document.querySelector("#import-input");
 const boardTitle = document.querySelector("#board-title");
 const boardTitleEditor = document.querySelector("#board-title-editor");
 const emptyState = document.querySelector("#empty-state");
+const boardsButton = document.querySelector("#boards-button");
+const boardPicker = document.querySelector("#board-picker");
+const boardList = document.querySelector("#board-list");
+const newBoardButton = document.querySelector("#new-board-button");
+const duplicateBoardButton = document.querySelector("#duplicate-board-button");
+const deleteBoardButton = document.querySelector("#delete-board-button");
+const restoreButton = document.querySelector("#restore-button");
+const searchButton = document.querySelector("#search-button");
+const searchPanel = document.querySelector("#search-panel");
+const searchInput = document.querySelector("#search-input");
+const searchCount = document.querySelector("#search-count");
+const searchPreviousButton = document.querySelector("#search-previous");
+const searchNextButton = document.querySelector("#search-next");
+const searchCloseButton = document.querySelector("#search-close");
+const duplicateSelectionButton = document.querySelector("#duplicate-selection");
 
-let board = loadBoard();
+const initialWorkspace = initializeWorkspace();
+let workspace = initialWorkspace.workspace;
+let board = initialWorkspace.board;
+let storageReady = initialWorkspace.storageReady;
 let selectionMode = false;
 let mode = null;
 let saveTimer = null;
@@ -52,6 +71,10 @@ let lastPenUpAt = 0;
 let colorTargetIds = [];
 let selectedEdgeId = null;
 let spacePressed = false;
+let clipboardPayload = null;
+let clipboardText = "";
+let searchMatches = [];
+let searchIndex = -1;
 const pointers = new Map();
 const nodeElements = new Map();
 const selectedIds = new Set();
@@ -62,6 +85,8 @@ renderAll();
 applyView();
 updateHistoryControls();
 updateThemeControl();
+renderBoardList();
+updateRecoveryControl();
 
 viewport.addEventListener("pointerdown", onPointerDown);
 viewport.addEventListener("pointermove", onPointerMove);
@@ -73,6 +98,8 @@ viewport.addEventListener("contextmenu", (event) => {
   if (!event.target.closest(".node-editor")) event.preventDefault();
 });
 document.addEventListener("keydown", onKeyDown);
+document.addEventListener("copy", onCopy);
+document.addEventListener("paste", onPaste);
 document.addEventListener("keyup", (event) => {
   if (event.code === "Space") {
     spacePressed = false;
@@ -89,6 +116,25 @@ window.addEventListener("blur", () => {
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
 });
+window.addEventListener("pagehide", saveBoardNow);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveBoardNow();
+});
+boardsButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (boardPicker.hidden) {
+    finishCurrentInput();
+    saveBoardNow();
+  }
+  setBoardPickerOpen(boardPicker.hidden);
+});
+newBoardButton.addEventListener("click", newBoard);
+duplicateBoardButton.addEventListener("click", duplicateBoard);
+deleteBoardButton.addEventListener("click", removeCurrentBoard);
+boardList.addEventListener("click", (event) => {
+  const option = event.target.closest(".board-list-option");
+  if (option) openBoard(option.dataset.id);
+});
 menuButton.addEventListener("click", (event) => {
   event.stopPropagation();
   setMenuOpen(menu.hidden);
@@ -102,6 +148,8 @@ exportSvgButton.addEventListener("click", exportSvg);
 exportMermaidButton.addEventListener("click", exportMermaid);
 document.querySelector("#import-button").addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
+searchButton.addEventListener("click", openSearch);
+restoreButton.addEventListener("click", restoreRecentBoard);
 clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -120,6 +168,7 @@ colorPalette.addEventListener("click", (event) => {
   if (swatch) applyColor(swatch.dataset.color);
 });
 arrowSelectionButton.addEventListener("click", toggleSelectionArrows);
+duplicateSelectionButton.addEventListener("click", duplicateSelection);
 disconnectSelectionButton.addEventListener("click", disconnectSelection);
 document.querySelector("#delete-selection").addEventListener("click", deleteSelection);
 edgeArrowButton.addEventListener("click", toggleSelectedEdgeArrow);
@@ -155,6 +204,19 @@ boardTitleEditor.addEventListener("keydown", (event) => {
     finishBoardTitle(true);
   }
 });
+searchInput.addEventListener("input", updateSearch);
+searchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    moveSearch(event.shiftKey ? -1 : 1);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeSearch();
+  }
+});
+searchPreviousButton.addEventListener("click", () => moveSearch(-1));
+searchNextButton.addEventListener("click", () => moveSearch(1));
+searchCloseButton.addEventListener("click", closeSearch);
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -169,7 +231,8 @@ if (new URLSearchParams(location.search).get("debug") === "1") {
 function onPointerDown(event) {
   if (!event.target.closest(".color-palette, .color-handle, #color-selection")) hideColorPalette();
   if (!event.target.closest(".app-mark") && !boardTitleEditor.hidden) finishBoardTitle();
-  if (event.target.closest(".app-mark")) return;
+  if (!event.target.closest(".app-mark, .board-picker")) setBoardPickerOpen(false);
+  if (event.target.closest(".app-mark, .board-picker, .search-panel")) return;
   if (event.target.closest(".edge-toolbar, .edge-label-editor")) return;
   if (!edgeLabelEditor.hidden) finishEdgeLabel();
   if (event.target.closest(".menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions")) return;
@@ -520,12 +583,288 @@ function toggleTheme(event) {
 }
 
 function setMenuOpen(open) {
+  if (open) setBoardPickerOpen(false);
   menu.hidden = !open;
   menuButton.setAttribute("aria-expanded", String(open));
   if (!open) {
     disarmClear();
     disarmExport();
   }
+}
+
+function setBoardPickerOpen(open) {
+  boardPicker.hidden = !open;
+  boardsButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    setMenuOpen(false);
+    renderBoardList();
+  }
+}
+
+function renderBoardList() {
+  const fragment = document.createDocumentFragment();
+  workspace.boards.forEach((item) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "board-list-option";
+    option.dataset.id = item.id;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(item.id === workspace.activeId));
+    const title = document.createElement("span");
+    title.className = "board-list-title";
+    title.textContent = item.title || "Untitled";
+    option.append(title);
+    fragment.append(option);
+  });
+  boardList.replaceChildren(fragment);
+}
+
+function newBoard(event) {
+  event?.stopPropagation();
+  if (!storageReady) return showToast("本地存储不可用");
+  finishCurrentInput();
+  saveBoardNow();
+  try {
+    replaceBoard(createDocument(localStorage, workspace));
+    setBoardPickerOpen(false);
+  } catch {
+    showToast("无法新建画布，请先导出备份");
+  }
+}
+
+function duplicateBoard(event) {
+  event?.stopPropagation();
+  if (!storageReady) return showToast("本地存储不可用");
+  finishCurrentInput();
+  saveBoardNow();
+  try {
+    replaceBoard(duplicateDocument(localStorage, workspace, board));
+    setBoardPickerOpen(false);
+  } catch {
+    showToast("无法复制画布，请先导出备份");
+  }
+}
+
+function removeCurrentBoard(event) {
+  event?.stopPropagation();
+  if (!storageReady) return showToast("本地存储不可用");
+  finishCurrentInput();
+  saveBoardNow();
+  try {
+    replaceBoard(deleteDocument(localStorage, workspace, board));
+    updateRecoveryControl();
+    setBoardPickerOpen(false);
+  } catch {
+    showToast("无法删除画布");
+  }
+}
+
+function openBoard(id) {
+  if (id === workspace.activeId || !storageReady) {
+    setBoardPickerOpen(false);
+    return;
+  }
+  finishCurrentInput();
+  saveBoardNow();
+  try {
+    const loaded = switchDocument(localStorage, workspace, id);
+    if (!loaded) return;
+    replaceBoard(loaded.board);
+    setBoardPickerOpen(false);
+  } catch {
+    showToast("无法打开这个画布");
+  }
+}
+
+function replaceBoard(nextBoard) {
+  cancelGesture();
+  board = normalizeBoard(nextBoard);
+  selectedIds.clear();
+  selectionMode = false;
+  selectedEdgeId = null;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  closeSearch();
+  renderAll();
+  applyView();
+  renderBoardList();
+  updateHistoryControls();
+}
+
+function restoreRecentBoard(event) {
+  event?.stopPropagation();
+  if (!storageReady) return;
+  finishCurrentInput();
+  try {
+    const restored = restoreLatest(localStorage, workspace, board);
+    if (restored) replaceBoard(restored);
+    updateRecoveryControl();
+    setMenuOpen(false);
+  } catch {
+    showToast("无法恢复本地副本");
+  }
+}
+
+function updateRecoveryControl() {
+  restoreButton.hidden = !storageReady || !hasRecovery(localStorage);
+}
+
+function finishCurrentInput() {
+  hideColorPalette();
+  finishBoardTitle();
+  finishEdgeLabel();
+  finishEditing();
+}
+
+function preserveForRecovery(reason) {
+  if (!storageReady) return true;
+  try {
+    captureRecovery(localStorage, workspace.activeId, board, reason);
+    updateRecoveryControl();
+    return true;
+  } catch {
+    showToast("无法保存恢复副本，请先导出备份");
+    return false;
+  }
+}
+
+function openSearch(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  setMenuOpen(false);
+  setBoardPickerOpen(false);
+  finishCurrentInput();
+  searchPanel.hidden = false;
+  updateSearch();
+  searchInput.focus();
+  searchInput.select();
+}
+
+function closeSearch() {
+  searchInput.blur();
+  searchPanel.hidden = true;
+  searchMatches = [];
+  searchIndex = -1;
+  searchInput.value = "";
+  searchCount.textContent = "";
+  nodeElements.forEach((element) => element.classList.remove("search-match", "search-current"));
+}
+
+function updateSearch() {
+  const query = searchInput.value.trim().toLocaleLowerCase();
+  searchMatches = query
+    ? board.nodes.filter((node) => node.text.toLocaleLowerCase().includes(query)).map((node) => node.id)
+    : [];
+  searchIndex = searchMatches.length ? clamp(searchIndex, 0, searchMatches.length - 1) : -1;
+  if (searchIndex < 0 && searchMatches.length) searchIndex = 0;
+  updateSearchVisuals();
+  if (searchIndex >= 0) revealSearchResult();
+}
+
+function moveSearch(step) {
+  if (searchMatches.length === 0) return;
+  searchIndex = (searchIndex + step + searchMatches.length) % searchMatches.length;
+  updateSearchVisuals();
+  revealSearchResult();
+}
+
+function updateSearchVisuals() {
+  const matches = new Set(searchMatches);
+  const currentId = searchMatches[searchIndex];
+  nodeElements.forEach((element, id) => {
+    element.classList.toggle("search-match", matches.has(id));
+    element.classList.toggle("search-current", id === currentId);
+  });
+  searchCount.textContent = searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : searchInput.value ? "0" : "";
+  searchPreviousButton.disabled = searchMatches.length < 2;
+  searchNextButton.disabled = searchMatches.length < 2;
+}
+
+function revealSearchResult() {
+  const id = searchMatches[searchIndex];
+  const node = findNode(id, false);
+  const element = nodeElements.get(id);
+  if (!node || !element) return;
+  board.view.x = viewport.clientWidth / 2 - (node.x + element.offsetWidth / 2) * board.view.scale;
+  board.view.y = viewport.clientHeight / 2 - (node.y + element.offsetHeight / 2) * board.view.scale;
+  applyView();
+  scheduleSave();
+}
+
+function onCopy(event) {
+  if (document.activeElement?.matches("textarea, input") || selectedIds.size === 0) return;
+  const payload = copySelectedGraph(board, selectedIds);
+  if (!payload) return;
+  clipboardPayload = payload;
+  clipboardText = payload.nodes.map((node) => node.text).filter(Boolean).join("\n\n");
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", clipboardText);
+  try {
+    event.clipboardData.setData(CLIPBOARD_TYPE, JSON.stringify(payload));
+  } catch {}
+}
+
+function onPaste(event) {
+  if (document.activeElement?.matches("textarea, input")) return;
+  const text = event.clipboardData.getData("text/plain");
+  let payload = null;
+  try {
+    const encoded = event.clipboardData.getData(CLIPBOARD_TYPE);
+    if (encoded) payload = JSON.parse(encoded);
+  } catch {}
+  if (!payload && clipboardPayload && text === clipboardText) payload = clipboardPayload;
+  if (payload) {
+    event.preventDefault();
+    pasteGraph(payload, pasteOrigin());
+    return;
+  }
+  if (!text.trim()) return;
+  event.preventDefault();
+  const point = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, board.view);
+  checkpoint();
+  const node = { id: createId(), text: text.slice(0, 20_000), x: point.x - 109, y: point.y - 24, color: "plain", width: 218 };
+  board.nodes.push(node);
+  selectedIds.clear();
+  selectedIds.add(node.id);
+  selectionMode = false;
+  renderAll();
+  scheduleSave();
+}
+
+function duplicateSelection(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const payload = copySelectedGraph(board, selectedIds);
+  if (!payload) return;
+  clipboardPayload = payload;
+  clipboardText = payload.nodes.map((node) => node.text).filter(Boolean).join("\n\n");
+  pasteGraph(payload, pasteOrigin());
+}
+
+function pasteOrigin() {
+  const selected = board.nodes.filter((node) => selectedIds.has(node.id));
+  if (selected.length) {
+    return {
+      x: Math.min(...selected.map((node) => node.x)) + 28,
+      y: Math.min(...selected.map((node) => node.y)) + 28,
+    };
+  }
+  const center = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, board.view);
+  return { x: center.x - 109, y: center.y - 24 };
+}
+
+function pasteGraph(payload, origin) {
+  const pasted = pasteSelectedGraph(payload, origin);
+  if (!pasted) return;
+  checkpoint();
+  board.nodes.push(...pasted.nodes);
+  board.edges.push(...pasted.edges);
+  selectedIds.clear();
+  pasted.nodes.forEach((node) => selectedIds.add(node.id));
+  selectionMode = true;
+  selectedEdgeId = null;
+  renderAll();
+  scheduleSave();
 }
 
 function disarmClear() {
@@ -562,7 +901,7 @@ function handleNodeTap(id) {
 }
 
 function onDoubleClick(event) {
-  if (event.target.closest(".app-mark, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor")) return;
+  if (event.target.closest(".app-mark, .board-picker, .search-panel, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor")) return;
   event.preventDefault();
   const edgeElement = event.target.closest(".edge");
   if (edgeElement) {
@@ -610,7 +949,7 @@ function updateEmptyState() {
 
 function updateBoardTitle() {
   boardTitle.textContent = board.title || "Untitled";
-  document.title = board.title && board.title !== "Untitled" ? `${board.title} · 散点` : "散点";
+  document.title = board.title && board.title !== "Untitled" ? `${board.title} · Scattered` : "Scattered";
 }
 
 function editBoardTitle() {
@@ -663,7 +1002,16 @@ function renderNode(node, isNew = false) {
       finishEditing(node.id, true);
     }
   });
-  element.querySelector(".node-editor").addEventListener("input", () => resizeEditor(element));
+  element.querySelector(".node-editor").addEventListener("input", (event) => {
+    const nextText = event.currentTarget.value.slice(0, 20_000);
+    if (node.text !== nextText && element.dataset.editCheckpointed !== "true") {
+      checkpoint();
+      element.dataset.editCheckpointed = "true";
+    }
+    node.text = nextText;
+    resizeEditor(element);
+    scheduleSave();
+  });
   element.querySelector(".node-editor").addEventListener("blur", () => finishEditing(node.id));
   nodeElements.set(node.id, element);
   nodeLayer.append(element);
@@ -685,6 +1033,7 @@ function editNode(id, isNew = false, fromPen = false) {
   const editor = element.querySelector(".node-editor");
   element.classList.add("editing");
   element.dataset.new = String(isNew);
+  element.dataset.editCheckpointed = String(isNew);
   palmGuardUntil = fromPen ? performance.now() + 1200 : 0;
   element.querySelector(".node-text").hidden = true;
   editor.hidden = false;
@@ -1139,6 +1488,10 @@ function boardBounds() {
 }
 
 function onKeyDown(event) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+    openSearch(event);
+    return;
+  }
   if (!document.activeElement?.matches("textarea, input") && event.code === "Space") {
     event.preventDefault();
     spacePressed = true;
@@ -1146,6 +1499,16 @@ function onKeyDown(event) {
     return;
   }
   if (document.activeElement?.matches("textarea, input")) return;
+  if (event.key === "Escape" && !searchPanel.hidden) {
+    event.preventDefault();
+    closeSearch();
+    return;
+  }
+  if (event.key === "Escape" && !boardPicker.hidden) {
+    event.preventDefault();
+    setBoardPickerOpen(false);
+    return;
+  }
   if (event.key === "Escape" && !colorPalette.hidden) {
     event.preventDefault();
     hideColorPalette();
@@ -1175,6 +1538,9 @@ function onKeyDown(event) {
   } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "y") {
     event.preventDefault();
     redo();
+  } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d" && selectedIds.size > 0) {
+    event.preventDefault();
+    duplicateSelection();
   } else if ((event.key === "Backspace" || event.key === "Delete") && selectedEdgeId) {
     event.preventDefault();
     deleteSelectedEdge();
@@ -1188,25 +1554,51 @@ function onKeyDown(event) {
   }
 }
 
-function loadBoard() {
+function initializeWorkspace() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? normalizeBoard(JSON.parse(saved)) : blankBoard();
+    return { ...loadWorkspace(localStorage), storageReady: true };
   } catch {
-    showToast("本地备份无法读取，已打开空白画布");
-    return blankBoard();
+    const id = createId();
+    return {
+      workspace: { version: 1, activeId: id, boards: [{ id, title: "Untitled", updatedAt: 0 }] },
+      board: blankBoard(),
+      recovered: false,
+      storageReady: false,
+    };
   }
 }
 
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(board));
-    } catch {
-      showToast("自动保存失败，请先导出备份");
-    }
-  }, 180);
+  saveTimer = setTimeout(saveBoardNow, 180);
+}
+
+function saveBoardNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!storageReady) return;
+  syncOpenInputs();
+  try {
+    saveDocument(localStorage, workspace, board);
+    renderBoardList();
+  } catch {
+    showToast("自动保存失败，请先导出备份");
+  }
+}
+
+function syncOpenInputs() {
+  const nextTitle = !boardTitleEditor.hidden ? boardTitleEditor.value.trim().slice(0, 120) || "Untitled" : board.title;
+  const openEdge = !edgeLabelEditor.hidden ? findEdge(edgeLabelEditor.dataset.edgeId, false) : null;
+  const nextEdgeLabel = openEdge ? edgeLabelEditor.value.trim().slice(0, 120) : null;
+  if (nextTitle !== board.title || (openEdge && nextEdgeLabel !== openEdge.label)) checkpoint();
+  board.title = nextTitle;
+  if (!edgeLabelEditor.hidden) {
+    if (openEdge) openEdge.label = nextEdgeLabel;
+  }
+  document.querySelectorAll(".node.editing").forEach((element) => {
+    const node = findNode(element.dataset.id, false);
+    if (node) node.text = element.querySelector(".node-editor").value.slice(0, 20_000);
+  });
 }
 
 function snapshotState() {
@@ -1343,6 +1735,7 @@ async function importBoard(event) {
   try {
     const imported = normalizeBoard(JSON.parse(await file.text()));
     checkpoint();
+    if (!preserveForRecovery("import")) return;
     board = imported;
     selectedIds.clear();
     selectionMode = false;
@@ -1350,6 +1743,7 @@ async function importBoard(event) {
     renderAll();
     applyView();
     scheduleSave();
+    updateRecoveryControl();
   } catch (error) {
     showToast(error instanceof Error ? error.message : "无法导入这个文件");
   } finally {
@@ -1365,6 +1759,7 @@ function clearBoard() {
     return;
   }
   checkpoint();
+  if (!preserveForRecovery("clear")) return;
   board = blankBoard();
   selectedIds.clear();
   selectionMode = false;
@@ -1372,6 +1767,7 @@ function clearBoard() {
   renderAll();
   applyView();
   scheduleSave();
+  updateRecoveryControl();
   setMenuOpen(false);
 }
 

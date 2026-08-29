@@ -1,93 +1,78 @@
-# Scattered / 散点
+# Scattered
 
-[在线使用 / Open App](https://kydchen.github.io/scattered/) · [中文](#中文) · [English](#english)
+[Open Scattered](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
 
-## 中文
+Scattered is a minimalist, cross-platform canvas for thinking freely. Write a note, move it anywhere, connect it only when useful, and keep thinking.
 
-散点是一个极简、跨平台的自由思考画布：写卡片、自由移动、连接想法，然后继续思考。没有账户、服务器或强制结构，内容只保存在当前浏览器。
+![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-它不是 iPad 专用应用。散点基于标准 Web 技术，并分别适配了触控与手写笔、纯触控、键盘与鼠标三套交互，可在 iPadOS、iOS、Android、Windows、macOS 和 Linux 的现代浏览器中使用，也可以按 PWA 安装。当前主要在 iPad + Apple Pencil 和桌面 Chromium 浏览器上完成实机测试；Android 与 Windows 属于正式支持目标，但尚未覆盖所有设备与浏览器组合。
+There are no accounts, servers, templates, or forced hierarchy. Your boards stay in the current browser and remain available offline after the app has been loaded once.
 
-### 核心操作
+## Install it like an app
 
-- 双击空白处新建卡片；双击卡片编辑
-- 自由拖动卡片，拖动连接点建立或取消连线
-- 点击连线添加箭头、文字或断开连接
-- Pencil 圈选；触控长按进入多选；桌面端 Shift + 点击或拖框多选
-- 多选后可一起移动、改色、连接、断线或删除
-- 拖动卡片右下角调整长文本宽度
-- 双指缩放；触控拖动或桌面端空格 + 拖动平移画布
-- 左上角按钮一键居中并显示全部卡片
-- 内容自动保存在当前浏览器；右上角菜单可导入或导出 JSON 备份
+You can use Scattered directly in a browser, but installing the web app gives it its own icon and standalone window without requiring an App Store download.
 
-### 使用与安装
+- **Chrome on Windows, macOS, or Linux:** open Scattered, then choose **More → Cast, save, and share → Install page as app**. Some Chrome versions also show an install icon in the address bar. [Chrome instructions](https://support.google.com/chrome/answer/9658361?co=genie.platform%3DDesktop&hl=en)
+- **Chrome on Android:** choose **More → Install and create shortcut → Install**. [Chrome Android instructions](https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DAndroid&hl=en)
+- **Safari on iPhone or iPad:** choose **Share → Add to Home Screen**, turn on **Open as Web App**, then tap **Add**. [Apple iPhone instructions](https://support.apple.com/guide/iphone/iphea86e5236/ios) · [Apple iPad instructions](https://support.apple.com/guide/ipad/ipad8f1f7a29/ipados)
 
-直接打开[在线版本](https://kydchen.github.io/scattered/)即可使用，无需账户或安装。若想像独立应用一样启动，可使用浏览器的“添加到主屏幕”或“安装应用”；HTTPS 下也支持离线缓存。
+## What it can do
 
-JSON 备份可以在不同设备和浏览器之间手动迁移画布。当前没有云端同步，同一网址不会自动合并不同设备上的内容。
+- Create and edit notes with a double-click or double-tap
+- Move notes freely and resize long notes
+- Connect notes, cycle arrow direction, and label connections
+- Lasso, marquee-select, or long-press to select multiple notes
+- Move, recolor, duplicate, connect, disconnect, or delete a selection together
+- Keep multiple local boards and switch between them from the Scattered mark
+- Recover the most recently cleared, imported-over, or deleted board
+- Search note text and jump between matches
+- Undo, redo, fit the whole board into view, and switch between light and dark modes
+- Export JSON backups, SVG vector images, or Mermaid Markdown
 
-### 本地开发
+## Input modes
 
-```sh
-npm start
-```
+Scattered uses the same model across devices, with controls adapted to each input style:
 
-打开 `http://localhost:4173`。运行检查：
+| Input | Selection and navigation | Fast actions |
+| --- | --- | --- |
+| Apple Pencil + touch | Lasso with Pencil; pan and pinch with fingers | Use the visual selection bar; Pencil can write into search with Scribble |
+| Touch only | Long-press a note to enter multi-select; drag to pan and pinch to zoom | Use the visual selection bar and top-right menu |
+| Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `Cmd/Ctrl+A`, `C`, `V`, `D`, `F`, `Z`; Delete/Backspace |
 
-```sh
-npm test
-```
+## Local data and privacy
 
-### 灵感与关系
+Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export a JSON backup for anything important or when moving to another browser or device.
 
-散点受到 [Scapple](https://www.literatureandlatte.com/scapple/overview) 启发。我一直很喜欢它自由放置卡片、按需连接想法的方式，也一直想要一个能自然使用 Apple Pencil、同时适配其他设备的 Web 版本，于是做了这个独立项目。
+Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
-散点与 Scapple 及 Literature & Latte 没有关联。
+## Import and export
 
-## English
+- **JSON** preserves an editable board and is the format to use when moving between devices or browsers.
+- **SVG** exports the complete board as a lightweight vector image, automatically fitted to its content.
+- **Mermaid Markdown** turns notes and connections into a diagram that can be used in Markdown documents and AI-assisted workflows.
 
-Scattered is a minimalist, cross-platform canvas for thinking freely: write notes, move them anywhere, connect ideas when useful, and keep thinking. There are no accounts, servers, or forced structure. Your content stays in the current browser.
+## Browser support
 
-It is not an iPad-only app. Scattered uses standard web technologies and provides separate interaction paths for touch + stylus, touch only, and keyboard + mouse. It is designed for modern browsers on iPadOS, iOS, Android, Windows, macOS, and Linux, and can also be installed as a PWA. The current release has been tested primarily on iPad with Apple Pencil and desktop Chromium browsers. Android and Windows are supported targets, but the full device-and-browser matrix has not yet been tested.
+Scattered is designed for modern browsers on iPadOS, iOS, Android, Windows, macOS, and Linux. The current release is tested most heavily on iPad with Apple Pencil and desktop Chromium browsers. Android, Windows, and other modern browsers are supported targets, but the full device-and-browser matrix is still growing.
 
-### Core interactions
-
-- Double-tap empty space to create a note; double-tap a note to edit it
-- Move notes freely and drag a connection handle to connect or disconnect them
-- Select a connection to add an arrow, add text, or remove it
-- Lasso with a stylus; long-press for touch multi-selection; Shift-click or marquee-select on desktop
-- Move, recolor, connect, disconnect, or delete multiple selected notes together
-- Drag the lower-right handle to resize long notes
-- Pinch to zoom; drag with touch or hold Space and drag on desktop to pan
-- Fit all notes into view with the top-left control
-- Changes save automatically in the current browser; import or export JSON backups from the top-right menu
-
-### Use and install
-
-Open the [hosted app](https://kydchen.github.io/scattered/) and start immediately—no account or installation required. To launch it like a standalone app, use your browser's Add to Home Screen or Install option. Offline caching is available over HTTPS.
-
-JSON backups can move a canvas between devices and browsers manually. There is currently no cloud sync, so the same URL does not automatically merge content across devices.
-
-### Local development
+## Local development
 
 ```sh
 npm start
 ```
 
-Open `http://localhost:4173`. Run checks with:
+Open `http://localhost:4173`, then run the regression checks with:
 
 ```sh
 npm test
 ```
 
-### Inspiration and affiliation
+## Inspiration
 
 Scattered is inspired by [Scapple](https://www.literatureandlatte.com/scapple/overview), a tool I have loved for years. I wanted its freeform note-and-connection flow in a web app that feels natural with Apple Pencil while remaining useful on other devices, so I built this independent project.
 
 Scattered is not affiliated with Scapple or Literature & Latte.
 
-## License / 许可证
+## License
 
-The source is publicly visible, but no open-source license has been granted yet. All rights are reserved until a license is added.
-
-源码公开可见，但目前尚未授予开源许可证；添加许可证前保留所有权利。
+Scattered is open source under the [MIT License](LICENSE). Issues and focused pull requests are welcome.

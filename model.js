@@ -121,6 +121,44 @@ export function toggleArrowsForNodes(edges, nodeIds) {
   return edges.map((edge) => ids.has(edge.from) !== ids.has(edge.to) ? { ...edge, arrow } : edge);
 }
 
+export function copySelectedGraph(value, nodeIds) {
+  const board = normalizeBoard(value);
+  const ids = new Set(nodeIds);
+  const nodes = board.nodes.filter((node) => ids.has(node.id));
+  if (nodes.length === 0) return null;
+  const left = Math.min(...nodes.map((node) => node.x));
+  const top = Math.min(...nodes.map((node) => node.y));
+  return {
+    type: "scattered-selection",
+    version: 1,
+    nodes: nodes.map((node) => ({ ...node, x: node.x - left, y: node.y - top })),
+    edges: board.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
+  };
+}
+
+export function pasteSelectedGraph(value, origin, idFactory = createId) {
+  if (!value || value.type !== "scattered-selection" || value.version !== 1) return null;
+  let selection;
+  try {
+    selection = normalizeBoard({ nodes: value.nodes, edges: value.edges });
+  } catch {
+    return null;
+  }
+  if (selection.nodes.length === 0) return null;
+  const ids = new Map(selection.nodes.map((node) => [node.id, idFactory()]));
+  const x = finiteNumber(origin?.x, 0);
+  const y = finiteNumber(origin?.y, 0);
+  return {
+    nodes: selection.nodes.map((node) => ({ ...node, id: ids.get(node.id), x: x + node.x, y: y + node.y })),
+    edges: selection.edges.map((edge) => ({
+      ...edge,
+      id: idFactory(),
+      from: ids.get(edge.from),
+      to: ids.get(edge.to),
+    })),
+  };
+}
+
 export function nextArrowState(state) {
   if (state === "forward") return "reverse";
   if (state === "reverse") return false;

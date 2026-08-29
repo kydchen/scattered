@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
+import { captureRecovery, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, switchDocument } from "./workspace.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -41,6 +42,31 @@ assert.equal(toggleArrowsForNodes(arrowEdges, ["missing"]), arrowEdges);
 assert.equal(nextArrowState(false), "forward");
 assert.equal(nextArrowState("forward"), "reverse");
 assert.equal(nextArrowState("reverse"), false);
+
+const copiedGraph = copySelectedGraph({
+  nodes: [
+    { id: "a", text: "A", x: 100, y: 200, width: 218 },
+    { id: "b", text: "B", x: 360, y: 260, width: 260, color: "blue" },
+    { id: "c", text: "C", x: 800, y: 500 },
+  ],
+  edges: [
+    { id: "a-b", from: "a", to: "b", arrow: "forward", label: "supports" },
+    { id: "b-c", from: "b", to: "c", arrow: false, label: "" },
+  ],
+}, ["a", "b"]);
+assert.deepEqual(copiedGraph.nodes.map(({ id, x, y }) => ({ id, x, y })), [
+  { id: "a", x: 0, y: 0 },
+  { id: "b", x: 260, y: 60 },
+]);
+assert.equal(copiedGraph.edges.length, 1);
+let generatedId = 0;
+const pastedGraph = pasteSelectedGraph(copiedGraph, { x: 40, y: 50 }, () => `new-${++generatedId}`);
+assert.deepEqual(pastedGraph.nodes.map(({ id, x, y }) => ({ id, x, y })), [
+  { id: "new-1", x: 40, y: 50 },
+  { id: "new-2", x: 300, y: 110 },
+]);
+assert.deepEqual(pastedGraph.edges[0], { id: "new-3", from: "new-1", to: "new-2", arrow: "forward", label: "supports" });
+assert.equal(pasteSelectedGraph({ type: "other" }, { x: 0, y: 0 }), null);
 
 assert.deepEqual(screenToWorld({ x: 120, y: 80 }, { x: 20, y: 30, scale: 2 }), { x: 50, y: 25 });
 assert.deepEqual(fitBoundsToViewport(
@@ -129,6 +155,54 @@ assert.deepEqual(restored.view, { x: 12, y: 0, scale: 2 });
 assert.equal(normalizeBoard({ nodes: [], edges: [] }).title, "Untitled");
 assert.equal(normalizeBoard({ nodes, edges: [{ from: "a", to: "b", arrow: "reverse" }] }).edges[0].arrow, "reverse");
 
+class MemoryStorage {
+  constructor(entries = []) { this.values = new Map(entries); }
+  getItem(key) { return this.values.get(key) ?? null; }
+  setItem(key, value) { this.values.set(key, String(value)); }
+  removeItem(key) { this.values.delete(key); }
+}
+
+class FailingStorage extends MemoryStorage {
+  setItem(key, value) {
+    if (this.failWorkspace && key === "scattered-workspace-v1") throw new Error("quota");
+    super.setItem(key, value);
+  }
+}
+
+const storage = new MemoryStorage([["scattered-board-v1", JSON.stringify({ title: "Legacy", nodes: [{ id: "a", text: "kept", x: 0, y: 0 }], edges: [] })]]);
+let time = 100;
+const loadedWorkspace = loadWorkspace(storage, () => time++);
+assert.equal(loadedWorkspace.board.title, "Legacy");
+assert.equal(loadedWorkspace.workspace.boards.length, 1);
+const firstBoardId = loadedWorkspace.workspace.activeId;
+const changedBoard = { ...loadedWorkspace.board, title: "Changed", nodes: [{ ...loadedWorkspace.board.nodes[0], text: "new" }] };
+saveDocument(storage, loadedWorkspace.workspace, changedBoard, () => time++);
+storage.setItem(`scattered-document-v1:${firstBoardId}`, "broken");
+const backupWorkspace = loadWorkspace(storage, () => time++);
+assert.equal(backupWorkspace.recovered, true);
+assert.equal(backupWorkspace.board.title, "Legacy");
+saveDocument(storage, backupWorkspace.workspace, changedBoard, () => time++);
+const secondBoard = createDocument(storage, backupWorkspace.workspace, { title: "Second", nodes: [], edges: [] }, () => time++);
+assert.equal(secondBoard.title, "Second");
+assert.equal(backupWorkspace.workspace.boards.length, 2);
+const secondBoardId = backupWorkspace.workspace.activeId;
+const copiedBoard = duplicateDocument(storage, backupWorkspace.workspace, secondBoard, () => time++);
+assert.equal(copiedBoard.title, "Second · 2");
+assert.equal(backupWorkspace.workspace.boards.length, 3);
+assert.equal(switchDocument(storage, backupWorkspace.workspace, secondBoardId).board.title, "Second");
+captureRecovery(storage, secondBoardId, secondBoard, "clear", () => time++);
+assert.equal(hasRecovery(storage), true);
+const restoredBoard = restoreLatest(storage, backupWorkspace.workspace, { ...secondBoard, title: "Empty" }, () => time++);
+assert.equal(restoredBoard.title, "Second");
+const afterDelete = deleteDocument(storage, backupWorkspace.workspace, restoredBoard, () => time++);
+assert.ok(afterDelete && backupWorkspace.workspace.boards.length >= 1);
+const failingStorage = new FailingStorage();
+const safeWorkspace = loadWorkspace(failingStorage, () => time++);
+const safeBoardId = safeWorkspace.workspace.activeId;
+failingStorage.failWorkspace = true;
+assert.throws(() => deleteDocument(failingStorage, safeWorkspace.workspace, safeWorkspace.board, () => time++), /quota/);
+assert.notEqual(failingStorage.getItem(`scattered-document-v1:${safeBoardId}`), null);
+
 const mermaid = boardToMermaidMarkdown({
   title: "Ideas",
   nodes: [
@@ -197,6 +271,10 @@ assert.match(menuMarkup, /id="export-mermaid-button"[\s\S]*?m9 7-5 5 5 5/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
 assert.match(html, /id="import-button"[\s\S]*?M12 15V3M8 7l4-4 4 4M5 19h14/);
+assert.match(html, /id="boards-button"[\s\S]*?aria-expanded="false"[\s\S]*?class="app-logo"/);
+assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="delete-board-button"/);
+assert.match(menuMarkup, /id="search-button"[\s\S]*?id="restore-button"/);
+assert.match(html, /id="search-panel"[\s\S]*?id="search-input"[\s\S]*?id="search-previous"[\s\S]*?id="search-next"/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
 assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg>/);
@@ -209,7 +287,7 @@ assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[^>]*?orient="auto-start-reverse"[\s\S]*?class="arrowhead"/);
-assert.match(html, /id="color-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
+assert.match(html, /id="color-selection"[\s\S]*?id="duplicate-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
 assert.match(html, /id="arrow-selection"[\s\S]*?data-direction="none"[\s\S]*?arrow-head-forward[\s\S]*?arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
@@ -217,9 +295,16 @@ assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
 assert.match(app, /createBoardSvg\(board\)/);
 assert.match(app, /navigator\.canShare/);
+assert.match(app, /copySelectedGraph\(board, selectedIds\)/);
+assert.match(app, /pasteSelectedGraph\(payload, origin\)/);
+assert.match(app, /event\.key\.toLowerCase\(\) === "f"/);
+assert.match(app, /event\.key\.toLowerCase\(\) === "d"/);
+assert.match(app, /loadWorkspace\(localStorage\)/);
+assert.match(app, /function preserveForRecovery[\s\S]*?captureRecovery\(localStorage, workspace\.activeId, board, reason\)/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v22/);
+assert.match(serviceWorker, /scattered-v23/);
+assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
 assert.equal(existsSync(new URL("./pdf-export.js", import.meta.url)), false);
@@ -233,5 +318,18 @@ assert.match(app, /function clearBoard[\s\S]*?confirming-clear[\s\S]*?checkpoint
 assert.match(css, /html\[data-theme="dark"\]\s*\{[^}]*--canvas:\s*#16150f;[^}]*--paper:\s*#211f18;[^}]*--ink:\s*#eae4d6;/s);
 assert.match(css, /html\[data-theme="dark"\][\s\S]*?--note-yellow:\s*#3a321b;[\s\S]*?--note-mint:\s*#193129;[\s\S]*?--note-blue:\s*#1b2c43;[\s\S]*?--note-rose:\s*#3a222a;/);
 assert.match(css, /#connections \.edge\s*\{[^}]*outline:\s*none;[^}]*-webkit-tap-highlight-color:\s*transparent;/s);
+
+const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
+const readmeZh = readFileSync(new URL("./README.zh-CN.md", import.meta.url), "utf8");
+const license = readFileSync(new URL("./LICENSE", import.meta.url), "utf8");
+assert.match(readme, /\[简体中文\]\(README\.zh-CN\.md\)/);
+assert.match(readmeZh, /\[English\]\(README\.md\)/);
+assert.match(readme, /docs\/scattered-canvas\.png/);
+assert.match(readmeZh, /作为网页 App 打开/);
+assert.match(readme, /Install page as app/);
+assert.match(readme, /JSON[\s\S]*SVG[\s\S]*Mermaid/);
+assert.match(readmeZh, /Apple Pencil \+ 触控[\s\S]*纯触控[\s\S]*键盘 \+ 鼠标/);
+assert.match(license, /^MIT License[\s\S]*Copyright \(c\) 2026 kydchen/);
+assert.equal(existsSync(new URL("./docs/scattered-canvas.png", import.meta.url)), true);
 
 console.log("model checks passed");
