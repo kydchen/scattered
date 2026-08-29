@@ -30,15 +30,23 @@ const arrowEdges = [
   { id: "c-d", from: "c", to: "d", arrow: false },
 ];
 const forwardArrows = toggleArrowsForNodes(arrowEdges, ["a", "b"]);
-assert.deepEqual(forwardArrows.map((edge) => edge.arrow), [false, "forward", "forward", false]);
+assert.deepEqual(forwardArrows.map((edge) => edge.arrow), ["forward", "forward", "forward", false]);
 const reverseArrows = toggleArrowsForNodes(forwardArrows, ["a", "b"]);
-assert.deepEqual(reverseArrows.map((edge) => edge.arrow), [false, "reverse", "reverse", false]);
+assert.deepEqual(reverseArrows.map((edge) => edge.arrow), ["reverse", "reverse", "reverse", false]);
 assert.deepEqual(toggleArrowsForNodes(reverseArrows, ["a", "b"]).map((edge) => edge.arrow), [false, false, false, false]);
 assert.deepEqual(
   toggleArrowsForNodes([{ ...arrowEdges[1], arrow: "forward" }, { ...arrowEdges[2], arrow: "reverse" }], ["a", "b"]).map((edge) => edge.arrow),
   ["forward", "forward"],
 );
 assert.equal(toggleArrowsForNodes(arrowEdges, ["missing"]), arrowEdges);
+const hierarchyEdges = [
+  { id: "root-a", from: "root", to: "a", arrow: false },
+  { id: "root-b", from: "root", to: "b", arrow: false },
+  { id: "a-c", from: "a", to: "c", arrow: false },
+  { id: "a-d", from: "a", to: "d", arrow: false },
+];
+assert.deepEqual(toggleArrowsForNodes(hierarchyEdges, ["a", "b", "c", "d"]).map((edge) => edge.arrow), ["forward", "forward", "forward", "forward"]);
+assert.deepEqual(toggleArrowsForNodes(hierarchyEdges, ["root", "a", "b", "c", "d"]).map((edge) => edge.arrow), ["forward", "forward", "forward", "forward"]);
 assert.equal(nextArrowState(false), "forward");
 assert.equal(nextArrowState("forward"), "reverse");
 assert.equal(nextArrowState("reverse"), false);
@@ -303,7 +311,7 @@ assert.match(app, /loadWorkspace\(localStorage\)/);
 assert.match(app, /function preserveForRecovery[\s\S]*?captureRecovery\(localStorage, workspace\.activeId, board, reason\)/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v24/);
+assert.match(serviceWorker, /scattered-v25/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);

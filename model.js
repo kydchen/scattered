@@ -114,11 +114,11 @@ export function removeConnectionsForNodes(edges, nodeIds) {
 
 export function toggleArrowsForNodes(edges, nodeIds) {
   const ids = new Set(nodeIds);
-  const targets = edges.filter((edge) => ids.has(edge.from) !== ids.has(edge.to));
+  const targets = edges.filter((edge) => ids.has(edge.from) || ids.has(edge.to));
   if (targets.length === 0) return edges;
   const states = new Set(targets.map((edge) => edge.arrow));
   const arrow = states.size === 1 ? nextArrowState(targets[0].arrow) : "forward";
-  return edges.map((edge) => ids.has(edge.from) !== ids.has(edge.to) ? { ...edge, arrow } : edge);
+  return edges.map((edge) => ids.has(edge.from) || ids.has(edge.to) ? { ...edge, arrow } : edge);
 }
 
 export function copySelectedGraph(value, nodeIds) {

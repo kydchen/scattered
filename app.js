@@ -1186,10 +1186,9 @@ function updateSelectionBar() {
   const visible = selectionMode && selectedIds.size > 0;
   selectionBar.hidden = !visible;
   const connectedEdges = board.edges.filter((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
-  const boundaryEdges = connectedEdges.filter((edge) => selectedIds.has(edge.from) !== selectedIds.has(edge.to));
-  const directions = new Set(boundaryEdges.map((edge) => edge.arrow || "none"));
+  const directions = new Set(connectedEdges.map((edge) => edge.arrow || "none"));
   const direction = directions.size > 1 ? "mixed" : directions.values().next().value || "none";
-  arrowSelectionButton.disabled = boundaryEdges.length === 0;
+  arrowSelectionButton.disabled = connectedEdges.length === 0;
   updateArrowButton(arrowSelectionButton, direction, true);
   disconnectSelectionButton.disabled = connectedEdges.length === 0;
 }
