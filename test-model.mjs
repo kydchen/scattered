@@ -969,7 +969,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v28/);
+assert.match(serviceWorker, /scattered-v29/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
@@ -978,6 +978,12 @@ assert.equal(existsSync(new URL("./vendor", import.meta.url)), false);
 assert.equal(existsSync(new URL("./fonts", import.meta.url)), false);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
+assert.equal(manifest.name, "Scattered");
+assert.equal(manifest.lang, "en");
+assert.match(manifest.description, /local-first[\s\S]*Pencil, touch, and mouse/);
+assert.match(html, /property="og:image" content="https:\/\/kydchen\.github\.io\/scattered\/docs\/scattered-canvas\.png"/);
+assert.match(html, /name="twitter:card" content="summary_large_image"/);
+assert.match(html, /rel="canonical" href="https:\/\/kydchen\.github\.io\/scattered\/"/);
 assert.match(app, /const THEME_KEY = "scattered-theme"/);
 assert.match(app, /function toggleTheme[\s\S]*?localStorage\.setItem\(THEME_KEY, next\)/);
 assert.match(app, /async function replaceCurrentBoard[\s\S]*?replaceDocument[\s\S]*?checkpoint\(\)/);
@@ -988,6 +994,7 @@ assert.match(css, /#connections \.edge\s*\{[^}]*outline:\s*none;[^}]*-webkit-tap
 
 const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
 const readmeZh = readFileSync(new URL("./README.zh-CN.md", import.meta.url), "utf8");
+const contributing = readFileSync(new URL("./CONTRIBUTING.md", import.meta.url), "utf8");
 const license = readFileSync(new URL("./LICENSE", import.meta.url), "utf8");
 assert.match(readme, /\[简体中文\]\(README\.zh-CN\.md\)/);
 assert.match(readmeZh, /\[English\]\(README\.md\)/);
@@ -995,7 +1002,11 @@ assert.match(readme, /docs\/scattered-canvas\.png/);
 assert.match(readmeZh, /作为网页 App 打开/);
 assert.match(readme, /Install page as app/);
 assert.match(readme, /JSON[\s\S]*SVG[\s\S]*Mermaid/);
+assert.match(readme, /local-first[\s\S]*local recovery copy[\s\S]*CONTRIBUTING\.md/);
 assert.match(readmeZh, /Apple Pencil \+ 触控[\s\S]*纯触控[\s\S]*键盘 \+ 鼠标/);
+assert.match(readmeZh, /本地优先[\s\S]*本地恢复副本[\s\S]*CONTRIBUTING\.md/);
+assert.match(contributing, /Pencil \+ touch[\s\S]*touch only[\s\S]*keyboard \+ mouse/);
+assert.match(contributing, /npm test[\s\S]*sw\.js/);
 assert.match(license, /^MIT License[\s\S]*Copyright \(c\) 2026 kydchen/);
 assert.equal(existsSync(new URL("./docs/scattered-canvas.png", import.meta.url)), true);
 

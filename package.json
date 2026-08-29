@@ -1,7 +1,7 @@
 {
   "name": "scattered",
   "version": "1.0.0",
-  "description": "A minimalist cross-platform canvas for notes and connections.",
+  "description": "A minimalist, local-first canvas for freely arranging and connecting notes—built for Pencil, touch, and mouse.",
   "private": true,
   "type": "module",
   "scripts": {

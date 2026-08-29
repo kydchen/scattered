@@ -2,11 +2,11 @@
 
 [Open Scattered](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
 
-Scattered is a minimalist, cross-platform canvas for thinking freely. Write a note, move it anywhere, connect it only when useful, and keep thinking.
+Scattered is a minimalist, local-first canvas for freely arranging and connecting notes—built for Pencil, touch, and mouse. Write a note, move it anywhere, connect it only when useful, and keep thinking.
 
 ![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-There are no accounts, servers, templates, or forced hierarchy. Your boards stay in the current browser and remain available offline after the app has been loaded once.
+There is no account or application backend, and no template or forced hierarchy. Your boards stay in the current browser and remain available offline after the app has been loaded once.
 
 ## Install it like an app
 
@@ -24,7 +24,8 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Lasso, marquee-select, or long-press to select multiple notes
 - Move, recolor, duplicate, connect, disconnect, or delete a selection together
 - Keep multiple local boards and switch between them from the Scattered mark
-- Recover the most recently cleared, imported-over, or deleted board
+- Clear the current board without changing its title, or delete the board itself—both actions keep a local recovery copy
+- Undo a clear immediately or restore a recovery copy after clearing, importing over, or deleting
 - Search note text and jump between matches
 - Undo, redo, fit the whole board into view, and switch between light and dark modes
 - Export JSON backups, SVG vector images, or Mermaid Markdown
@@ -35,9 +36,9 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 | Input | Selection and navigation | Fast actions |
 | --- | --- | --- |
-| Apple Pencil + touch | Lasso with Pencil; pan and pinch with fingers | Use the visual selection bar; Pencil can write into search with Scribble |
+| Apple Pencil + touch | Lasso with Pencil; pan and pinch with fingers | Use the visual selection bar; write in notes and search with Scribble |
 | Touch only | Long-press a note to enter multi-select; drag to pan and pinch to zoom | Use the visual selection bar and top-right menu |
-| Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `Cmd/Ctrl+A`, `C`, `V`, `D`, `F`, `Z`; Delete/Backspace |
+| Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `Cmd/Ctrl` + `A/C/V/D/F/Z`; Delete/Backspace |
 
 ## Local data and privacy
 
@@ -75,4 +76,4 @@ Scattered is not affiliated with Scapple or Literature & Latte.
 
 ## License
 
-Scattered is open source under the [MIT License](LICENSE). Issues and focused pull requests are welcome.
+Scattered is open source under the [MIT License](LICENSE). Issues and focused pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).

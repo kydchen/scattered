@@ -2,11 +2,11 @@
 
 [在线使用](https://kydchen.github.io/scattered/) · [English](README.md)
 
-Scattered 是一个极简、跨平台的自由思考画布。写下一张卡片，把它放到任何位置，只在需要时连接，然后继续思考。
+Scattered 是一个极简、本地优先的自由思考画布，适配 Pencil、触控和键鼠。写下一张卡片，把它放到任何位置，只在需要时连接，然后继续思考。
 
 ![自由放置并连接卡片的 Scattered 画布](docs/scattered-canvas.png)
 
-它没有账户、服务器、模板或强制层级。画布保存在当前浏览器中，首次加载后也可以离线使用。
+它不需要账户或应用后端，也没有模板或强制层级。画布保存在当前浏览器中，首次加载后也可以离线使用。
 
 ## 像普通 App 一样安装
 
@@ -24,7 +24,8 @@ Scattered 可以直接在浏览器中使用，也可以安装成网页 App，获
 - 使用 Pencil 圈选、鼠标框选或触控长按进行多选
 - 集体移动、改色、复制、连接、断线或删除所选卡片
 - 在本地保存多个画布，通过左上角 Scattered 标志切换
-- 恢复最近被清空、导入覆盖或删除的画布
+- 清空时保留当前画布及标题；删除则移除整张画布，两种操作都会留下本地恢复副本
+- 清空后可以立即撤销，也可以恢复最近一次清空、导入覆盖或删除前的副本
 - 搜索卡片文字并依次跳转到结果
 - 撤销、重做、一键显示完整画布，并切换明暗模式
 - 导出 JSON 备份、SVG 矢量图或 Mermaid Markdown
@@ -35,9 +36,9 @@ Scattered 可以直接在浏览器中使用，也可以安装成网页 App，获
 
 | 输入方式 | 选择与移动 | 快速操作 |
 | --- | --- | --- |
-| Apple Pencil + 触控 | Pencil 圈选；手指平移和双指缩放 | 使用可视化多选栏；也可以用 Scribble 在搜索框手写输入 |
+| Apple Pencil + 触控 | Pencil 圈选；手指平移和双指缩放 | 使用可视化多选栏；也可以用 Scribble 在卡片和搜索框中手写输入 |
 | 纯触控 | 长按卡片进入多选；拖动平移、双指缩放 | 使用可视化多选栏和右上角菜单 |
-| 键盘 + 鼠标 | Shift 点击或鼠标拖框多选；按住空格拖动画布 | `Cmd/Ctrl+A`、`C`、`V`、`D`、`F`、`Z`；Delete/Backspace |
+| 键盘 + 鼠标 | Shift 点击或鼠标拖框多选；按住空格拖动画布 | `Cmd/Ctrl` + `A/C/V/D/F/Z`；Delete/Backspace |
 
 ## 本地数据与隐私
 
@@ -75,4 +76,4 @@ Scattered 与 Scapple 及 Literature & Latte 没有关联。
 
 ## 许可证
 
-Scattered 以 [MIT License](LICENSE) 开源，欢迎提交问题以及边界清晰的 Pull Request。
+Scattered 以 [MIT License](LICENSE) 开源，欢迎提交问题以及边界清晰的 Pull Request；参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
