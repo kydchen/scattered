@@ -250,6 +250,7 @@ const applyResizeSource = app.match(/function applyResize[\s\S]*?\n}/)?.[0] ?? "
 const pointerDownSource = app.match(/function onPointerDown[\s\S]*?\n}\n\nfunction onPointerMove/)?.[0] ?? "";
 const doubleClickSource = app.match(/function onDoubleClick[\s\S]*?\n}\n\nfunction createNode/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
+const selectionArrowMarkup = html.match(/<button id="arrow-selection"[\s\S]*?<\/button>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
   app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? ""
 ));
@@ -296,7 +297,8 @@ assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[^>]*?orient="auto-start-reverse"[\s\S]*?class="arrowhead"/);
 assert.match(html, /id="color-selection"[\s\S]*?id="duplicate-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
-assert.match(html, /id="arrow-selection"[\s\S]*?data-direction="none"[\s\S]*?arrow-head-forward[\s\S]*?arrow-head-reverse/);
+assert.match(selectionArrowMarkup, /M4 12h16[\s\S]*?M15 7l5 5-5 5/);
+assert.doesNotMatch(selectionArrowMarkup, /data-direction|aria-pressed|arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
 assert.doesNotMatch(css, /@media print|@page/);
@@ -311,7 +313,7 @@ assert.match(app, /loadWorkspace\(localStorage\)/);
 assert.match(app, /function preserveForRecovery[\s\S]*?captureRecovery\(localStorage, workspace\.activeId, board, reason\)/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v25/);
+assert.match(serviceWorker, /scattered-v26/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);

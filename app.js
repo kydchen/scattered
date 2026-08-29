@@ -1189,21 +1189,24 @@ function updateSelectionBar() {
   const directions = new Set(connectedEdges.map((edge) => edge.arrow || "none"));
   const direction = directions.size > 1 ? "mixed" : directions.values().next().value || "none";
   arrowSelectionButton.disabled = connectedEdges.length === 0;
-  updateArrowButton(arrowSelectionButton, direction, true);
+  arrowSelectionButton.setAttribute("aria-label", `为所选标签的连线${arrowAction(direction)}`);
   disconnectSelectionButton.disabled = connectedEdges.length === 0;
 }
 
-function updateArrowButton(button, direction, multiple = false) {
+function updateArrowButton(button, direction) {
   button.dataset.direction = direction;
   button.setAttribute("aria-pressed", direction === "none" ? "false" : direction === "mixed" ? "mixed" : "true");
-  const action = direction === "forward"
+  button.setAttribute("aria-label", arrowAction(direction));
+}
+
+function arrowAction(direction) {
+  return direction === "forward"
     ? "反转箭头"
     : direction === "reverse"
       ? "移除箭头"
       : direction === "mixed"
         ? "统一为正向箭头"
         : "添加正向箭头";
-  button.setAttribute("aria-label", multiple ? `为所选标签的连线${action}` : action);
 }
 
 function openColorPalette(ids, anchor, preferBelow = false) {

@@ -1134,8 +1134,6 @@ html[data-theme="dark"] .theme-sun {
   touch-action: manipulation;
 }
 
-.selection-bar button[aria-pressed="true"],
-.selection-bar button[aria-pressed="mixed"],
 .edge-toolbar button[aria-pressed="true"] {
   background: var(--thread-soft);
   color: var(--thread);
