@@ -1,5 +1,5 @@
-const CACHE = "scattered-v20";
-const ASSETS = ["./", "./index.html", "./styles.css", "./model.js", "./app.js", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+const CACHE = "scattered-v21";
+const ASSETS = ["./", "./index.html", "./styles.css", "./model.js", "./pdf-export.js", "./app.js", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

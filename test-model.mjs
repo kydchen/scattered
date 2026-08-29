@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { EMPTY_NOTE_PROMPTS, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { fitPdfPage, wrapPdfText } from "./pdf-export.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -88,6 +89,13 @@ const reverseCurve = connectionCurve({ x: 100, y: 100 }, { x: 0, y: 0 });
 assert.match(forwardCurve.path, / C /);
 assert.deepEqual(forwardCurve.midpoint, reverseCurve.midpoint);
 assert.notDeepEqual(forwardCurve.midpoint, { x: 50, y: 50 });
+assert.ok(forwardCurve.control1 && forwardCurve.control2);
+
+const fittedPdf = fitPdfPage({ left: -2000, top: -1000, right: 4500, bottom: 2500 });
+assert.ok(fittedPdf.width <= 1440 && fittedPdf.height <= 1080);
+assert.ok(fittedPdf.offsetX >= 36 && fittedPdf.offsetY >= 36);
+assert.equal((fittedPdf.width - (4500 - -2000) * fittedPdf.scale) / 2, fittedPdf.offsetX);
+assert.deepEqual(wrapPdfText("中文测试\nlongword", 20, (value) => [...value].length * 10), ["中文", "测试", "lo", "ng", "wo", "rd"]);
 
 const restored = normalizeBoard({
   title: "  Project  ",
@@ -185,9 +193,18 @@ assert.match(html, /id="color-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="
 assert.match(html, /id="arrow-selection"[\s\S]*?data-direction="none"[\s\S]*?arrow-head-forward[\s\S]*?arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
-assert.match(css, /@media print/);
+assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
-assert.match(app, /window\.print\(\)/);
+assert.match(app, /createBoardPdf\(board\)/);
+assert.match(app, /navigator\.canShare/);
+assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView/);
+const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
+assert.match(serviceWorker, /scattered-v21/);
+assert.match(serviceWorker, /\.\/pdf-export\.js/);
+assert.doesNotMatch(serviceWorker, /pdf-lib-1\.17\.1|NotoSansSC-Regular/);
+assert.ok(statSync(new URL("./vendor/pdf-lib-1.17.1.min.js", import.meta.url)).size > 500_000);
+assert.ok(statSync(new URL("./vendor/fontkit-1.1.1.min.js", import.meta.url)).size > 700_000);
+assert.ok(statSync(new URL("./fonts/NotoSansSC-Regular.ttf", import.meta.url)).size > 10_000_000);
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
 assert.match(app, /const THEME_KEY = "scattered-theme"/);

@@ -1,4 +1,5 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { createBoardPdf } from "./pdf-export.js";
 
 const STORAGE_KEY = "scattered-board-v1";
 const THEME_KEY = "scattered-theme";
@@ -88,8 +89,6 @@ window.addEventListener("blur", () => {
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
 });
-window.addEventListener("beforeprint", preparePrintView);
-
 menuButton.addEventListener("click", (event) => {
   event.stopPropagation();
   setMenuOpen(menu.hidden);
@@ -1274,11 +1273,11 @@ function updateHistoryControls() {
   historyTools.hidden = board.nodes.length === 0 && undoStack.length === 0 && redoStack.length === 0;
 }
 
-function prepareExport() {
+function prepareExport(closeMenu = true) {
   finishBoardTitle();
   finishEdgeLabel();
   finishEditing();
-  setMenuOpen(false);
+  if (closeMenu) setMenuOpen(false);
 }
 
 function exportBoard() {
@@ -1291,29 +1290,47 @@ function exportMermaid() {
   downloadText(boardToMermaidMarkdown(board), "text/markdown;charset=utf-8", "md");
 }
 
-function exportPdf() {
-  prepareExport();
-  preparePrintView();
-  window.print();
-}
-
-function preparePrintView() {
-  const bounds = boardBounds();
-  const printWidth = 273 / 25.4 * 96;
-  const printHeight = 186 / 25.4 * 96;
-  const view = bounds
-    ? fitBoundsToViewport(bounds, { width: printWidth, height: printHeight }, 36)
-    : { x: printWidth / 2, y: printHeight / 2, scale: 1 };
-  world.style.setProperty("--print-x", `${view.x}px`);
-  world.style.setProperty("--print-y", `${view.y}px`);
-  world.style.setProperty("--print-scale", String(view.scale));
+async function exportPdf(event) {
+  event.stopPropagation();
+  prepareExport(false);
+  exportPdfButton.disabled = true;
+  exportPdfButton.classList.add("exporting");
+  exportPdfButton.setAttribute("aria-busy", "true");
+  try {
+    const bytes = await createBoardPdf(board);
+    const filename = `${exportFileName()}.pdf`;
+    const file = new File([bytes], filename, { type: "application/pdf" });
+    const shareData = { files: [file], title: board.title || "Scattered" };
+    const canShare = navigator.maxTouchPoints > 0 && navigator.share && navigator.canShare?.(shareData);
+    if (canShare) {
+      try {
+        await navigator.share(shareData);
+        setMenuOpen(false);
+        return;
+      } catch (error) {
+        if (error.name === "AbortError") return;
+      }
+    }
+    downloadBlob(file, filename);
+    setMenuOpen(false);
+  } catch {
+    showToast("PDF 导出失败");
+  } finally {
+    exportPdfButton.disabled = false;
+    exportPdfButton.classList.remove("exporting");
+    exportPdfButton.removeAttribute("aria-busy");
+  }
 }
 
 function downloadText(content, type, extension) {
   const blob = new Blob([content], { type });
+  downloadBlob(blob, `${exportFileName()}.${extension}`);
+}
+
+function downloadBlob(blob, filename) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${exportFileName()}.${extension}`;
+  link.download = filename;
   document.body.append(link);
   link.click();
   link.remove();

@@ -1022,75 +1022,12 @@ html[data-theme="dark"] .theme-sun {
   }
 }
 
-@page {
-  size: A4 landscape;
-  margin: 12mm;
+#export-pdf-button.exporting svg {
+  animation: export-pulse 0.8s ease-in-out infinite alternate;
 }
 
-@media print {
-  :root,
-  html[data-theme="dark"] {
-    color-scheme: light;
-    --canvas: #ffffff;
-    --paper: #ffffff;
-    --ink: #202735;
-    --thread: #4e74b8;
-    --node-border: #dfe4ec;
-    --placeholder: #98a1ae;
-    --note-yellow: #fff4c7;
-    --note-yellow-border: #e9dca5;
-    --note-mint: #e2f3e9;
-    --note-mint-border: #c5dfd0;
-    --note-blue: #e5effc;
-    --note-blue-border: #c8d9ef;
-    --note-rose: #f8e7ed;
-    --note-rose-border: #e6ccd5;
-  }
-
-  html,
-  body {
-    width: auto;
-    height: auto;
-    overflow: visible;
-    background: #ffffff;
-  }
-
-  #viewport {
-    position: relative;
-    width: 273mm;
-    height: 186mm;
-    overflow: hidden;
-    background: #ffffff;
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
-  }
-
-  #viewport > :not(#world) {
-    display: none !important;
-  }
-
-  #world {
-    transform: translate3d(var(--print-x, 0), var(--print-y, 0), 0) scale(var(--print-scale, 1)) !important;
-    will-change: auto;
-  }
-
-  .node,
-  .node.selected,
-  .node:focus-visible {
-    border-color: var(--note-border, var(--node-border));
-    box-shadow: none;
-  }
-
-  .node-actions,
-  .resize-handle,
-  .link-handle {
-    display: none !important;
-  }
-
-  #connections .edge.selected .edge-line,
-  #connections .edge:focus-visible .edge-line {
-    stroke-width: 1.85;
-  }
+@keyframes export-pulse {
+  to { opacity: 0.28; }
 }
 
 @media (prefers-reduced-motion: reduce) {

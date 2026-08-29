@@ -237,7 +237,12 @@ export function connectionCurve(from, to) {
   const dy = to.y - from.y;
   const distance = Math.hypot(dx, dy);
   if (distance < 0.001) {
-    return { path: `M ${from.x} ${from.y} L ${to.x} ${to.y}`, midpoint: { ...from } };
+    return {
+      path: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
+      midpoint: { ...from },
+      control1: { ...from },
+      control2: { ...to },
+    };
   }
   const canonicalDirection = dx > 0 || (dx === 0 && dy >= 0) ? 1 : -1;
   const curve = clamp(distance * 0.08, 10, 36);
@@ -251,6 +256,8 @@ export function connectionCurve(from, to) {
       x: (from.x + 3 * control1.x + 3 * control2.x + to.x) / 8,
       y: (from.y + 3 * control1.y + 3 * control2.y + to.y) / 8,
     },
+    control1,
+    control2,
   };
 }
 
