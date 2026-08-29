@@ -1,4 +1,7 @@
 export const BOARD_VERSION = 4;
+export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
+export const MAX_IMPORT_NODES = 500;
+export const MAX_IMPORT_EDGES = 1_000;
 export const EMPTY_NOTE_PROMPTS = [
   "遇有所得，即书投囊中",
   "Catch the thought.",
@@ -7,6 +10,9 @@ export const EMPTY_NOTE_PROMPTS = [
   "ひらめきを、ここに。",
 ];
 const NOTE_COLORS = new Set(["plain", "yellow", "mint", "blue", "rose"]);
+const IMPORT_VERSIONS = new Set([3, 4]);
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const MAX_IMPORT_COORDINATE = 1_000_000;
 
 export function blankBoard() {
   return {
@@ -16,6 +22,82 @@ export function blankBoard() {
     edges: [],
     view: { x: 0, y: 0, scale: 1 },
   };
+}
+
+export function parseImportedBoard(encoded) {
+  if (typeof encoded !== "string") throw new Error("备份格式不正确");
+  if (new TextEncoder().encode(encoded).byteLength > MAX_IMPORT_BYTES) throw new Error("备份文件过大（上限 2 MB）");
+  let value;
+  try {
+    value = JSON.parse(encoded);
+  } catch {
+    throw new Error("备份格式不正确");
+  }
+  validateImportedBoard(value);
+  return normalizeBoard(value);
+}
+
+function validateImportedBoard(value) {
+  if (!isPlainObject(value) || !IMPORT_VERSIONS.has(value.version)) throw new Error("不支持这个备份版本");
+  if (
+    typeof value.title !== "string"
+    || !value.title.trim()
+    || value.title !== value.title.trim()
+    || value.title.length > 120
+    || !Array.isArray(value.nodes)
+    || !Array.isArray(value.edges)
+    || !isPlainObject(value.view)
+  ) throw new Error("备份格式不正确");
+  if (value.nodes.length > MAX_IMPORT_NODES || value.edges.length > MAX_IMPORT_EDGES) throw new Error("备份内容过多");
+
+  const nodeIds = new Set();
+  value.nodes.forEach((node) => {
+    if (
+      !isPlainObject(node)
+      || !validImportId(node.id)
+      || nodeIds.has(node.id)
+      || typeof node.text !== "string"
+      || node.text.length > 20_000
+      || !validImportCoordinate(node.x)
+      || !validImportCoordinate(node.y)
+      || !NOTE_COLORS.has(node.color)
+      || !Number.isFinite(node.width)
+      || node.width < 160
+      || node.width > 520
+    ) throw new Error("备份格式不正确");
+    nodeIds.add(node.id);
+  });
+
+  const edgeIds = new Set();
+  const pairs = new Set();
+  value.edges.forEach((edge) => {
+    const pair = edgeKey(edge?.from, edge?.to);
+    const validArrow = value.version === 3
+      ? typeof edge?.arrow === "boolean"
+      : edge?.arrow === false || edge?.arrow === "forward" || edge?.arrow === "reverse";
+    if (
+      !isPlainObject(edge)
+      || !validImportEdgeId(edge.id, edge.from, edge.to)
+      || edgeIds.has(edge.id)
+      || !nodeIds.has(edge.from)
+      || !nodeIds.has(edge.to)
+      || edge.from === edge.to
+      || pairs.has(pair)
+      || !validArrow
+      || typeof edge.label !== "string"
+      || edge.label.length > 120
+    ) throw new Error("备份格式不正确");
+    edgeIds.add(edge.id);
+    pairs.add(pair);
+  });
+
+  if (
+    !validImportCoordinate(value.view.x)
+    || !validImportCoordinate(value.view.y)
+    || !Number.isFinite(value.view.scale)
+    || value.view.scale < 0.35
+    || value.view.scale > 2
+  ) throw new Error("备份格式不正确");
 }
 
 export function normalizeBoard(value) {
@@ -297,6 +379,25 @@ export function connectionCurve(from, to) {
     control1,
     control2,
   };
+}
+
+function validImportId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && !CONTROL_CHARACTERS.test(value);
+}
+
+function validImportEdgeId(value, from, to) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 257
+    && (!CONTROL_CHARACTERS.test(value) || value === edgeKey(from, to));
+}
+
+function validImportCoordinate(value) {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_IMPORT_COORDINATE;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function finiteNumber(value, fallback) {

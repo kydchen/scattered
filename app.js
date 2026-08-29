@@ -1,6 +1,6 @@
-import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { MAX_IMPORT_BYTES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { captureRecovery, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, switchDocument } from "./workspace.js";
+import { captureRecovery, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 
 const THEME_KEY = "scattered-theme";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
@@ -65,6 +65,8 @@ let selectionMode = false;
 let mode = null;
 let saveTimer = null;
 let toastTimer = null;
+let boardDirty = false;
+let saveFailureMessage = "";
 let edgeRenderFrame = 0;
 let palmGuardUntil = 0;
 let lastPenUpAt = 0;
@@ -87,6 +89,7 @@ updateHistoryControls();
 updateThemeControl();
 renderBoardList();
 updateRecoveryControl();
+if (!storageReady) markSaveFailure("本地存储不可用，请导出备份");
 
 viewport.addEventListener("pointerdown", onPointerDown);
 viewport.addEventListener("pointermove", onPointerMove);
@@ -116,15 +119,21 @@ window.addEventListener("blur", () => {
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
 });
-window.addEventListener("pagehide", saveBoardNow);
+window.addEventListener("pagehide", () => {
+  stagePendingSave();
+  void saveBoardNow();
+});
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") saveBoardNow();
+  if (document.visibilityState === "hidden") {
+    stagePendingSave();
+    void saveBoardNow();
+  }
 });
 boardsButton.addEventListener("click", (event) => {
   event.stopPropagation();
   if (boardPicker.hidden) {
     finishCurrentInput();
-    saveBoardNow();
+    void saveBoardNow();
   }
   setBoardPickerOpen(boardPicker.hidden);
 });
@@ -619,39 +628,33 @@ function renderBoardList() {
   boardList.replaceChildren(fragment);
 }
 
-function newBoard(event) {
+async function newBoard(event) {
   event?.stopPropagation();
-  if (!storageReady) return showToast("本地存储不可用");
-  finishCurrentInput();
-  saveBoardNow();
+  if (!await commitCurrentBoard()) return;
   try {
-    replaceBoard(createDocument(localStorage, workspace));
+    replaceBoard(await withWorkspaceLock(() => createDocument(localStorage, workspace)));
     setBoardPickerOpen(false);
   } catch {
     showToast("无法新建画布，请先导出备份");
   }
 }
 
-function duplicateBoard(event) {
+async function duplicateBoard(event) {
   event?.stopPropagation();
-  if (!storageReady) return showToast("本地存储不可用");
-  finishCurrentInput();
-  saveBoardNow();
+  if (!await commitCurrentBoard()) return;
   try {
-    replaceBoard(duplicateDocument(localStorage, workspace, board));
+    replaceBoard(await withWorkspaceLock(() => duplicateDocument(localStorage, workspace, board)));
     setBoardPickerOpen(false);
   } catch {
     showToast("无法复制画布，请先导出备份");
   }
 }
 
-function removeCurrentBoard(event) {
+async function removeCurrentBoard(event) {
   event?.stopPropagation();
-  if (!storageReady) return showToast("本地存储不可用");
-  finishCurrentInput();
-  saveBoardNow();
+  if (!await commitCurrentBoard()) return;
   try {
-    replaceBoard(deleteDocument(localStorage, workspace, board));
+    replaceBoard(await withWorkspaceLock(() => deleteDocument(localStorage, workspace, board)));
     updateRecoveryControl();
     setBoardPickerOpen(false);
   } catch {
@@ -659,15 +662,14 @@ function removeCurrentBoard(event) {
   }
 }
 
-function openBoard(id) {
-  if (id === workspace.activeId || !storageReady) {
+async function openBoard(id) {
+  if (id === workspace.activeId) {
     setBoardPickerOpen(false);
     return;
   }
-  finishCurrentInput();
-  saveBoardNow();
+  if (!await commitCurrentBoard()) return;
   try {
-    const loaded = switchDocument(localStorage, workspace, id);
+    const loaded = await withWorkspaceLock(() => switchDocument(localStorage, workspace, id));
     if (!loaded) return;
     replaceBoard(loaded.board);
     setBoardPickerOpen(false);
@@ -679,6 +681,7 @@ function openBoard(id) {
 function replaceBoard(nextBoard) {
   cancelGesture();
   board = normalizeBoard(nextBoard);
+  boardDirty = false;
   selectedIds.clear();
   selectionMode = false;
   selectedEdgeId = null;
@@ -691,13 +694,14 @@ function replaceBoard(nextBoard) {
   updateHistoryControls();
 }
 
-function restoreRecentBoard(event) {
+async function restoreRecentBoard(event) {
   event?.stopPropagation();
-  if (!storageReady) return;
-  finishCurrentInput();
+  if (!await commitCurrentBoard()) return;
   try {
-    const restored = restoreLatest(localStorage, workspace, board);
-    if (restored) replaceBoard(restored);
+    const restored = await withWorkspaceLock(() => restoreLatest(localStorage, workspace, board));
+    if (restored) {
+      replaceBoard(restored);
+    }
     updateRecoveryControl();
     setBoardPickerOpen(false);
     setMenuOpen(false);
@@ -718,7 +722,10 @@ function finishCurrentInput() {
 }
 
 function preserveForRecovery(reason) {
-  if (!storageReady) return true;
+  if (!storageReady) {
+    markSaveFailure("本地存储不可用，请导出备份");
+    return false;
+  }
   try {
     captureRecovery(localStorage, workspace.activeId, board, reason);
     updateRecoveryControl();
@@ -1572,36 +1579,111 @@ function initializeWorkspace() {
 }
 
 function scheduleSave() {
+  boardDirty = true;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveBoardNow, 180);
+  saveTimer = setTimeout(() => { void saveBoardNow(); }, 180);
 }
 
-function saveBoardNow() {
-  clearTimeout(saveTimer);
-  saveTimer = null;
+function stagePendingSave() {
   if (!storageReady) return;
   syncOpenInputs();
+  if (!boardDirty) return;
   try {
-    saveDocument(localStorage, workspace, board);
-    renderBoardList();
+    stagePendingDocument(localStorage, workspace, board);
   } catch {
-    showToast("自动保存失败，请先导出备份");
+    markSaveFailure("自动保存失败，请先导出备份");
   }
+}
+
+async function saveBoardNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  syncOpenInputs();
+  if (!storageReady) {
+    markSaveFailure("本地存储不可用，请导出备份");
+    return false;
+  }
+  if (!boardDirty) return true;
+  try {
+    return await withWorkspaceLock(() => {
+      const previousId = workspace.activeId;
+      const saved = saveDocument(localStorage, workspace, board);
+      const conflicted = workspace.activeId !== previousId;
+      if (conflicted) {
+        cancelGesture();
+        closeSearch();
+        board = saved;
+        renderAll();
+        applyView();
+      }
+      boardDirty = false;
+      clearPendingDocument(localStorage);
+      clearSaveFailure();
+      renderBoardList();
+      if (conflicted) showToast("检测到另一页面的修改，当前内容已另存为副本");
+      return true;
+    });
+  } catch {
+    markSaveFailure("自动保存失败，请先导出备份");
+    return false;
+  }
+}
+
+async function commitCurrentBoard() {
+  finishCurrentInput();
+  return saveBoardNow();
+}
+
+async function replaceCurrentBoard(nextBoard, recoveryReason) {
+  if (!await commitCurrentBoard()) return false;
+  const previousId = workspace.activeId;
+  let saved;
+  try {
+    saved = await withWorkspaceLock(() => {
+      if (!preserveForRecovery(recoveryReason)) return null;
+      return saveDocument(localStorage, workspace, nextBoard);
+    });
+    if (!saved) return false;
+    clearSaveFailure();
+  } catch {
+    markSaveFailure("自动保存失败，请先导出备份");
+    return false;
+  }
+  cancelGesture();
+  closeSearch();
+  checkpoint();
+  board = saved;
+  boardDirty = false;
+  selectedIds.clear();
+  selectionMode = false;
+  selectedEdgeId = null;
+  renderAll();
+  applyView();
+  renderBoardList();
+  updateRecoveryControl();
+  if (workspace.activeId !== previousId) showToast("检测到另一页面的修改，当前内容已另存为副本");
+  return true;
 }
 
 function syncOpenInputs() {
   const nextTitle = !boardTitleEditor.hidden ? boardTitleEditor.value.trim().slice(0, 120) || "Untitled" : board.title;
   const openEdge = !edgeLabelEditor.hidden ? findEdge(edgeLabelEditor.dataset.edgeId, false) : null;
   const nextEdgeLabel = openEdge ? edgeLabelEditor.value.trim().slice(0, 120) : null;
-  if (nextTitle !== board.title || (openEdge && nextEdgeLabel !== openEdge.label)) checkpoint();
+  let changed = nextTitle !== board.title || (openEdge && nextEdgeLabel !== openEdge.label);
+  if (changed) checkpoint();
   board.title = nextTitle;
   if (!edgeLabelEditor.hidden) {
     if (openEdge) openEdge.label = nextEdgeLabel;
   }
   document.querySelectorAll(".node.editing").forEach((element) => {
     const node = findNode(element.dataset.id, false);
-    if (node) node.text = element.querySelector(".node-editor").value.slice(0, 20_000);
+    if (!node) return;
+    const nextText = element.querySelector(".node-editor").value.slice(0, 20_000);
+    if (node.text !== nextText) changed = true;
+    node.text = nextText;
   });
+  if (changed) boardDirty = true;
+  return changed;
 }
 
 function snapshotState() {
@@ -1609,6 +1691,7 @@ function snapshotState() {
     title: board.title,
     nodes: board.nodes,
     edges: board.edges,
+    view: board.view,
     selectedIds: [...selectedIds],
     selectionMode,
   });
@@ -1646,12 +1729,14 @@ function applyHistory(source, target) {
   board.title = restored.title || "Untitled";
   board.nodes = restored.nodes;
   board.edges = restored.edges;
+  board.view = restored.view || board.view;
   const existingIds = new Set(board.nodes.map((node) => node.id));
   selectedIds.clear();
   restored.selectedIds.filter((id) => existingIds.has(id)).forEach((id) => selectedIds.add(id));
   selectionMode = restored.selectionMode && selectedIds.size > 0;
   selectedEdgeId = null;
   renderAll();
+  applyView();
   scheduleSave();
   updateHistoryControls();
 }
@@ -1736,17 +1821,9 @@ async function importBoard(event) {
   event.target.value = "";
   if (!file) return;
   try {
-    const imported = normalizeBoard(JSON.parse(await file.text()));
-    checkpoint();
-    if (!preserveForRecovery("import")) return;
-    board = imported;
-    selectedIds.clear();
-    selectionMode = false;
-    selectedEdgeId = null;
-    renderAll();
-    applyView();
-    scheduleSave();
-    updateRecoveryControl();
+    if (file.size > MAX_IMPORT_BYTES) throw new Error("备份文件过大（上限 2 MB）");
+    const imported = parseImportedBoard(await file.text());
+    await replaceCurrentBoard(imported, "import");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "无法导入这个文件");
   } finally {
@@ -1754,32 +1831,45 @@ async function importBoard(event) {
   }
 }
 
-function clearBoard() {
+async function clearBoard() {
   if (!menu.classList.contains("confirming-clear")) {
     menu.classList.add("confirming-clear");
     cancelClearButton.hidden = false;
     clearButton.setAttribute("aria-label", "确认清空画布");
     return;
   }
-  checkpoint();
-  if (!preserveForRecovery("clear")) return;
-  board = blankBoard();
-  selectedIds.clear();
-  selectionMode = false;
-  selectedEdgeId = null;
-  renderAll();
-  applyView();
-  scheduleSave();
-  updateRecoveryControl();
-  setMenuOpen(false);
+  if (await replaceCurrentBoard(blankBoard(), "clear")) setMenuOpen(false);
 }
 
-function showToast(message) {
+function markSaveFailure(message) {
+  saveFailureMessage = message;
+  showToast(message, true);
+}
+
+function clearSaveFailure() {
+  saveFailureMessage = "";
+  if (toast?.dataset.persistent === "true") {
+    toast.hidden = true;
+    delete toast.dataset.persistent;
+  }
+}
+
+function showToast(message, persistent = false) {
   if (!toast) return;
   clearTimeout(toastTimer);
   toast.textContent = message;
   toast.hidden = false;
-  toastTimer = setTimeout(() => { toast.hidden = true; }, 1800);
+  toast.dataset.persistent = String(persistent);
+  if (!persistent) {
+    toastTimer = setTimeout(() => {
+      if (saveFailureMessage) {
+        toast.textContent = saveFailureMessage;
+        toast.dataset.persistent = "true";
+      } else {
+        toast.hidden = true;
+      }
+    }, 1800);
+  }
 }
 
 function findNode(id, required = true) {
