@@ -689,18 +689,39 @@ button {
 }
 
 .board-picker-tools button {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   padding: 0;
-  border-radius: 20px;
+  border-radius: 22px;
   background: var(--control);
 }
 
 .board-picker-tools .danger {
   margin-left: auto;
   color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.board-picker.confirming-delete > :not(.board-picker-tools),
+.board-picker.confirming-delete .board-picker-tools > :not(#cancel-delete-board-button):not(#delete-board-button) {
+  display: none;
+}
+
+.board-picker.confirming-delete {
+  width: auto;
+}
+
+.board-picker.confirming-delete .board-picker-tools {
+  padding-bottom: 0;
+}
+
+.board-picker.confirming-delete .danger {
+  margin-left: 0;
+}
+
+.board-picker.confirming-delete #delete-board-button {
   background: var(--danger-soft);
 }
 
@@ -923,6 +944,12 @@ button {
 
 .menu .danger {
   color: var(--danger);
+}
+
+.board-picker button:disabled,
+.menu button:disabled {
+  opacity: 0.48;
+  pointer-events: none;
 }
 
 .menu.confirming-clear > :not(#cancel-clear-button):not(#clear-button) {

@@ -45,7 +45,7 @@ export function stagePendingDocument(storage, workspace, board, now = Date.now) 
 }
 
 export function clearPendingDocument(storage = localStorage) {
-  try { storage.removeItem(PENDING_KEY); } catch {}
+  removePendingKey(storage, PENDING_KEY);
 }
 
 export function loadWorkspace(storage = localStorage, now = Date.now) {
@@ -90,12 +90,27 @@ export function saveDocument(storage, workspace, board, now = Date.now, options 
   ensureMetadata(nextWorkspace, id, normalized.title, savedAt, revision);
   nextWorkspace.activeId = id;
   if (!sameBoard || !primary?.revision) {
-    persistDocument(storage, id, normalized, revision, savedAt, nextWorkspace, options.pendingId);
+    const shouldRecover = typeof options.recoveryReason === "string"
+      && options.recoveryReason
+      && stored.board
+      && !sameContent;
+    const previousRecovery = shouldRecover ? storage.getItem(RECOVERY_KEY) : null;
+    try {
+      if (shouldRecover) captureRecovery(storage, id, stored.board, options.recoveryReason, now);
+      persistDocument(storage, id, normalized, revision, savedAt, nextWorkspace, options.pendingId);
+    } catch (error) {
+      if (shouldRecover) restoreStorageItem(storage, RECOVERY_KEY, previousRecovery);
+      throw error;
+    }
   } else {
     writeWorkspace(storage, nextWorkspace);
   }
   applyWorkspace(workspace, nextWorkspace);
   return normalized;
+}
+
+export function replaceDocument(storage, workspace, nextBoard, reason, now = Date.now) {
+  return saveDocument(storage, workspace, nextBoard, now, { recoveryReason: reason || "replace" });
 }
 
 export function createDocument(storage, workspace, board = blankBoard(), now = Date.now) {
@@ -129,17 +144,36 @@ export function duplicateDocument(storage, workspace, board, now = Date.now) {
   return createDocument(storage, workspace, copy, now);
 }
 
-export function deleteDocument(storage, workspace, board, now = Date.now) {
+export function deleteDocument(storage, workspace, now = Date.now) {
+  const removedId = workspace.activeId;
+  const nextWorkspace = mergeWorkspace(storage, workspace);
+  if (nextWorkspace.tombstones.some((item) => item.id === removedId)) {
+    const current = readDocument(storage, nextWorkspace.activeId).board;
+    if (!current) throw new Error("The active board is unavailable");
+    applyWorkspace(workspace, nextWorkspace);
+    return current;
+  }
+
+  const removed = readDocument(storage, removedId);
+  if (nextWorkspace.boards.some((item) => item.id === removedId) && !removed.board) {
+    throw new Error("The board to delete is unavailable");
+  }
+  if (nextWorkspace.boards.length === 1
+    && nextWorkspace.boards[0].id === removedId
+    && removed.board
+    && boardContentMatches(removed.board, blankBoard())) {
+    applyWorkspace(workspace, nextWorkspace);
+    return removed.board;
+  }
+
   const previousRecovery = storage.getItem(RECOVERY_KEY);
   const previousWorkspace = storage.getItem(WORKSPACE_KEY);
   const previousWorkspaceBackup = storage.getItem(WORKSPACE_BACKUP_KEY);
-  const removedId = workspace.activeId;
   let nextBoard;
   let createdId = null;
-  let nextWorkspace;
+  let previousCreatedDocument = null;
   try {
-    captureRecovery(storage, removedId, board, "delete", now);
-    nextWorkspace = mergeWorkspace(storage, workspace);
+    if (removed.board) captureRecovery(storage, removedId, removed.board, "delete", now);
     const deletedAt = now();
     nextWorkspace.boards = nextWorkspace.boards.filter((item) => item.id !== removedId);
     nextWorkspace.tombstones = mergeTombstones(nextWorkspace.tombstones, [{ id: removedId, deletedAt }]);
@@ -151,21 +185,24 @@ export function deleteDocument(storage, workspace, board, now = Date.now) {
       const revision = createId();
       nextWorkspace.activeId = id;
       nextWorkspace.boards = [{ id, title: nextBoard.title, updatedAt: savedAt, revision }];
+      previousCreatedDocument = storage.getItem(boardKey(id));
       storage.setItem(boardKey(id), encodeDocument(nextBoard, revision, savedAt));
     } else {
       nextWorkspace.activeId = nextWorkspace.boards[0].id;
-      nextBoard = readDocument(storage, nextWorkspace.activeId).board || blankBoard();
+      const loaded = readDocument(storage, nextWorkspace.activeId);
+      nextBoard = loaded.board;
+      if (!nextBoard) throw new Error("The next board is unavailable");
+      updateMetadata(nextWorkspace, nextWorkspace.activeId, nextBoard.title, loaded.updatedAt, loaded.revision);
     }
-    writeWorkspace(storage, nextWorkspace);
+    writeWorkspaceCopies(storage, nextWorkspace);
   } catch (error) {
-    if (createdId) restoreStorageItem(storage, boardKey(createdId), null);
+    if (createdId) restoreStorageItem(storage, boardKey(createdId), previousCreatedDocument);
     restoreStorageItem(storage, RECOVERY_KEY, previousRecovery);
     restoreStorageItem(storage, WORKSPACE_KEY, previousWorkspace);
     restoreStorageItem(storage, WORKSPACE_BACKUP_KEY, previousWorkspaceBackup);
     throw error;
   }
   applyWorkspace(workspace, nextWorkspace);
-  try { storage.setItem(WORKSPACE_BACKUP_KEY, JSON.stringify(nextWorkspace)); } catch {}
   try { storage.removeItem(boardKey(removedId)); } catch {}
   try { storage.removeItem(backupKey(removedId)); } catch {}
   return nextBoard;
@@ -173,7 +210,12 @@ export function deleteDocument(storage, workspace, board, now = Date.now) {
 
 export function captureRecovery(storage, boardId, board, reason, now = Date.now) {
   const entries = readRecovery(storage);
-  entries.unshift({ id: createId(), boardId, board: normalizeBoard(board), reason, savedAt: now() });
+  const normalized = normalizeBoard(board);
+  if (entries[0]
+    && entries[0].boardId === boardId
+    && entries[0].reason === reason
+    && boardsMatch(entries[0].board, normalized)) return;
+  entries.unshift({ id: createId(), boardId, board: normalized, reason, savedAt: now() });
   writeRecovery(storage, entries.slice(0, MAX_RECOVERY));
 }
 
@@ -448,7 +490,11 @@ function pendingAlreadyApplied(storage, workspace, pending) {
 }
 
 function removePendingKey(storage, key) {
-  try { storage.removeItem(key); } catch {}
+  try {
+    storage.removeItem(key);
+  } catch {
+    try { storage.setItem(key, "null"); } catch {}
+  }
 }
 
 function readDocument(storage, id) {
@@ -547,6 +593,12 @@ function writeWorkspace(storage, workspace) {
   if (previous === next) return;
   if (parseWorkspace(previous)) storage.setItem(WORKSPACE_BACKUP_KEY, previous);
   storage.setItem(WORKSPACE_KEY, next);
+}
+
+function writeWorkspaceCopies(storage, workspace) {
+  const next = JSON.stringify(workspace);
+  storage.setItem(WORKSPACE_KEY, next);
+  storage.setItem(WORKSPACE_BACKUP_KEY, next);
 }
 
 function cloneWorkspace(workspace) {

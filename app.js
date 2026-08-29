@@ -1,6 +1,6 @@
 import { MAX_IMPORT_BYTES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { captureRecovery, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 
 const THEME_KEY = "scattered-theme";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
@@ -18,6 +18,7 @@ const cancelExportButton = document.querySelector("#cancel-export-button");
 const exportJsonButton = document.querySelector("#export-json-button");
 const exportSvgButton = document.querySelector("#export-svg-button");
 const exportMermaidButton = document.querySelector("#export-mermaid-button");
+const importButton = document.querySelector("#import-button");
 const clearButton = document.querySelector("#clear-button");
 const cancelClearButton = document.querySelector("#cancel-clear-button");
 const themeButton = document.querySelector("#theme-button");
@@ -47,6 +48,7 @@ const boardList = document.querySelector("#board-list");
 const newBoardButton = document.querySelector("#new-board-button");
 const duplicateBoardButton = document.querySelector("#duplicate-board-button");
 const deleteBoardButton = document.querySelector("#delete-board-button");
+const cancelDeleteBoardButton = document.querySelector("#cancel-delete-board-button");
 const restoreButton = document.querySelector("#restore-button");
 const searchButton = document.querySelector("#search-button");
 const searchPanel = document.querySelector("#search-panel");
@@ -67,6 +69,7 @@ let saveTimer = null;
 let toastTimer = null;
 let boardDirty = false;
 let saveFailureMessage = "";
+let workspaceActionPending = false;
 let edgeRenderFrame = 0;
 let palmGuardUntil = 0;
 let lastPenUpAt = 0;
@@ -103,6 +106,8 @@ viewport.addEventListener("contextmenu", (event) => {
 document.addEventListener("keydown", onKeyDown);
 document.addEventListener("copy", onCopy);
 document.addEventListener("paste", onPaste);
+["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"]
+  .forEach((type) => document.addEventListener(type, blockWorkspaceInteraction, { capture: true, passive: false }));
 document.addEventListener("keyup", (event) => {
   if (event.code === "Space") {
     spacePressed = false;
@@ -118,6 +123,8 @@ window.addEventListener("blur", () => {
   spacePressed = false;
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
+  disarmClear();
+  disarmDeleteBoard();
 });
 window.addEventListener("pagehide", () => {
   stagePendingSave();
@@ -125,6 +132,8 @@ window.addEventListener("pagehide", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
+    disarmClear();
+    disarmDeleteBoard();
     stagePendingSave();
     void saveBoardNow();
   }
@@ -140,6 +149,11 @@ boardsButton.addEventListener("click", (event) => {
 newBoardButton.addEventListener("click", newBoard);
 duplicateBoardButton.addEventListener("click", duplicateBoard);
 deleteBoardButton.addEventListener("click", removeCurrentBoard);
+cancelDeleteBoardButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  disarmDeleteBoard();
+  deleteBoardButton.focus();
+});
 boardList.addEventListener("click", (event) => {
   const option = event.target.closest(".board-list-option");
   if (option) openBoard(option.dataset.id);
@@ -155,7 +169,7 @@ cancelExportButton.addEventListener("click", disarmExport);
 exportJsonButton.addEventListener("click", exportBoard);
 exportSvgButton.addEventListener("click", exportSvg);
 exportMermaidButton.addEventListener("click", exportMermaid);
-document.querySelector("#import-button").addEventListener("click", () => importInput.click());
+importButton.addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
 searchButton.addEventListener("click", openSearch);
 restoreButton.addEventListener("click", restoreRecentBoard);
@@ -163,6 +177,7 @@ clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
   event.stopPropagation();
   disarmClear();
+  clearButton.focus();
 });
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
@@ -607,7 +622,47 @@ function setBoardPickerOpen(open) {
   if (open) {
     setMenuOpen(false);
     renderBoardList();
+  } else {
+    disarmDeleteBoard();
   }
+}
+
+function armDeleteBoard() {
+  boardPicker.classList.add("confirming-delete");
+  cancelDeleteBoardButton.hidden = false;
+  deleteBoardButton.setAttribute("aria-label", "确认删除当前画布");
+}
+
+function disarmDeleteBoard() {
+  boardPicker.classList.remove("confirming-delete");
+  cancelDeleteBoardButton.hidden = true;
+  deleteBoardButton.setAttribute("aria-label", "删除当前画布");
+}
+
+function beginWorkspaceAction() {
+  if (workspaceActionPending) return false;
+  workspaceActionPending = true;
+  if (["node", "resize", "pan", "pinch"].includes(mode?.type)) boardDirty = true;
+  cancelGesture();
+  boardPicker.setAttribute("aria-busy", "true");
+  menu.setAttribute("aria-busy", "true");
+  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, clearButton, cancelClearButton, importButton]
+    .forEach((button) => { button.disabled = true; });
+  return true;
+}
+
+function endWorkspaceAction() {
+  workspaceActionPending = false;
+  boardPicker.setAttribute("aria-busy", "false");
+  menu.setAttribute("aria-busy", "false");
+  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, clearButton, cancelClearButton, importButton]
+    .forEach((button) => { button.disabled = false; });
+}
+
+function blockWorkspaceInteraction(event) {
+  if (!workspaceActionPending) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
 }
 
 function renderBoardList() {
@@ -630,35 +685,52 @@ function renderBoardList() {
 
 async function newBoard(event) {
   event?.stopPropagation();
-  if (!await commitCurrentBoard()) return;
+  if (!beginWorkspaceAction()) return;
   try {
+    if (!await commitCurrentBoard()) return;
     replaceBoard(await withWorkspaceLock(() => createDocument(localStorage, workspace)));
     setBoardPickerOpen(false);
+    boardsButton.focus();
   } catch {
     showToast("无法新建画布，请先导出备份");
+  } finally {
+    endWorkspaceAction();
   }
 }
 
 async function duplicateBoard(event) {
   event?.stopPropagation();
-  if (!await commitCurrentBoard()) return;
+  if (!beginWorkspaceAction()) return;
   try {
+    if (!await commitCurrentBoard()) return;
     replaceBoard(await withWorkspaceLock(() => duplicateDocument(localStorage, workspace, board)));
     setBoardPickerOpen(false);
+    boardsButton.focus();
   } catch {
     showToast("无法复制画布，请先导出备份");
+  } finally {
+    endWorkspaceAction();
   }
 }
 
 async function removeCurrentBoard(event) {
   event?.stopPropagation();
-  if (!await commitCurrentBoard()) return;
+  if (!boardPicker.classList.contains("confirming-delete")) {
+    armDeleteBoard();
+    return;
+  }
+  if (!beginWorkspaceAction()) return;
   try {
-    replaceBoard(await withWorkspaceLock(() => deleteDocument(localStorage, workspace, board)));
+    if (!await commitCurrentBoard()) return;
+    replaceBoard(await withWorkspaceLock(() => deleteDocument(localStorage, workspace)));
+    clearSaveFailure();
     updateRecoveryControl();
     setBoardPickerOpen(false);
+    boardsButton.focus();
   } catch {
-    showToast("无法删除画布");
+    markSaveFailure("无法删除画布，请先导出备份");
+  } finally {
+    endWorkspaceAction();
   }
 }
 
@@ -667,14 +739,18 @@ async function openBoard(id) {
     setBoardPickerOpen(false);
     return;
   }
-  if (!await commitCurrentBoard()) return;
+  if (!beginWorkspaceAction()) return;
   try {
+    if (!await commitCurrentBoard()) return;
     const loaded = await withWorkspaceLock(() => switchDocument(localStorage, workspace, id));
     if (!loaded) return;
     replaceBoard(loaded.board);
     setBoardPickerOpen(false);
+    boardsButton.focus();
   } catch {
     showToast("无法打开这个画布");
+  } finally {
+    endWorkspaceAction();
   }
 }
 
@@ -696,8 +772,9 @@ function replaceBoard(nextBoard) {
 
 async function restoreRecentBoard(event) {
   event?.stopPropagation();
-  if (!await commitCurrentBoard()) return;
+  if (!beginWorkspaceAction()) return;
   try {
+    if (!await commitCurrentBoard()) return;
     const restored = await withWorkspaceLock(() => restoreLatest(localStorage, workspace, board));
     if (restored) {
       replaceBoard(restored);
@@ -705,8 +782,11 @@ async function restoreRecentBoard(event) {
     updateRecoveryControl();
     setBoardPickerOpen(false);
     setMenuOpen(false);
+    boardsButton.focus();
   } catch {
     showToast("无法恢复本地副本");
+  } finally {
+    endWorkspaceAction();
   }
 }
 
@@ -719,21 +799,6 @@ function finishCurrentInput() {
   finishBoardTitle();
   finishEdgeLabel();
   finishEditing();
-}
-
-function preserveForRecovery(reason) {
-  if (!storageReady) {
-    markSaveFailure("本地存储不可用，请导出备份");
-    return false;
-  }
-  try {
-    captureRecovery(localStorage, workspace.activeId, board, reason);
-    updateRecoveryControl();
-    return true;
-  } catch {
-    showToast("无法保存恢复副本，请先导出备份");
-    return false;
-  }
 }
 
 function openSearch(event) {
@@ -1514,6 +1579,12 @@ function onKeyDown(event) {
     closeSearch();
     return;
   }
+  if (event.key === "Escape" && boardPicker.classList.contains("confirming-delete")) {
+    event.preventDefault();
+    disarmDeleteBoard();
+    deleteBoardButton.focus();
+    return;
+  }
   if (event.key === "Escape" && !boardPicker.hidden) {
     event.preventDefault();
     setBoardPickerOpen(false);
@@ -1532,6 +1603,7 @@ function onKeyDown(event) {
   if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
     event.preventDefault();
     disarmClear();
+    clearButton.focus();
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
@@ -1635,23 +1707,30 @@ async function commitCurrentBoard() {
 }
 
 async function replaceCurrentBoard(nextBoard, recoveryReason) {
-  if (!await commitCurrentBoard()) return false;
+  if (!beginWorkspaceAction()) return false;
   const previousId = workspace.activeId;
+  let previousBoard;
   let saved;
   try {
-    saved = await withWorkspaceLock(() => {
-      if (!preserveForRecovery(recoveryReason)) return null;
-      return saveDocument(localStorage, workspace, nextBoard);
-    });
-    if (!saved) return false;
+    if (!await commitCurrentBoard()) return false;
+    previousBoard = JSON.stringify(normalizeBoard(board));
+    saved = await withWorkspaceLock(() => replaceDocument(localStorage, workspace, nextBoard, recoveryReason));
     clearSaveFailure();
   } catch {
     markSaveFailure("自动保存失败，请先导出备份");
     return false;
+  } finally {
+    endWorkspaceAction();
+  }
+  if (workspace.activeId !== previousId) {
+    replaceBoard(saved);
+    updateRecoveryControl();
+    showToast("检测到另一页面的修改，当前内容已另存为副本");
+    return true;
   }
   cancelGesture();
   closeSearch();
-  checkpoint();
+  if (previousBoard !== JSON.stringify(saved)) checkpoint();
   board = saved;
   boardDirty = false;
   selectedIds.clear();
@@ -1661,7 +1740,6 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
   applyView();
   renderBoardList();
   updateRecoveryControl();
-  if (workspace.activeId !== previousId) showToast("检测到另一页面的修改，当前内容已另存为副本");
   return true;
 }
 
@@ -1838,7 +1916,11 @@ async function clearBoard() {
     clearButton.setAttribute("aria-label", "确认清空画布");
     return;
   }
-  if (await replaceCurrentBoard(blankBoard(), "clear")) setMenuOpen(false);
+  const cleared = { ...blankBoard(), title: board.title || "Untitled" };
+  if (await replaceCurrentBoard(cleared, "clear")) {
+    setMenuOpen(false);
+    menuButton.focus();
+  }
 }
 
 function markSaveFailure(message) {

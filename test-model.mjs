@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
-import { captureRecovery, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { captureRecovery, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -244,6 +244,8 @@ class MemoryStorage {
 class FailingStorage extends MemoryStorage {
   setItem(key, value) {
     if (this.failWorkspace && key === "scattered-workspace-v2") throw new Error("quota");
+    if (this.failWorkspaceBackup && key === "scattered-workspace-backup-v2") throw new Error("backup quota");
+    if (this.failRecovery && key === "scattered-recovery-v2") throw new Error("recovery quota");
     super.setItem(key, value);
   }
 }
@@ -272,6 +274,10 @@ function pendingKeys(storage) {
   return [...storage.values.keys()].filter((key) => key.startsWith("scattered-pending-document-v2:"));
 }
 
+function recoveryEntries(storage) {
+  return JSON.parse(storage.getItem("scattered-recovery-v2") || "[]");
+}
+
 const storage = new MemoryStorage([["scattered-board-v1", JSON.stringify({ title: "Legacy", nodes: [{ id: "a", text: "kept", x: 0, y: 0 }], edges: [] })]]);
 let time = 100;
 const loadedWorkspace = loadWorkspace(storage, () => time++);
@@ -297,13 +303,14 @@ captureRecovery(storage, secondBoardId, secondBoard, "clear", () => time++);
 assert.equal(hasRecovery(storage), true);
 const restoredBoard = restoreLatest(storage, backupWorkspace.workspace, { ...secondBoard, title: "Empty" }, () => time++);
 assert.equal(restoredBoard.title, "Second · 3");
-const afterDelete = deleteDocument(storage, backupWorkspace.workspace, restoredBoard, () => time++);
+const afterDelete = deleteDocument(storage, backupWorkspace.workspace, () => time++);
 assert.ok(afterDelete && backupWorkspace.workspace.boards.length >= 1);
 const failingStorage = new FailingStorage();
 const safeWorkspace = loadWorkspace(failingStorage, () => time++);
 const safeBoardId = safeWorkspace.workspace.activeId;
+saveDocument(failingStorage, safeWorkspace.workspace, { ...safeWorkspace.board, title: "Keep me" }, () => time++);
 failingStorage.failWorkspace = true;
-assert.throws(() => deleteDocument(failingStorage, safeWorkspace.workspace, safeWorkspace.board, () => time++), /quota/);
+assert.throws(() => deleteDocument(failingStorage, safeWorkspace.workspace, () => time++), /quota/);
 assert.notEqual(failingStorage.getItem(`scattered-document-v2:${safeBoardId}`), null);
 
 const concurrentStorage = new MemoryStorage();
@@ -346,9 +353,10 @@ assert.equal(storedBoard(conflictStorage, conflictBWorkspace.activeId).title, "S
 
 const tombstoneStorage = new MemoryStorage();
 const tombstoneA = loadWorkspace(tombstoneStorage, () => time++);
+saveDocument(tombstoneStorage, tombstoneA.workspace, { ...tombstoneA.board, title: "Delete me" }, () => time++);
 const tombstoneBWorkspace = structuredClone(tombstoneA.workspace);
 const deletedId = tombstoneA.workspace.activeId;
-deleteDocument(tombstoneStorage, tombstoneA.workspace, tombstoneA.board, () => time++);
+deleteDocument(tombstoneStorage, tombstoneA.workspace, () => time++);
 saveDocument(tombstoneStorage, tombstoneBWorkspace, { ...tombstoneA.board, title: "Stale edit" }, () => time++);
 assert.ok(tombstoneBWorkspace.tombstones.some((item) => item.id === deletedId));
 assert.ok(!tombstoneBWorkspace.boards.some((item) => item.id === deletedId));
@@ -481,6 +489,10 @@ assert.equal(storedBoard(viewStorage, viewBWorkspace.activeId).view.x, 30);
 
 const deleteRollbackStorage = new FailingStorage();
 const deleteRollback = loadWorkspace(deleteRollbackStorage, () => time++);
+saveDocument(deleteRollbackStorage, deleteRollback.workspace, {
+  ...deleteRollback.board,
+  title: "Delete rollback target",
+}, () => time++);
 for (let index = 0; index < 5; index += 1) {
   captureRecovery(deleteRollbackStorage, deleteRollback.workspace.activeId, {
     ...deleteRollback.board,
@@ -494,7 +506,6 @@ deleteRollbackStorage.failWorkspace = true;
 assert.throws(() => deleteDocument(
   deleteRollbackStorage,
   deleteRollback.workspace,
-  deleteRollback.board,
   () => time++,
 ), /quota/);
 assert.equal(deleteRollbackStorage.getItem("scattered-recovery-v2"), deleteRecoveryBeforeFailure);
@@ -504,8 +515,12 @@ assert.deepEqual(deleteRollback.workspace, deleteWorkspaceObjectBeforeFailure);
 const cleanupStorage = new RemovalFailingStorage();
 const cleanupBase = loadWorkspace(cleanupStorage, () => time++);
 const cleanupRemovedId = cleanupBase.workspace.activeId;
+saveDocument(cleanupStorage, cleanupBase.workspace, {
+  ...cleanupBase.board,
+  title: "Cleanup target",
+}, () => time++);
 cleanupStorage.failDocumentRemoval = true;
-const cleanupNextBoard = deleteDocument(cleanupStorage, cleanupBase.workspace, cleanupBase.board, () => time++);
+const cleanupNextBoard = deleteDocument(cleanupStorage, cleanupBase.workspace, () => time++);
 assert.equal(cleanupNextBoard.title, "Untitled");
 assert.ok(cleanupBase.workspace.tombstones.some((item) => item.id === cleanupRemovedId));
 assert.ok(!cleanupBase.workspace.boards.some((item) => item.id === cleanupRemovedId));
@@ -513,6 +528,188 @@ assert.notEqual(cleanupStorage.getItem(`scattered-document-v2:${cleanupRemovedId
 cleanupStorage.setItem("scattered-workspace-v2", "broken");
 const cleanupReload = loadWorkspace(cleanupStorage, () => time++);
 assert.ok(!cleanupReload.workspace.boards.some((item) => item.id === cleanupRemovedId));
+
+const blankDeleteStorage = new MemoryStorage();
+const blankDelete = loadWorkspace(blankDeleteStorage, () => time++);
+const blankDeleteId = blankDelete.workspace.activeId;
+const blankDeleteResult = deleteDocument(blankDeleteStorage, blankDelete.workspace, () => time++);
+assert.equal(blankDelete.workspace.activeId, blankDeleteId);
+assert.equal(blankDelete.workspace.boards.length, 1);
+assert.equal(blankDelete.workspace.tombstones.length, 0);
+assert.equal(blankDeleteResult.title, "Untitled");
+assert.equal(hasRecovery(blankDeleteStorage), false);
+
+const replaceStorage = new MemoryStorage();
+const replaceBase = loadWorkspace(replaceStorage, () => time++);
+const replaceId = replaceBase.workspace.activeId;
+const replaceSource = {
+  ...replaceBase.board,
+  title: "Project",
+  nodes: [{ id: "replace-note", text: "Keep this", x: 10, y: 20 }],
+};
+saveDocument(replaceStorage, replaceBase.workspace, replaceSource, () => time++);
+const clearedProject = replaceDocument(
+  replaceStorage,
+  replaceBase.workspace,
+  { ...blankBoard(), title: "Project" },
+  "clear",
+  () => time++,
+);
+assert.equal(replaceBase.workspace.activeId, replaceId);
+assert.equal(clearedProject.title, "Project");
+assert.equal(clearedProject.nodes.length, 0);
+assert.equal(recoveryEntries(replaceStorage).length, 1);
+assert.equal(recoveryEntries(replaceStorage)[0].board.nodes[0].text, "Keep this");
+
+const duplicateRecoveryStorage = new MemoryStorage();
+const duplicateRecovery = loadWorkspace(duplicateRecoveryStorage, () => time++);
+captureRecovery(duplicateRecoveryStorage, duplicateRecovery.workspace.activeId, duplicateRecovery.board, "clear", () => time++);
+captureRecovery(duplicateRecoveryStorage, duplicateRecovery.workspace.activeId, duplicateRecovery.board, "clear", () => time++);
+assert.equal(recoveryEntries(duplicateRecoveryStorage).length, 1);
+
+const failedReplaceStorage = new FailingStorage();
+const failedReplace = loadWorkspace(failedReplaceStorage, () => time++);
+const failedReplaceId = failedReplace.workspace.activeId;
+const failedReplaceSource = {
+  ...failedReplace.board,
+  title: "Must remain",
+  nodes: [{ id: "safe-note", text: "safe", x: 0, y: 0 }],
+};
+saveDocument(failedReplaceStorage, failedReplace.workspace, failedReplaceSource, () => time++);
+captureRecovery(failedReplaceStorage, failedReplaceId, failedReplaceSource, "delete", () => time++);
+const failedReplaceRecoveryBefore = failedReplaceStorage.getItem("scattered-recovery-v2");
+const failedReplaceDocumentBefore = failedReplaceStorage.getItem(`scattered-document-v2:${failedReplaceId}`);
+const failedReplaceWorkspaceBefore = failedReplaceStorage.getItem("scattered-workspace-v2");
+const failedReplaceObjectBefore = structuredClone(failedReplace.workspace);
+failedReplaceStorage.failWorkspace = true;
+assert.throws(() => replaceDocument(
+  failedReplaceStorage,
+  failedReplace.workspace,
+  { ...blankBoard(), title: "Must remain" },
+  "clear",
+  () => time++,
+), /quota/);
+assert.equal(failedReplaceStorage.getItem("scattered-recovery-v2"), failedReplaceRecoveryBefore);
+assert.equal(failedReplaceStorage.getItem(`scattered-document-v2:${failedReplaceId}`), failedReplaceDocumentBefore);
+assert.equal(failedReplaceStorage.getItem("scattered-workspace-v2"), failedReplaceWorkspaceBefore);
+assert.deepEqual(failedReplace.workspace, failedReplaceObjectBefore);
+
+const conflictReplaceStorage = new MemoryStorage();
+const conflictReplaceBase = loadWorkspace(conflictReplaceStorage, () => time++);
+const conflictReplaceOriginalId = conflictReplaceBase.workspace.activeId;
+const conflictReplaceStale = structuredClone(conflictReplaceBase.workspace);
+saveDocument(conflictReplaceStorage, conflictReplaceBase.workspace, {
+  ...conflictReplaceBase.board,
+  title: "Concurrent newer",
+  nodes: [{ id: "newer-note", text: "newer", x: 0, y: 0 }],
+}, () => time++);
+const conflictRecoveryBefore = conflictReplaceStorage.getItem("scattered-recovery-v2");
+replaceDocument(
+  conflictReplaceStorage,
+  conflictReplaceStale,
+  { ...blankBoard(), title: "Imported" },
+  "import",
+  () => time++,
+);
+assert.notEqual(conflictReplaceStale.activeId, conflictReplaceOriginalId);
+assert.equal(storedBoard(conflictReplaceStorage, conflictReplaceOriginalId).title, "Concurrent newer");
+assert.equal(storedBoard(conflictReplaceStorage, conflictReplaceStale.activeId).title, "Imported · 2");
+assert.equal(conflictReplaceStorage.getItem("scattered-recovery-v2"), conflictRecoveryBefore);
+
+const staleDeleteStorage = new MemoryStorage();
+const staleDeleteBase = loadWorkspace(staleDeleteStorage, () => time++);
+const staleDeleteId = staleDeleteBase.workspace.activeId;
+saveDocument(staleDeleteStorage, staleDeleteBase.workspace, {
+  ...staleDeleteBase.board,
+  title: "Older",
+}, () => time++);
+const staleDeleteWorkspace = structuredClone(staleDeleteBase.workspace);
+const staleDeleteAgain = structuredClone(staleDeleteBase.workspace);
+saveDocument(staleDeleteStorage, staleDeleteBase.workspace, {
+  ...staleDeleteBase.board,
+  title: "Newest",
+  nodes: [{ id: "latest-note", text: "latest", x: 0, y: 0 }],
+}, () => time++);
+deleteDocument(staleDeleteStorage, staleDeleteWorkspace, () => time++);
+assert.equal(recoveryEntries(staleDeleteStorage)[0].board.title, "Newest");
+assert.equal(recoveryEntries(staleDeleteStorage)[0].board.nodes[0].text, "latest");
+assert.ok(staleDeleteWorkspace.tombstones.some((item) => item.id === staleDeleteId));
+const staleDeleteRecovery = staleDeleteStorage.getItem("scattered-recovery-v2");
+deleteDocument(staleDeleteStorage, staleDeleteAgain, () => time++);
+assert.equal(staleDeleteStorage.getItem("scattered-recovery-v2"), staleDeleteRecovery);
+
+const nextBackupStorage = new MemoryStorage();
+const nextBackupBase = loadWorkspace(nextBackupStorage, () => time++);
+const nextBackupId = nextBackupBase.workspace.activeId;
+saveDocument(nextBackupStorage, nextBackupBase.workspace, {
+  ...nextBackupBase.board,
+  title: "Fallback first",
+  nodes: [{ id: "fallback-first", text: "first", x: 0, y: 0 }],
+}, () => time++);
+saveDocument(nextBackupStorage, nextBackupBase.workspace, {
+  ...nextBackupBase.board,
+  title: "Fallback latest",
+  nodes: [{ id: "fallback-latest", text: "latest", x: 0, y: 0 }],
+}, () => time++);
+const backupDocument = JSON.parse(nextBackupStorage.getItem(`scattered-document-backup-v2:${nextBackupId}`));
+const backupRevision = backupDocument._scattered.revision;
+createDocument(nextBackupStorage, nextBackupBase.workspace, {
+  ...blankBoard(),
+  title: "Delete me",
+  nodes: [{ id: "delete-next", text: "delete", x: 0, y: 0 }],
+}, () => time++);
+nextBackupStorage.setItem(`scattered-document-v2:${nextBackupId}`, "broken");
+const nextFromBackup = deleteDocument(nextBackupStorage, nextBackupBase.workspace, () => time++);
+assert.equal(nextBackupBase.workspace.activeId, nextBackupId);
+assert.equal(nextFromBackup.title, "Fallback first");
+assert.equal(nextBackupBase.workspace.boards[0].revision, backupRevision);
+saveDocument(nextBackupStorage, nextBackupBase.workspace, {
+  ...nextFromBackup,
+  nodes: [{ id: "fallback-edited", text: "edited", x: 0, y: 0 }],
+}, () => time++);
+assert.equal(nextBackupBase.workspace.boards.length, 1);
+assert.equal(storedBoard(nextBackupStorage, nextBackupId).nodes[0].text, "edited");
+
+const backupFailureStorage = new FailingStorage();
+const backupFailure = loadWorkspace(backupFailureStorage, () => time++);
+const backupFailureId = backupFailure.workspace.activeId;
+saveDocument(backupFailureStorage, backupFailure.workspace, {
+  ...backupFailure.board,
+  title: "Backup guarded",
+}, () => time++);
+const backupFailureRecoveryBefore = backupFailureStorage.getItem("scattered-recovery-v2");
+const backupFailureWorkspaceBefore = backupFailureStorage.getItem("scattered-workspace-v2");
+const backupFailureWorkspaceBackupBefore = backupFailureStorage.getItem("scattered-workspace-backup-v2");
+const backupFailureDocumentBefore = backupFailureStorage.getItem(`scattered-document-v2:${backupFailureId}`);
+const backupFailureObjectBefore = structuredClone(backupFailure.workspace);
+backupFailureStorage.failWorkspaceBackup = true;
+assert.throws(() => deleteDocument(backupFailureStorage, backupFailure.workspace, () => time++), /backup quota/);
+assert.equal(backupFailureStorage.getItem("scattered-recovery-v2"), backupFailureRecoveryBefore);
+assert.equal(backupFailureStorage.getItem("scattered-workspace-v2"), backupFailureWorkspaceBefore);
+assert.equal(backupFailureStorage.getItem("scattered-workspace-backup-v2"), backupFailureWorkspaceBackupBefore);
+assert.equal(backupFailureStorage.getItem(`scattered-document-v2:${backupFailureId}`), backupFailureDocumentBefore);
+assert.deepEqual(backupFailure.workspace, backupFailureObjectBefore);
+
+const recoveryFailureStorage = new FailingStorage();
+const recoveryFailure = loadWorkspace(recoveryFailureStorage, () => time++);
+const recoveryFailureId = recoveryFailure.workspace.activeId;
+saveDocument(recoveryFailureStorage, recoveryFailure.workspace, {
+  ...recoveryFailure.board,
+  title: "Recovery guarded",
+  nodes: [{ id: "recovery-guarded-note", text: "keep", x: 0, y: 0 }],
+}, () => time++);
+const recoveryFailureDocumentBefore = recoveryFailureStorage.getItem(`scattered-document-v2:${recoveryFailureId}`);
+const recoveryFailureWorkspaceBefore = recoveryFailureStorage.getItem("scattered-workspace-v2");
+recoveryFailureStorage.failRecovery = true;
+assert.throws(() => replaceDocument(
+  recoveryFailureStorage,
+  recoveryFailure.workspace,
+  { ...blankBoard(), title: "Recovery guarded" },
+  "clear",
+  () => time++,
+), /recovery quota/);
+assert.equal(recoveryFailureStorage.getItem(`scattered-document-v2:${recoveryFailureId}`), recoveryFailureDocumentBefore);
+assert.equal(recoveryFailureStorage.getItem("scattered-workspace-v2"), recoveryFailureWorkspaceBefore);
 
 const pendingReloadStorage = new MemoryStorage();
 const pendingReloadBase = loadWorkspace(pendingReloadStorage, () => time++);
@@ -573,6 +770,62 @@ conflictPendingStorage.failPendingRemoval = false;
 const secondConflictPendingReload = loadWorkspace(conflictPendingStorage, () => time++);
 assert.equal(secondConflictPendingReload.workspace.boards.length, 2);
 assert.equal(pendingKeys(conflictPendingStorage).length, 0);
+
+const deletedPendingStorage = new RemovalFailingStorage();
+const deletedPendingBase = loadWorkspace(deletedPendingStorage, () => time++);
+const deletedPendingId = deletedPendingBase.workspace.activeId;
+const deletedPendingBoard = {
+  ...deletedPendingBase.board,
+  title: "Delete pending once",
+  nodes: [{ id: "delete-pending-note", text: "must stay deleted", x: 0, y: 0 }],
+};
+stagePendingDocument(deletedPendingStorage, deletedPendingBase.workspace, deletedPendingBoard, () => time++);
+saveDocument(deletedPendingStorage, deletedPendingBase.workspace, deletedPendingBoard, () => time++);
+deletedPendingStorage.failPendingRemoval = true;
+clearPendingDocument(deletedPendingStorage);
+assert.equal(pendingKeys(deletedPendingStorage).length, 1);
+assert.equal(deletedPendingStorage.getItem(pendingKeys(deletedPendingStorage)[0]), "null");
+deleteDocument(deletedPendingStorage, deletedPendingBase.workspace, () => time++);
+const deletedPendingReload = loadWorkspace(deletedPendingStorage, () => time++);
+assert.ok(deletedPendingReload.workspace.tombstones.some((item) => item.id === deletedPendingId));
+assert.ok(!deletedPendingReload.workspace.boards.some((item) => item.id === deletedPendingId));
+assert.equal(deletedPendingReload.workspace.boards.length, 1);
+assert.equal(deletedPendingReload.board.nodes.length, 0);
+assert.equal(pendingKeys(deletedPendingStorage).length, 1);
+deletedPendingStorage.failPendingRemoval = false;
+loadWorkspace(deletedPendingStorage, () => time++);
+assert.equal(pendingKeys(deletedPendingStorage).length, 0);
+
+const clearedPendingStorage = new RemovalFailingStorage();
+const clearedPendingBase = loadWorkspace(clearedPendingStorage, () => time++);
+const clearedPendingId = clearedPendingBase.workspace.activeId;
+const clearedPendingBoard = {
+  ...clearedPendingBase.board,
+  title: "Clear pending once",
+  nodes: [{ id: "clear-pending-note", text: "must stay cleared", x: 0, y: 0 }],
+};
+stagePendingDocument(clearedPendingStorage, clearedPendingBase.workspace, clearedPendingBoard, () => time++);
+saveDocument(clearedPendingStorage, clearedPendingBase.workspace, clearedPendingBoard, () => time++);
+clearedPendingStorage.failPendingRemoval = true;
+clearPendingDocument(clearedPendingStorage);
+assert.equal(pendingKeys(clearedPendingStorage).length, 1);
+assert.equal(clearedPendingStorage.getItem(pendingKeys(clearedPendingStorage)[0]), "null");
+replaceDocument(
+  clearedPendingStorage,
+  clearedPendingBase.workspace,
+  { ...blankBoard(), title: clearedPendingBoard.title },
+  "clear",
+  () => time++,
+);
+const clearedPendingReload = loadWorkspace(clearedPendingStorage, () => time++);
+assert.equal(clearedPendingReload.workspace.activeId, clearedPendingId);
+assert.equal(clearedPendingReload.workspace.boards.length, 1);
+assert.equal(clearedPendingReload.board.title, clearedPendingBoard.title);
+assert.equal(clearedPendingReload.board.nodes.length, 0);
+assert.equal(pendingKeys(clearedPendingStorage).length, 1);
+clearedPendingStorage.failPendingRemoval = false;
+loadWorkspace(clearedPendingStorage, () => time++);
+assert.equal(pendingKeys(clearedPendingStorage).length, 0);
 
 const invalidPendingStorage = new MemoryStorage();
 loadWorkspace(invalidPendingStorage, () => time++);
@@ -643,15 +896,23 @@ assert.match(pointerDownSource, /if \(!node\) \{\s*if \(activeEditor\) selectNod
 assert.match(doubleClickSource, /event\.target\.closest\("\.node"\)\s*\?\?\s*document\.elementFromPoint/);
 assert.match(saveBoardNowSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return true;[\s\S]*?withWorkspaceLock[\s\S]*?saveDocument[\s\S]*?boardDirty = false;[\s\S]*?markSaveFailure[\s\S]*?return false;/);
 assert.match(saveBoardNowSource, /if \(conflicted\)[\s\S]*?board = saved;[\s\S]*?renderAll\(\)/);
-assert.match(replacementSource, /await commitCurrentBoard\(\)[\s\S]*?withWorkspaceLock[\s\S]*?preserveForRecovery[\s\S]*?saveDocument/);
-assert.match(replacementSource, /cancelGesture\(\)[\s\S]*?closeSearch\(\)[\s\S]*?checkpoint\(\)[\s\S]*?board = saved/);
+assert.match(replacementSource, /beginWorkspaceAction\(\)[\s\S]*?await commitCurrentBoard\(\)[\s\S]*?withWorkspaceLock[\s\S]*?replaceDocument\(localStorage, workspace, nextBoard, recoveryReason\)/);
+assert.match(replacementSource, /workspace\.activeId !== previousId[\s\S]*?replaceBoard\(saved\)[\s\S]*?cancelGesture\(\)[\s\S]*?closeSearch\(\)[\s\S]*?checkpoint\(\)[\s\S]*?board = saved/);
 ["newBoard", "duplicateBoard", "removeCurrentBoard", "openBoard", "restoreRecentBoard"].forEach((name) => {
   const source = app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? "";
+  assert.match(source, /beginWorkspaceAction\(\)/);
   assert.match(source, /await commitCurrentBoard\(\)/);
   assert.match(source, /withWorkspaceLock\(/);
 });
 assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_IMPORT_BYTES[\s\S]*?parseImportedBoard[\s\S]*?await replaceCurrentBoard\(imported, "import"\)/);
-assert.match(app, /function preserveForRecovery[\s\S]*?if \(!storageReady\)[\s\S]*?return false;/);
+assert.doesNotMatch(app, /function preserveForRecovery/);
+assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?workspaceActionPending[\s\S]*?aria-busy[\s\S]*?disabled = true/);
+assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?\["node", "resize", "pan", "pinch"\]\.includes\(mode\?\.type\)[\s\S]*?boardDirty = true[\s\S]*?cancelGesture\(\);/);
+assert.match(app, /function endWorkspaceAction\(\)[\s\S]*?disabled = false/);
+assert.match(app, /\["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"\][\s\S]*?blockWorkspaceInteraction[\s\S]*?capture: true/);
+assert.match(app, /function blockWorkspaceInteraction\(event\) \{[\s\S]*?workspaceActionPending[\s\S]*?preventDefault\(\)[\s\S]*?stopImmediatePropagation\(\)/);
+assert.match(app, /async function removeCurrentBoard[\s\S]*?confirming-delete[\s\S]*?armDeleteBoard\(\)[\s\S]*?deleteDocument\(localStorage, workspace\)/);
+assert.match(app, /async function removeCurrentBoard[\s\S]*?clearSaveFailure\(\)[\s\S]*?markSaveFailure\("无法删除画布，请先导出备份"\)/);
 assert.match(app, /function scheduleSave\(\)[\s\S]*?boardDirty = true;/);
 assert.match(app, /addEventListener\("pagehide"[\s\S]*?stagePendingSave\(\)[\s\S]*?saveBoardNow\(\)/);
 assert.match(stagePendingSaveSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return;[\s\S]*?stagePendingDocument\(localStorage, workspace, board\)/);
@@ -675,7 +936,7 @@ assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scat
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
 assert.match(html, /id="import-button"[\s\S]*?M12 15V3M8 7l4-4 4 4M5 19h14/);
 assert.match(html, /id="boards-button"[\s\S]*?aria-expanded="false"[\s\S]*?class="app-logo"[\s\S]*?class="boards-disclosure"/);
-assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="restore-button"[\s\S]*?id="delete-board-button"/);
+assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="restore-button"[\s\S]*?id="cancel-delete-board-button"[\s\S]*?id="delete-board-button"/);
 assert.doesNotMatch(menuMarkup, /id="restore-button"/);
 assert.match(html, /id="search-panel"[\s\S]*?id="search-input"[\s\S]*?id="search-previous"[\s\S]*?id="search-next"/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
@@ -704,10 +965,11 @@ assert.match(app, /pasteSelectedGraph\(payload, origin\)/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "f"/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "d"/);
 assert.match(app, /loadWorkspace\(localStorage\)/);
-assert.match(app, /function preserveForRecovery[\s\S]*?captureRecovery\(localStorage, workspace\.activeId, board, reason\)/);
+assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board-button[\s\S]*?#delete-board-button/);
+assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v27/);
+assert.match(serviceWorker, /scattered-v28/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
@@ -718,8 +980,8 @@ assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
 assert.match(app, /const THEME_KEY = "scattered-theme"/);
 assert.match(app, /function toggleTheme[\s\S]*?localStorage\.setItem\(THEME_KEY, next\)/);
-assert.match(app, /async function replaceCurrentBoard[\s\S]*?preserveForRecovery[\s\S]*?saveDocument[\s\S]*?checkpoint\(\)/);
-assert.match(app, /async function clearBoard[\s\S]*?confirming-clear[\s\S]*?await replaceCurrentBoard\(blankBoard\(\), "clear"\)/);
+assert.match(app, /async function replaceCurrentBoard[\s\S]*?replaceDocument[\s\S]*?checkpoint\(\)/);
+assert.match(app, /async function clearBoard[\s\S]*?confirming-clear[\s\S]*?\.\.\.blankBoard\(\), title: board\.title[\s\S]*?replaceCurrentBoard\(cleared, "clear"\)/);
 assert.match(css, /html\[data-theme="dark"\]\s*\{[^}]*--canvas:\s*#16150f;[^}]*--paper:\s*#211f18;[^}]*--ink:\s*#eae4d6;/s);
 assert.match(css, /html\[data-theme="dark"\][\s\S]*?--note-yellow:\s*#3a321b;[\s\S]*?--note-mint:\s*#193129;[\s\S]*?--note-blue:\s*#1b2c43;[\s\S]*?--note-rose:\s*#3a222a;/);
 assert.match(css, /#connections \.edge\s*\{[^}]*outline:\s*none;[^}]*-webkit-tap-highlight-color:\s*transparent;/s);
