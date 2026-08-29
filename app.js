@@ -699,6 +699,7 @@ function restoreRecentBoard(event) {
     const restored = restoreLatest(localStorage, workspace, board);
     if (restored) replaceBoard(restored);
     updateRecoveryControl();
+    setBoardPickerOpen(false);
     setMenuOpen(false);
   } catch {
     showToast("无法恢复本地副本");
