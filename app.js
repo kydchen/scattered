@@ -894,7 +894,7 @@ function updateThemeControl() {
   const dark = document.documentElement.dataset.theme === "dark";
   themeButton.setAttribute("aria-pressed", String(dark));
   themeButton.setAttribute("aria-label", dark ? "切换到浅色模式" : "切换到暗色模式");
-  themeColor.content = dark ? "#16150f" : "#f5f7fb";
+  themeColor.content = dark ? "#16150f" : "#f2f4f7";
 }
 
 function handleNodeTap(id) {
