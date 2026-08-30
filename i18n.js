@@ -1,0 +1,246 @@
+export const messages = {
+  en: {
+    canvas: "Freeform thinking canvas",
+    connections: "Note connections",
+    appTitle: "Canvas title",
+    openBoards: "Open canvas list",
+    boardTitleEdit: "Canvas title: {title}. Double-click or press Enter to edit",
+    editBoardTitle: "Edit canvas title",
+    boardList: "Canvas list",
+    newBoard: "New canvas",
+    duplicateBoard: "Duplicate current canvas",
+    restoreRecent: "Restore the latest cleared, replaced, or deleted canvas",
+    cancelDeleteBoard: "Cancel deleting canvas",
+    deleteBoard: "Delete current canvas",
+    confirmDeleteBoard: "Confirm deleting current canvas",
+    localBoards: "Local canvases",
+    historyActions: "View, undo, and redo",
+    fitBoard: "Show all notes",
+    undo: "Undo",
+    redo: "Redo",
+    canvasMenu: "Canvas menu",
+    exportBackup: "Export",
+    cancelExport: "Cancel export",
+    exportJson: "Export JSON workspace backup",
+    exportSvg: "Export SVG image",
+    exportMermaid: "Export Mermaid Markdown",
+    importBackup: "Import backup",
+    searchNotes: "Search notes",
+    githubRepository: "GitHub repository",
+    cancelClear: "Cancel clearing canvas",
+    clearBoard: "Clear canvas",
+    confirmClearBoard: "Confirm clearing canvas",
+    darkMode: "Dark mode",
+    selectionActions: "Selected note actions",
+    colorSelected: "Change selected note colors",
+    duplicateSelected: "Duplicate selected notes",
+    arrowSelected: "Change arrows on selected note connections",
+    disconnectSelected: "Disconnect all selected notes",
+    deleteSelected: "Delete selected notes",
+    edgeActions: "Connection actions",
+    addForwardArrow: "Add forward arrow",
+    reverseArrow: "Reverse arrow",
+    removeArrow: "Remove arrow",
+    unifyForwardArrow: "Set all to forward arrows",
+    editEdgeLabel: "Edit connection label",
+    disconnectEdge: "Disconnect this connection",
+    edgeLabelInput: "Connection label",
+    noteColors: "Note colors",
+    colorPlain: "White",
+    colorYellow: "Warm yellow",
+    colorMint: "Mint",
+    colorBlue: "Mist blue",
+    colorRose: "Soft rose",
+    searchInput: "Search note text",
+    searchPlaceholder: "Find notes",
+    previousSearchResult: "Previous search result",
+    nextSearchResult: "Next search result",
+    closeSearch: "Close search",
+    nodeActions: "Note actions",
+    changeNodeColor: "Change note color",
+    deleteNode: "Delete this note",
+    noteContent: "Note content",
+    resizeNode: "Adjust note width",
+    linkNode: "Connect to another note",
+    emptyNote: "Empty note",
+    untitledNote: "Untitled note",
+    noteName: "Note: {text}",
+    noteSelectedSuffix: ", selected",
+    noteConnectionsSuffix: ", connections: {count}",
+    edgeUndirected: "Connection between {from} and {to}",
+    edgeDirected: "Connection from {from} to {to}",
+    edgeLabelSuffix: ", label: {label}",
+    selectedNotes: "Selected notes: {count}",
+    noteCreated: "Note created",
+    linkedNoteCreated: "Linked note created",
+    connectionUpdated: "Connection updated",
+    connectionMode: "Connection source selected. Focus a target note and press Enter, or press N to create a linked note.",
+    connectionCancelled: "Connection cancelled",
+    workspaceBackupTitle: "Scattered workspace backup",
+    workspaceImported: "Canvases imported: {count}",
+    searchPosition: "Result {current} of {total}: {text}",
+    errorStorageUnavailable: "Local storage is unavailable. Export a backup.",
+    errorCreateBoard: "Could not create a canvas. Export a backup first.",
+    errorDuplicateBoard: "Could not duplicate the canvas. Export a backup first.",
+    errorDeleteBoard: "Could not delete the canvas. Export a backup first.",
+    errorOpenBoard: "Could not open this canvas.",
+    errorRestoreBoard: "Could not restore the local copy.",
+    errorSave: "Automatic save failed. Export a backup first.",
+    conflictCopy: "Changes from another tab were found. This version was saved as a copy.",
+    errorJsonExport: "Workspace backup failed.",
+    errorSvgExport: "SVG export failed.",
+    errorMermaidExport: "Mermaid export failed.",
+    errorImport: "Could not import this file.",
+    "import.invalid": "This backup is not valid.",
+    "import.tooLarge": "This backup is too large (2 MB maximum).",
+    "import.workspaceTooLarge": "This workspace backup is too large (10 MB maximum).",
+    "import.unsupportedVersion": "This backup version is not supported.",
+    "import.tooMuchContent": "This backup contains too much content.",
+  },
+  "zh-Hans": {
+    canvas: "自由思考画布",
+    connections: "标签连线",
+    appTitle: "画布标题",
+    openBoards: "打开画布列表",
+    boardTitleEdit: "画布标题：{title}。双击或按回车编辑",
+    editBoardTitle: "编辑画布标题",
+    boardList: "画布列表",
+    newBoard: "新建画布",
+    duplicateBoard: "复制当前画布",
+    restoreRecent: "恢复最近一次清空、覆盖或删除",
+    cancelDeleteBoard: "取消删除画布",
+    deleteBoard: "删除当前画布",
+    confirmDeleteBoard: "确认删除当前画布",
+    localBoards: "本地画布",
+    historyActions: "视图、撤销与重做",
+    fitBoard: "居中显示全部标签",
+    undo: "撤销",
+    redo: "重做",
+    canvasMenu: "画布菜单",
+    exportBackup: "导出",
+    cancelExport: "取消导出",
+    exportJson: "导出 JSON 工作区备份",
+    exportSvg: "导出 SVG 矢量图",
+    exportMermaid: "导出 Mermaid Markdown",
+    importBackup: "导入备份",
+    searchNotes: "搜索标签",
+    githubRepository: "GitHub 仓库",
+    cancelClear: "取消清空",
+    clearBoard: "清空画布",
+    confirmClearBoard: "确认清空画布",
+    darkMode: "暗色模式",
+    selectionActions: "多选操作",
+    colorSelected: "更改所选标签颜色",
+    duplicateSelected: "复制所选标签",
+    arrowSelected: "切换所选标签的连线箭头",
+    disconnectSelected: "断开所选标签的全部连线",
+    deleteSelected: "删除所选标签",
+    edgeActions: "连线操作",
+    addForwardArrow: "添加正向箭头",
+    reverseArrow: "反转箭头",
+    removeArrow: "移除箭头",
+    unifyForwardArrow: "统一为正向箭头",
+    editEdgeLabel: "编辑连线文字",
+    disconnectEdge: "断开这条连线",
+    edgeLabelInput: "连线文字",
+    noteColors: "标签颜色",
+    colorPlain: "原白",
+    colorYellow: "暖黄",
+    colorMint: "薄荷绿",
+    colorBlue: "雾蓝",
+    colorRose: "淡莓",
+    searchInput: "搜索标签文字",
+    searchPlaceholder: "搜索标签",
+    previousSearchResult: "上一个搜索结果",
+    nextSearchResult: "下一个搜索结果",
+    closeSearch: "关闭搜索",
+    nodeActions: "标签操作",
+    changeNodeColor: "更改标签颜色",
+    deleteNode: "删除这张卡片",
+    noteContent: "想法内容",
+    resizeNode: "调整标签宽度",
+    linkNode: "连接到另一张标签",
+    emptyNote: "空白标签",
+    untitledNote: "未命名标签",
+    noteName: "标签：{text}",
+    noteSelectedSuffix: "，已选择",
+    noteConnectionsSuffix: "，{count} 条连线",
+    edgeUndirected: "{from} 与 {to} 之间的连线",
+    edgeDirected: "从 {from} 指向 {to} 的连线",
+    edgeLabelSuffix: "，文字：{label}",
+    selectedNotes: "已选择 {count} 张标签",
+    noteCreated: "已创建标签",
+    linkedNoteCreated: "已创建并连接标签",
+    connectionUpdated: "连线已更新",
+    connectionMode: "已选择连线起点。聚焦目标标签后按回车，或按 N 创建并连接新标签。",
+    connectionCancelled: "已取消连线",
+    workspaceBackupTitle: "Scattered 工作区备份",
+    workspaceImported: "已导入 {count} 张画布",
+    searchPosition: "第 {current} 个，共 {total} 个：{text}",
+    errorStorageUnavailable: "本地存储不可用，请导出备份",
+    errorCreateBoard: "无法新建画布，请先导出备份",
+    errorDuplicateBoard: "无法复制画布，请先导出备份",
+    errorDeleteBoard: "无法删除画布，请先导出备份",
+    errorOpenBoard: "无法打开这个画布",
+    errorRestoreBoard: "无法恢复本地副本",
+    errorSave: "自动保存失败，请先导出备份",
+    conflictCopy: "检测到另一页面的修改，当前内容已另存为副本",
+    errorJsonExport: "工作区备份导出失败",
+    errorSvgExport: "SVG 导出失败",
+    errorMermaidExport: "Mermaid 导出失败",
+    errorImport: "无法导入这个文件",
+    "import.invalid": "备份格式不正确",
+    "import.tooLarge": "备份文件过大（上限 2 MB）",
+    "import.workspaceTooLarge": "工作区备份文件过大（上限 10 MB）",
+    "import.unsupportedVersion": "不支持这个备份版本",
+    "import.tooMuchContent": "备份内容过多",
+  },
+};
+
+export const locale = preferredLocale();
+
+export function t(key, values = {}, language = locale) {
+  const template = messages[language]?.[key] ?? messages.en[key] ?? key;
+  return Object.entries(values).reduce(
+    (result, [name, value]) => result.replaceAll(`{${name}}`, () => String(value)),
+    template,
+  );
+}
+
+export function hasMessage(key) {
+  return Object.hasOwn(messages[locale], key) || Object.hasOwn(messages.en, key);
+}
+
+export function applyTranslations(root = document) {
+  document.documentElement.lang = locale;
+  translateAttribute(root, "[data-i18n-aria]", "data-i18n-aria", "aria-label");
+  translateAttribute(root, "[data-i18n-placeholder]", "data-i18n-placeholder", "placeholder");
+  matchingElements(root, "[data-i18n-text]").forEach((element) => {
+    element.textContent = t(element.dataset.i18nText);
+  });
+}
+
+function translateAttribute(root, selector, dataAttribute, outputAttribute) {
+  matchingElements(root, selector).forEach((element) => {
+    element.setAttribute(outputAttribute, t(element.getAttribute(dataAttribute)));
+  });
+}
+
+function matchingElements(root, selector) {
+  return [
+    ...(root.matches?.(selector) ? [root] : []),
+    ...root.querySelectorAll(selector),
+  ];
+}
+
+function preferredLocale() {
+  const preferred = globalThis.navigator?.languages?.length
+    ? globalThis.navigator.languages
+    : [globalThis.navigator?.language || "en"];
+  for (const language of preferred) {
+    const normalized = String(language).toLowerCase();
+    if (normalized.startsWith("zh")) return "zh-Hans";
+    if (normalized.startsWith("en")) return "en";
+  }
+  return "en";
+}

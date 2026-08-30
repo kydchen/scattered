@@ -20,7 +20,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 
 - Create and edit notes with a double-click or double-tap
 - Move notes freely and resize long notes
-- Connect notes, cycle arrow direction, and label connections
+- Connect notes, cycle arrow direction, and label connections; drag a connector onto empty canvas to create the next linked note
 - Lasso, marquee-select, or long-press to select multiple notes
 - Move, recolor, duplicate, connect, disconnect, or delete a selection together
 - Keep multiple local boards and switch between them from the Scattered mark
@@ -28,7 +28,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Undo a clear immediately or restore a recovery copy after clearing, importing over, or deleting
 - Search note text and jump between matches
 - Undo, redo, fit the whole board into view, and switch between light and dark modes
-- Export JSON backups, SVG vector images, or Mermaid Markdown
+- Back up the whole local workspace as JSON, or export the current canvas as SVG or Mermaid Markdown
 
 ## Input modes
 
@@ -38,23 +38,27 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 | --- | --- | --- |
 | Apple Pencil + touch | Lasso with Pencil; pan and pinch with fingers | Use the visual selection bar; write in notes and search with Scribble |
 | Touch only | Long-press a note to enter multi-select; drag to pan and pinch to zoom | Use the visual selection bar and top-right menu |
-| Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `Cmd/Ctrl` + `A/C/V/D/F/Z`; Delete/Backspace |
+| Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `N` creates; `Enter/F2` edits; `Space/Shift+Space` selects; arrows move; `L` starts a connection; `Cmd/Ctrl` + `A/C/V/D/F/Z` |
 
 ## Local data and privacy
 
-Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export a JSON backup for anything important or when moving to another browser or device.
+Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export a JSON workspace backup for anything important or when moving to another browser or device.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
 ## Import and export
 
-- **JSON** preserves an editable board and is the format to use when moving between devices or browsers.
+- **JSON** backs up every local board. Importing a workspace adds its boards without replacing existing ones; older single-board backups remain supported and replace only the current board, with a recovery copy kept locally.
 - **SVG** exports the complete board as a lightweight vector image, automatically fitted to its content.
 - **Mermaid Markdown** turns notes and connections into a diagram that can be used in Markdown documents and AI-assisted workflows.
+
+On browsers that support file sharing, export opens the system share sheet; elsewhere it downloads the file directly.
 
 ## Browser support
 
 Scattered is designed for modern browsers on iPadOS, iOS, Android, Windows, macOS, and Linux. The current release is tested most heavily on iPad with Apple Pencil and desktop Chromium browsers. Android, Windows, and other modern browsers are supported targets, but the full device-and-browser matrix is still growing.
+
+The visual interface stays icon-first. Accessible names, canvas status, keyboard controls, and focus handling are available in English or Simplified Chinese according to the browser language.
 
 ## Local development
 

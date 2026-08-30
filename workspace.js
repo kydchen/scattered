@@ -1,4 +1,4 @@
-import { BOARD_VERSION, blankBoard, createId, normalizeBoard } from "./model.js";
+import { BOARD_VERSION, blankBoard, createId, normalizeBoard, parseImportedBoard } from "./model.js";
 
 const LEGACY_BOARD_KEY = "scattered-board-v1";
 const LEGACY_WORKSPACE_KEY = "scattered-workspace-v1";
@@ -18,9 +18,16 @@ const PENDING_FORMAT = "scattered-pending-document";
 const PENDING_STORAGE_VERSION = 1;
 const PENDING_SESSION_ID = createId();
 const PENDING_KEY = `${PENDING_PREFIX}${PENDING_SESSION_ID}`;
+const IMPORT_JOURNAL_PREFIX = "scattered-import-journal-v1:";
+const IMPORT_JOURNAL_STALE_MS = 2 * 60 * 1000;
+const WORKSPACE_EXPORT_FORMAT = "scattered-workspace";
 const MAX_RECOVERY = 5;
 const DOCUMENT_FORMAT = "scattered-document";
 const DOCUMENT_STORAGE_VERSION = 1;
+export const MAX_WORKSPACE_IMPORT_BYTES = 10 * 1024 * 1024;
+export const MAX_WORKSPACE_IMPORT_BOARDS = 1_000;
+export const MAX_WORKSPACE_IMPORT_NODES = 20_000;
+export const MAX_WORKSPACE_IMPORT_EDGES = 40_000;
 
 export function withWorkspaceLock(action) {
   const locks = globalThis.navigator?.locks;
@@ -49,6 +56,7 @@ export function clearPendingDocument(storage = localStorage) {
 }
 
 export function loadWorkspace(storage = localStorage, now = Date.now) {
+  cleanupInterruptedImports(storage, now);
   const workspace = readWorkspace(storage) || initializeV2Storage(storage, now);
   markV2Ready(storage);
   recoverPendingDocuments(storage, workspace, now);
@@ -65,6 +73,126 @@ export function loadWorkspace(storage = localStorage, now = Date.now) {
   const board = blankBoard();
   const saved = saveDocument(storage, workspace, board, now);
   return { workspace, board: saved, recovered: false };
+}
+
+export function createWorkspaceBackup(storage, workspace, currentBoard) {
+  const latest = mergeWorkspace(storage, workspace);
+  const current = normalizeBoard(currentBoard);
+  const expectedRevision = workspace.boards.find((item) => item.id === workspace.activeId)?.revision ?? null;
+  const storedCurrent = readDocument(storage, workspace.activeId);
+  let activeBoard = latest.boards.findIndex((item) => item.id === workspace.activeId);
+  const boards = latest.boards.map((item) => {
+    const loaded = readDocument(storage, item.id).board;
+    if (!loaded) throw new Error("export.invalidWorkspace");
+    return loaded;
+  });
+  const canReplaceStored = activeBoard >= 0 && (
+    (expectedRevision !== null && expectedRevision === storedCurrent.revision)
+    || (storedCurrent.board && boardsMatch(storedCurrent.board, current))
+  );
+  if (canReplaceStored) {
+    boards[activeBoard] = current;
+  } else {
+    const title = availableTitle(current.title, boards.map((candidate) => candidate.title));
+    boards.unshift(normalizeBoard({ ...current, title }));
+    activeBoard = 0;
+  }
+  const backup = { format: WORKSPACE_EXPORT_FORMAT, version: 1, activeBoard, boards };
+  validateWorkspaceContents(boards, "export.invalidWorkspace");
+  if (new TextEncoder().encode(JSON.stringify(backup, null, 2)).byteLength > MAX_WORKSPACE_IMPORT_BYTES) {
+    throw new Error("export.invalidWorkspace");
+  }
+  return backup;
+}
+
+export function parseImportedWorkspace(encoded) {
+  if (typeof encoded !== "string") throw new Error("import.invalid");
+  if (new TextEncoder().encode(encoded).byteLength > MAX_WORKSPACE_IMPORT_BYTES) {
+    throw new Error("import.workspaceTooLarge");
+  }
+  let value;
+  try {
+    value = JSON.parse(encoded);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(value) || value.format !== WORKSPACE_EXPORT_FORMAT) return null;
+  if (value.version !== 1) throw new Error("import.unsupportedVersion");
+  if (!Array.isArray(value.boards)
+    || value.boards.length === 0
+    || value.boards.length > MAX_WORKSPACE_IMPORT_BOARDS
+    || !Number.isInteger(value.activeBoard)
+    || value.activeBoard < 0
+    || value.activeBoard >= value.boards.length) throw new Error("import.tooMuchContent");
+  const boards = value.boards.map((candidate) => parseImportedBoard(JSON.stringify(candidate), {
+    maxBytes: MAX_WORKSPACE_IMPORT_BYTES,
+    maxNodes: Infinity,
+    maxEdges: Infinity,
+  }));
+  validateWorkspaceContents(boards, "import.tooMuchContent");
+  return { activeBoard: value.activeBoard, boards };
+}
+
+export function addImportedWorkspace(storage, workspace, imported, now = Date.now) {
+  if (!isPlainObject(imported)
+    || !Array.isArray(imported.boards)
+    || imported.boards.length === 0
+    || imported.boards.length > MAX_WORKSPACE_IMPORT_BOARDS
+    || !Number.isInteger(imported.activeBoard)
+    || imported.activeBoard < 0
+    || imported.activeBoard >= imported.boards.length) throw new Error("import.invalid");
+  validateWorkspaceContents(imported.boards, "import.tooMuchContent");
+
+  const nextWorkspace = mergeWorkspace(storage, workspace);
+  const titles = nextWorkspace.boards.map((item) => item.title);
+  const savedAt = now();
+  const additions = imported.boards.map((candidate, index) => {
+    const title = availableTitle(candidate.title, titles);
+    titles.push(title);
+    const board = normalizeBoard({ ...candidate, title });
+    return { id: createId(), board, updatedAt: savedAt + index, revision: createId() };
+  });
+  const previousWorkspace = storage.getItem(WORKSPACE_KEY);
+  const previousWorkspaceBackup = storage.getItem(WORKSPACE_BACKUP_KEY);
+  const previousDocuments = additions.map(({ id }) => ({
+    id,
+    primary: storage.getItem(boardKey(id)),
+    backup: storage.getItem(backupKey(id)),
+  }));
+  const importId = createId();
+  const journalKey = `${IMPORT_JOURNAL_PREFIX}${importId}`;
+
+  try {
+    storage.setItem(journalKey, JSON.stringify({
+      format: "scattered-import",
+      version: 1,
+      id: importId,
+      startedAt: savedAt,
+      ids: additions.map((item) => item.id),
+    }));
+    additions.forEach(({ id, board, revision, updatedAt }) => {
+      storage.setItem(boardKey(id), encodeDocument(board, revision, updatedAt));
+    });
+    nextWorkspace.boards = [
+      ...additions.map(({ id, board, updatedAt, revision }) => ({ id, title: board.title, updatedAt, revision })),
+      ...nextWorkspace.boards,
+    ];
+    nextWorkspace.activeId = additions[imported.activeBoard].id;
+    writeWorkspaceCopies(storage, nextWorkspace);
+    removeImportJournal(storage, journalKey);
+  } catch (error) {
+    let restored = true;
+    previousDocuments.forEach(({ id, primary, backup }) => {
+      restored = restoreStorageItem(storage, boardKey(id), primary) && restored;
+      restored = restoreStorageItem(storage, backupKey(id), backup) && restored;
+    });
+    restored = restoreStorageItem(storage, WORKSPACE_KEY, previousWorkspace) && restored;
+    restored = restoreStorageItem(storage, WORKSPACE_BACKUP_KEY, previousWorkspaceBackup) && restored;
+    if (restored) removeImportJournal(storage, journalKey);
+    throw error;
+  }
+  applyWorkspace(workspace, nextWorkspace);
+  return additions[imported.activeBoard].board;
 }
 
 export function saveDocument(storage, workspace, board, now = Date.now, options = {}) {
@@ -497,6 +625,44 @@ function removePendingKey(storage, key) {
   }
 }
 
+function cleanupInterruptedImports(storage, now) {
+  const journalKeys = listStorageKeys(storage, [IMPORT_JOURNAL_PREFIX]);
+  if (journalKeys.length === 0) return;
+  const timestamp = now();
+  journalKeys.forEach((key) => cleanupInterruptedImport(storage, key, timestamp));
+}
+
+function cleanupInterruptedImport(storage, key, timestamp) {
+  let journal;
+  try { journal = JSON.parse(storage.getItem(key)); } catch { journal = null; }
+  const journalId = key.slice(IMPORT_JOURNAL_PREFIX.length);
+  if (!isPlainObject(journal)
+    || journal.format !== "scattered-import"
+    || journal.version !== 1
+    || journal.id !== journalId
+    || !Number.isFinite(Number(journal.startedAt))
+    || !Array.isArray(journal.ids)) {
+    removeImportJournal(storage, key);
+    return;
+  }
+  // ponytail: Startup is synchronous; the freshness window avoids racing an active import without adding a second lock system.
+  if (timestamp - Number(journal.startedAt) < IMPORT_JOURNAL_STALE_MS) return;
+  const referenced = new Set([
+    ...(parseWorkspace(storage.getItem(WORKSPACE_KEY))?.boards || []),
+    ...(parseWorkspace(storage.getItem(WORKSPACE_BACKUP_KEY))?.boards || []),
+  ].map((item) => item.id));
+  journal.ids.forEach((id) => {
+    if (typeof id !== "string" || referenced.has(id)) return;
+    try { storage.removeItem(boardKey(id)); } catch {}
+    try { storage.removeItem(backupKey(id)); } catch {}
+  });
+  removeImportJournal(storage, key);
+}
+
+function removeImportJournal(storage, key) {
+  try { storage.removeItem(key); } catch {}
+}
+
 function readDocument(storage, id) {
   return readDocumentAt(storage, id, BOARD_PREFIX, BACKUP_PREFIX);
 }
@@ -707,10 +873,13 @@ function persistNewDocument(storage, id, board, revision, updatedAt, workspace, 
 
 function restoreStorageItem(storage, key, value) {
   try {
+    if (storage.getItem(key) === value) return true;
     if (value === null) storage.removeItem(key);
     else storage.setItem(key, value);
+    return true;
   } catch {
     // Preserve the original storage error; backups remain the final fallback.
+    return false;
   }
 }
 
@@ -729,6 +898,17 @@ function encodeDocument(board, revision, updatedAt, pendingId) {
 
 function boardsMatch(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function validateWorkspaceContents(boards, errorCode) {
+  if (boards.length > MAX_WORKSPACE_IMPORT_BOARDS) throw new Error(errorCode);
+  const totals = boards.reduce((result, board) => ({
+    nodes: result.nodes + (Array.isArray(board?.nodes) ? board.nodes.length : Infinity),
+    edges: result.edges + (Array.isArray(board?.edges) ? board.edges.length : Infinity),
+  }), { nodes: 0, edges: 0 });
+  if (totals.nodes > MAX_WORKSPACE_IMPORT_NODES || totals.edges > MAX_WORKSPACE_IMPORT_EDGES) {
+    throw new Error(errorCode);
+  }
 }
 
 function boardContentMatches(left, right) {

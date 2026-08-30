@@ -93,6 +93,18 @@ html[data-theme="dark"] {
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -365,13 +377,17 @@ button {
 .node.selected .link-handle,
 .node:focus-visible .node-actions,
 .node:focus-visible .resize-handle,
-.node:focus-visible .link-handle {
+.node:focus-visible .link-handle,
+.node:focus-within .node-actions,
+.node:focus-within .resize-handle,
+.node:focus-within .link-handle {
   display: flex;
   opacity: 1;
 }
 
 .node.selected .link-handle,
-.node:focus-visible .link-handle {
+.node:focus-visible .link-handle,
+.node:focus-within .link-handle {
   display: grid;
 }
 
@@ -463,7 +479,10 @@ button {
 }
 
 .card-action:focus-visible,
-.selection-action:focus-visible {
+.selection-action:focus-visible,
+.resize-handle:focus-visible,
+.link-handle:focus-visible,
+.color-swatch:focus-visible {
   outline: 2px solid var(--thread);
   outline-offset: 1px;
 }
@@ -528,6 +547,11 @@ button {
   border-radius: 50%;
   background: var(--thread);
   box-shadow: 0 0 0 2px var(--thread-soft);
+}
+
+#viewport.keyboard-linking .node.selected .link-handle::after {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 7px var(--thread-soft);
 }
 
 .link-handle {
@@ -762,11 +786,11 @@ button {
   background: var(--border);
 }
 
-.board-list-option[aria-selected="true"] {
+.board-list-option[aria-current="true"] {
   background: var(--thread-soft);
 }
 
-.board-list-option[aria-selected="true"]::before {
+.board-list-option[aria-current="true"]::before {
   background: var(--thread);
 }
 
@@ -1161,7 +1185,9 @@ html[data-theme="dark"] .theme-sun {
   touch-action: manipulation;
 }
 
-.edge-toolbar button[aria-pressed="true"] {
+.edge-toolbar button[data-direction="forward"],
+.edge-toolbar button[data-direction="reverse"],
+.edge-toolbar button.active {
   background: var(--thread-soft);
   color: var(--thread);
 }
@@ -1319,5 +1345,16 @@ html[data-theme="dark"] .theme-sun {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .node.selected,
+  .node:focus-visible,
+  button:focus-visible,
+  a:focus-visible,
+  .edge:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
   }
 }

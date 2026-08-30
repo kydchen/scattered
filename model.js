@@ -9,6 +9,7 @@ export const EMPTY_NOTE_PROMPTS = [
   "Notez ce qui vient.",
   "ひらめきを、ここに。",
 ];
+export const EMPTY_NOTE_PROMPT_LANGS = ["zh-Hans", "en", "es", "fr", "ja"];
 const NOTE_COLORS = new Set(["plain", "yellow", "mint", "blue", "rose"]);
 const IMPORT_VERSIONS = new Set([3, 4]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
@@ -24,21 +25,24 @@ export function blankBoard() {
   };
 }
 
-export function parseImportedBoard(encoded) {
-  if (typeof encoded !== "string") throw new Error("备份格式不正确");
-  if (new TextEncoder().encode(encoded).byteLength > MAX_IMPORT_BYTES) throw new Error("备份文件过大（上限 2 MB）");
+export function parseImportedBoard(encoded, limits = {}) {
+  const maxBytes = limits.maxBytes ?? MAX_IMPORT_BYTES;
+  const maxNodes = limits.maxNodes ?? MAX_IMPORT_NODES;
+  const maxEdges = limits.maxEdges ?? MAX_IMPORT_EDGES;
+  if (typeof encoded !== "string") throw new Error("import.invalid");
+  if (new TextEncoder().encode(encoded).byteLength > maxBytes) throw new Error("import.tooLarge");
   let value;
   try {
     value = JSON.parse(encoded);
   } catch {
-    throw new Error("备份格式不正确");
+    throw new Error("import.invalid");
   }
-  validateImportedBoard(value);
+  validateImportedBoard(value, maxNodes, maxEdges);
   return normalizeBoard(value);
 }
 
-function validateImportedBoard(value) {
-  if (!isPlainObject(value) || !IMPORT_VERSIONS.has(value.version)) throw new Error("不支持这个备份版本");
+function validateImportedBoard(value, maxNodes, maxEdges) {
+  if (!isPlainObject(value) || !IMPORT_VERSIONS.has(value.version)) throw new Error("import.unsupportedVersion");
   if (
     typeof value.title !== "string"
     || !value.title.trim()
@@ -47,8 +51,8 @@ function validateImportedBoard(value) {
     || !Array.isArray(value.nodes)
     || !Array.isArray(value.edges)
     || !isPlainObject(value.view)
-  ) throw new Error("备份格式不正确");
-  if (value.nodes.length > MAX_IMPORT_NODES || value.edges.length > MAX_IMPORT_EDGES) throw new Error("备份内容过多");
+  ) throw new Error("import.invalid");
+  if (value.nodes.length > maxNodes || value.edges.length > maxEdges) throw new Error("import.tooMuchContent");
 
   const nodeIds = new Set();
   value.nodes.forEach((node) => {
@@ -64,7 +68,7 @@ function validateImportedBoard(value) {
       || !Number.isFinite(node.width)
       || node.width < 160
       || node.width > 520
-    ) throw new Error("备份格式不正确");
+    ) throw new Error("import.invalid");
     nodeIds.add(node.id);
   });
 
@@ -86,7 +90,7 @@ function validateImportedBoard(value) {
       || !validArrow
       || typeof edge.label !== "string"
       || edge.label.length > 120
-    ) throw new Error("备份格式不正确");
+    ) throw new Error("import.invalid");
     edgeIds.add(edge.id);
     pairs.add(pair);
   });
@@ -97,11 +101,11 @@ function validateImportedBoard(value) {
     || !Number.isFinite(value.view.scale)
     || value.view.scale < 0.35
     || value.view.scale > 2
-  ) throw new Error("备份格式不正确");
+  ) throw new Error("import.invalid");
 }
 
 export function normalizeBoard(value) {
-  if (!value || typeof value !== "object") throw new Error("备份格式不正确");
+  if (!value || typeof value !== "object") throw new Error("import.invalid");
 
   const ids = new Set();
   const nodes = Array.isArray(value.nodes)
@@ -283,8 +287,16 @@ export function createId() {
 }
 
 export function emptyNotePrompt(id) {
+  return EMPTY_NOTE_PROMPTS[emptyNotePromptIndex(id)];
+}
+
+export function emptyNotePromptLanguage(id) {
+  return EMPTY_NOTE_PROMPT_LANGS[emptyNotePromptIndex(id)];
+}
+
+function emptyNotePromptIndex(id) {
   const hash = [...id].reduce((value, character) => Math.imul(value, 31) + character.charCodeAt(0) | 0, 0);
-  return EMPTY_NOTE_PROMPTS[(hash >>> 0) % EMPTY_NOTE_PROMPTS.length];
+  return (hash >>> 0) % EMPTY_NOTE_PROMPTS.length;
 }
 
 export function screenToWorld(point, view) {

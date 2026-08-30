@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
-import { captureRecovery, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, captureRecovery, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { messages, t } from "./i18n.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
 let edges = toggleConnection([], "a", "b", () => "edge-1");
@@ -109,9 +110,16 @@ assert.equal(shouldDiscardDraft("", true, true), true);
 assert.equal(shouldDiscardDraft("内容", true, true), false);
 
 assert.equal(EMPTY_NOTE_PROMPTS.length, 5);
+assert.equal(EMPTY_NOTE_PROMPT_LANGS.length, EMPTY_NOTE_PROMPTS.length);
 assert.equal(emptyNotePrompt("same-note"), emptyNotePrompt("same-note"));
+assert.equal(emptyNotePromptLanguage("same-note"), emptyNotePromptLanguage("same-note"));
 assert.equal(new Set(Array.from({ length: 50 }, (_, index) => emptyNotePrompt(`note-${index}`))).size, 5);
 assert.ok(EMPTY_NOTE_PROMPTS.every((prompt) => [...prompt].length <= 24));
+assert.deepEqual(Object.keys(messages.en).sort(), Object.keys(messages["zh-Hans"]).sort());
+assert.equal(t("undo", {}, "en"), "Undo");
+assert.equal(t("undo", {}, "zh-Hans"), "撤销");
+assert.equal(t("selectedNotes", { count: 3 }, "en"), "Selected notes: 3");
+assert.equal(t("noteName", { text: "$&" }, "en"), "Note: $&");
 
 assert.deepEqual([...applyLassoSelection(["a"], ["b"], false)], ["b"]);
 assert.deepEqual([...applyLassoSelection(["a"], [], false)], []);
@@ -193,12 +201,12 @@ assert.equal(parseImportedBoard(JSON.stringify({
 const validImportJson = JSON.stringify(validImport);
 const validImportBytes = new TextEncoder().encode(validImportJson).byteLength;
 assert.equal(parseImportedBoard(`${validImportJson}${" ".repeat(MAX_IMPORT_BYTES - validImportBytes)}`).title, "Imported");
-assert.throws(() => parseImportedBoard(`${validImportJson}${" ".repeat(MAX_IMPORT_BYTES - validImportBytes + 1)}`), /2 MB/);
+assert.throws(() => parseImportedBoard(`${validImportJson}${" ".repeat(MAX_IMPORT_BYTES - validImportBytes + 1)}`), /import\.tooLarge/);
 
 const importNode = (id) => ({ id, text: "", x: 0, y: 0, color: "plain", width: 218 });
 const maximumNodes = Array.from({ length: MAX_IMPORT_NODES }, (_, index) => importNode(`n-${index}`));
 assert.equal(parseImportedBoard(JSON.stringify({ ...validImport, nodes: maximumNodes, edges: [] })).nodes.length, MAX_IMPORT_NODES);
-assert.throws(() => parseImportedBoard(JSON.stringify({ ...validImport, nodes: [...maximumNodes, importNode("too-many")], edges: [] })), /内容过多/);
+assert.throws(() => parseImportedBoard(JSON.stringify({ ...validImport, nodes: [...maximumNodes, importNode("too-many")], edges: [] })), /import\.tooMuchContent/);
 
 const edgeNodes = Array.from({ length: 101 }, (_, index) => importNode(`edge-node-${index}`));
 const maximumEdges = [];
@@ -208,7 +216,7 @@ for (let from = 0; from < edgeNodes.length && maximumEdges.length <= MAX_IMPORT_
   }
 }
 assert.equal(parseImportedBoard(JSON.stringify({ ...validImport, nodes: edgeNodes, edges: maximumEdges.slice(0, MAX_IMPORT_EDGES) })).edges.length, MAX_IMPORT_EDGES);
-assert.throws(() => parseImportedBoard(JSON.stringify({ ...validImport, nodes: edgeNodes, edges: maximumEdges.slice(0, MAX_IMPORT_EDGES + 1) })), /内容过多/);
+assert.throws(() => parseImportedBoard(JSON.stringify({ ...validImport, nodes: edgeNodes, edges: maximumEdges.slice(0, MAX_IMPORT_EDGES + 1) })), /import\.tooMuchContent/);
 
 assert.equal(parseImportedBoard(JSON.stringify({ ...validImport, nodes: [{ ...validImport.nodes[0], text: "x".repeat(20_000) }], edges: [] })).nodes[0].text.length, 20_000);
 assert.throws(() => parseImportedBoard(JSON.stringify({ ...validImport, nodes: [{ ...validImport.nodes[0], text: "x".repeat(20_001) }], edges: [] })));
@@ -278,8 +286,137 @@ function recoveryEntries(storage) {
   return JSON.parse(storage.getItem("scattered-recovery-v2") || "[]");
 }
 
-const storage = new MemoryStorage([["scattered-board-v1", JSON.stringify({ title: "Legacy", nodes: [{ id: "a", text: "kept", x: 0, y: 0 }], edges: [] })]]);
+function importJournalKeys(storage) {
+  return [...storage.values.keys()].filter((key) => key.startsWith("scattered-import-journal-v1:"));
+}
+
 let time = 100;
+const workspaceBackupStorage = new MemoryStorage();
+const workspaceBackupBase = loadWorkspace(workspaceBackupStorage, () => time++);
+saveDocument(workspaceBackupStorage, workspaceBackupBase.workspace, { ...workspaceBackupBase.board, title: "First" }, () => time++);
+const workspaceBackupCurrent = createDocument(
+  workspaceBackupStorage,
+  workspaceBackupBase.workspace,
+  { title: "Second", nodes: [], edges: [] },
+  () => time++,
+);
+const unsavedWorkspaceBoard = { ...workspaceBackupCurrent, nodes: [{ id: "unsaved", text: "kept", x: 0, y: 0 }] };
+const workspaceBackup = createWorkspaceBackup(workspaceBackupStorage, workspaceBackupBase.workspace, unsavedWorkspaceBoard);
+assert.equal(workspaceBackup.format, "scattered-workspace");
+assert.equal(workspaceBackup.boards.length, 2);
+assert.equal(workspaceBackup.boards[workspaceBackup.activeBoard].nodes[0].text, "kept");
+const parsedWorkspaceBackup = parseImportedWorkspace(JSON.stringify(workspaceBackup));
+assert.equal(parsedWorkspaceBackup.boards.length, 2);
+assert.equal(parseImportedWorkspace(JSON.stringify(validImport)), null);
+assert.throws(() => parseImportedWorkspace(JSON.stringify({ ...workspaceBackup, version: 2 })), /import\.unsupportedVersion/);
+assert.throws(() => parseImportedWorkspace(JSON.stringify({
+  ...workspaceBackup,
+  activeBoard: 0,
+  boards: Array.from({ length: MAX_WORKSPACE_IMPORT_BOARDS + 1 }, () => validImport),
+})), /import\.tooMuchContent/);
+
+const workspaceImportStorage = new MemoryStorage();
+const workspaceImportTarget = loadWorkspace(workspaceImportStorage, () => time++);
+const importedActiveBoard = addImportedWorkspace(workspaceImportStorage, workspaceImportTarget.workspace, parsedWorkspaceBackup, () => time++);
+assert.equal(importedActiveBoard.title, "Second");
+assert.equal(workspaceImportTarget.workspace.boards.length, 3);
+assert.equal(storedBoard(workspaceImportStorage, workspaceImportTarget.workspace.activeId).nodes[0].text, "kept");
+
+const failedWorkspaceImportStorage = new FailingStorage();
+const failedWorkspaceImport = loadWorkspace(failedWorkspaceImportStorage, () => time++);
+const failedWorkspaceImportBefore = failedWorkspaceImportStorage.getItem("scattered-workspace-v2");
+failedWorkspaceImportStorage.failWorkspace = true;
+assert.throws(() => addImportedWorkspace(
+  failedWorkspaceImportStorage,
+  failedWorkspaceImport.workspace,
+  parsedWorkspaceBackup,
+  () => time++,
+), /quota/);
+assert.equal(failedWorkspaceImportStorage.getItem("scattered-workspace-v2"), failedWorkspaceImportBefore);
+assert.equal(importJournalKeys(failedWorkspaceImportStorage).length, 0);
+assert.equal([...failedWorkspaceImportStorage.values.keys()].filter((key) => key.startsWith("scattered-document-v2:")).length, 1);
+
+const interruptedImportStorage = new MemoryStorage();
+loadWorkspace(interruptedImportStorage, () => time++);
+interruptedImportStorage.setItem("scattered-document-v2:orphaned-import", JSON.stringify(validImport));
+interruptedImportStorage.setItem("scattered-import-journal-v1:interrupted", JSON.stringify({
+  format: "scattered-import",
+  version: 1,
+  id: "interrupted",
+  startedAt: 0,
+  ids: ["orphaned-import"],
+}));
+loadWorkspace(interruptedImportStorage, () => 200_001);
+assert.equal(interruptedImportStorage.getItem("scattered-document-v2:orphaned-import"), null);
+assert.equal(importJournalKeys(interruptedImportStorage).length, 0);
+
+const activeImportStorage = new MemoryStorage();
+loadWorkspace(activeImportStorage, () => time++);
+activeImportStorage.setItem("scattered-document-v2:active-import", JSON.stringify(validImport));
+activeImportStorage.setItem("scattered-import-journal-v1:active", JSON.stringify({
+  format: "scattered-import",
+  version: 1,
+  id: "active",
+  startedAt: 500_000,
+  ids: ["active-import"],
+}));
+loadWorkspace(activeImportStorage, () => 500_001);
+assert.notEqual(activeImportStorage.getItem("scattered-document-v2:active-import"), null);
+assert.equal(importJournalKeys(activeImportStorage).length, 1);
+loadWorkspace(activeImportStorage, () => 620_001);
+assert.equal(activeImportStorage.getItem("scattered-document-v2:active-import"), null);
+assert.equal(importJournalKeys(activeImportStorage).length, 0);
+
+const largeWorkspaceBoards = Array.from({ length: 101 }, (_, index) => ({
+  ...validImport,
+  title: `Large ${index + 1}`,
+  nodes: index === 0 ? Array.from({ length: 501 }, (__, nodeIndex) => importNode(`large-${nodeIndex}`)) : [],
+  edges: [],
+}));
+const parsedLargeWorkspace = parseImportedWorkspace(JSON.stringify({
+  format: "scattered-workspace",
+  version: 1,
+  activeBoard: 0,
+  boards: largeWorkspaceBoards,
+}));
+const largeWorkspaceStorage = new MemoryStorage();
+const largeWorkspaceTarget = loadWorkspace(largeWorkspaceStorage, () => time++);
+const largeWorkspaceCurrent = addImportedWorkspace(
+  largeWorkspaceStorage,
+  largeWorkspaceTarget.workspace,
+  parsedLargeWorkspace,
+  () => time++,
+);
+const largeWorkspaceRoundTrip = createWorkspaceBackup(
+  largeWorkspaceStorage,
+  largeWorkspaceTarget.workspace,
+  largeWorkspaceCurrent,
+);
+assert.equal(parseImportedWorkspace(JSON.stringify(largeWorkspaceRoundTrip)).boards.length, 102);
+
+const freshExportStorage = new MemoryStorage();
+const freshExportBase = loadWorkspace(freshExportStorage, () => time++);
+const staleWorkspace = structuredClone(freshExportBase.workspace);
+const staleCurrentBoard = structuredClone(freshExportBase.board);
+createDocument(freshExportStorage, freshExportBase.workspace, { title: "Other tab", nodes: [], edges: [] }, () => time++);
+const freshExport = createWorkspaceBackup(freshExportStorage, staleWorkspace, staleCurrentBoard);
+assert.equal(freshExport.boards.length, 2);
+assert.ok(freshExport.boards.some((candidate) => candidate.title === "Other tab"));
+
+const conflictingExportStorage = new MemoryStorage();
+const conflictingExportBase = loadWorkspace(conflictingExportStorage, () => time++);
+const conflictingStaleWorkspace = structuredClone(conflictingExportBase.workspace);
+const localExportBoard = { ...conflictingExportBase.board, nodes: [importNode("local-export")] };
+const remoteExportWorkspace = structuredClone(conflictingExportBase.workspace);
+saveDocument(conflictingExportStorage, remoteExportWorkspace, {
+  ...conflictingExportBase.board,
+  nodes: [importNode("remote-export")],
+}, () => time++);
+const conflictingExport = createWorkspaceBackup(conflictingExportStorage, conflictingStaleWorkspace, localExportBoard);
+assert.equal(conflictingExport.boards.length, 2);
+assert.deepEqual(new Set(conflictingExport.boards.flatMap((candidate) => candidate.nodes.map((node) => node.id))), new Set(["local-export", "remote-export"]));
+
+const storage = new MemoryStorage([["scattered-board-v1", JSON.stringify({ title: "Legacy", nodes: [{ id: "a", text: "kept", x: 0, y: 0 }], edges: [] })]]);
 const loadedWorkspace = loadWorkspace(storage, () => time++);
 assert.equal(loadedWorkspace.board.title, "Legacy");
 assert.equal(loadedWorkspace.workspace.boards.length, 1);
@@ -877,6 +1014,9 @@ const saveBoardNowSource = app.match(/async function saveBoardNow[\s\S]*?\n}\n\n
 const stagePendingSaveSource = app.match(/function stagePendingSave[\s\S]*?\n}\n\nasync function saveBoardNow/)?.[0] ?? "";
 const syncOpenInputsSource = app.match(/function syncOpenInputs[\s\S]*?\n}\n\nfunction snapshotState/)?.[0] ?? "";
 const replacementSource = app.match(/function replaceCurrentBoard[\s\S]*?\n}\n\nfunction syncOpenInputs/)?.[0] ?? "";
+const openSearchSource = app.match(/function openSearch[\s\S]*?\n}\n\nfunction closeSearch/)?.[0] ?? "";
+const onKeyDownSource = app.match(/function onKeyDown[\s\S]*?\n}\n\nfunction initializeWorkspace/)?.[0] ?? "";
+const applyHistorySource = app.match(/function applyHistory[\s\S]*?\n}\n\nfunction updateHistoryControls/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
 const selectionArrowMarkup = html.match(/<button id="arrow-selection"[\s\S]*?<\/button>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
@@ -892,6 +1032,15 @@ editorFocusSources.forEach((source) => {
 assert.doesNotMatch(app, /isDoubleTap|shouldProtectPenTap/);
 assert.doesNotMatch(app, /confirm\(/);
 assert.match(app, /addEventListener\("dblclick", onDoubleClick\)/);
+assert.match(app, /boardTitle\.addEventListener\("click"[\s\S]*?event\.detail === 0[\s\S]*?editBoardTitle\(\)/);
+assert.match(app, /event\.target !== element[\s\S]*?event\.key\.toLowerCase\(\) === "l"[\s\S]*?startKeyboardLink/);
+assert.match(app, /textarea, input, button, a, \[role=button\][\s\S]*?event\.code === "Space"/);
+assert.match(onKeyDownSource, /canvasShortcutTarget[\s\S]*?overlayOpen[\s\S]*?event\.key\.toLowerCase\(\) === "n"/);
+assert.match(openSearchSource, /closest\?\.\("#menu"\)[\s\S]*?menuButton[\s\S]*?closest\?\.\("\.node"\)/);
+assert.match(applyHistorySource, /focusedNodeId[\s\S]*?focusedEdgeId[\s\S]*?requestAnimationFrame/);
+assert.match(app, /async function openBoard[\s\S]*?id === workspace\.activeId[\s\S]*?boardsButton\.focus\(\)/);
+assert.match(app, /function updateBoardTitle[\s\S]*?t\("boardTitleEdit", \{ title \}\)/);
+assert.match(app, /async function shareOrDownloadBlob[\s\S]*?try \{ canShare =[\s\S]*?error\?\.name === "AbortError"/);
 assert.match(pointerDownSource, /if \(!node\) \{\s*if \(activeEditor\) selectNode\(null\);\s*finishEditing\(\);/);
 assert.match(doubleClickSource, /event\.target\.closest\("\.node"\)\s*\?\?\s*document\.elementFromPoint/);
 assert.match(saveBoardNowSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return true;[\s\S]*?withWorkspaceLock[\s\S]*?saveDocument[\s\S]*?boardDirty = false;[\s\S]*?markSaveFailure[\s\S]*?return false;/);
@@ -904,15 +1053,19 @@ assert.match(replacementSource, /workspace\.activeId !== previousId[\s\S]*?repla
   assert.match(source, /await commitCurrentBoard\(\)/);
   assert.match(source, /withWorkspaceLock\(/);
 });
-assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_IMPORT_BYTES[\s\S]*?parseImportedBoard[\s\S]*?await replaceCurrentBoard\(imported, "import"\)/);
+assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_WORKSPACE_IMPORT_BYTES[\s\S]*?parseImportedWorkspace\(encoded\)[\s\S]*?mergeImportedWorkspace[\s\S]*?replaceCurrentBoard\(parseImportedBoard\(encoded\), "import"\)/);
 assert.doesNotMatch(app, /function preserveForRecovery/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?workspaceActionPending[\s\S]*?aria-busy[\s\S]*?disabled = true/);
+assert.match(app, /type: "link"[\s\S]*?pointerType: event\.pointerType[\s\S]*?startX: event\.clientX[\s\S]*?moved: false/);
+assert.match(app, /currentMode\?\.type === "link"[\s\S]*?isBlankCanvasTarget\(hit\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", currentMode\.sourceIds\)/);
+assert.match(app, /function isBlankCanvasTarget\(element\) \{\s*return element\?\.id === "gesture-surface";/);
+assert.match(app, /function createNode\(x, y, fromPen = false, sourceIds = \[\]\)[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?queueEdgeRender\(\)/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?\["node", "resize", "pan", "pinch"\]\.includes\(mode\?\.type\)[\s\S]*?boardDirty = true[\s\S]*?cancelGesture\(\);/);
 assert.match(app, /function endWorkspaceAction\(\)[\s\S]*?disabled = false/);
 assert.match(app, /\["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"\][\s\S]*?blockWorkspaceInteraction[\s\S]*?capture: true/);
 assert.match(app, /function blockWorkspaceInteraction\(event\) \{[\s\S]*?workspaceActionPending[\s\S]*?preventDefault\(\)[\s\S]*?stopImmediatePropagation\(\)/);
 assert.match(app, /async function removeCurrentBoard[\s\S]*?confirming-delete[\s\S]*?armDeleteBoard\(\)[\s\S]*?deleteDocument\(localStorage, workspace\)/);
-assert.match(app, /async function removeCurrentBoard[\s\S]*?clearSaveFailure\(\)[\s\S]*?markSaveFailure\("无法删除画布，请先导出备份"\)/);
+assert.match(app, /async function removeCurrentBoard[\s\S]*?clearSaveFailure\(\)[\s\S]*?markSaveFailure\(t\("errorDeleteBoard"\)\)/);
 assert.match(app, /function scheduleSave\(\)[\s\S]*?boardDirty = true;/);
 assert.match(app, /addEventListener\("pagehide"[\s\S]*?stagePendingSave\(\)[\s\S]*?saveBoardNow\(\)/);
 assert.match(stagePendingSaveSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return;[\s\S]*?stagePendingDocument\(localStorage, workspace, board\)/);
@@ -941,6 +1094,10 @@ assert.doesNotMatch(menuMarkup, /id="restore-button"/);
 assert.match(html, /id="search-panel"[\s\S]*?id="search-input"[\s\S]*?id="search-previous"[\s\S]*?id="search-next"/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
+assert.match(html, /<html lang="en">/);
+assert.doesNotMatch(html, /user-scalable=no/);
+assert.doesNotMatch(html, /id="world"[^>]*aria-live/);
+assert.match(html, /id="announcer"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(html, /<svg class="app-logo"[\s\S]*?(app-logo-dot[\s\S]*?){6}<\/svg>/);
 assert.doesNotMatch(html, /mark-dot/);
 assert.match(html, /id="board-title"[\s\S]*?>Untitled</);
@@ -956,6 +1113,7 @@ assert.match(selectionArrowMarkup, /M4 12h16[\s\S]*?M15 7l5 5-5 5/);
 assert.doesNotMatch(selectionArrowMarkup, /data-direction|aria-pressed|arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
+assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
 assert.match(app, /createBoardSvg\(board\)/);
@@ -969,9 +1127,10 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v29/);
+assert.match(serviceWorker, /scattered-v30/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
+assert.match(serviceWorker, /\.\/i18n\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
 assert.equal(existsSync(new URL("./pdf-export.js", import.meta.url)), false);
 assert.equal(existsSync(new URL("./vendor", import.meta.url)), false);

@@ -1,6 +1,7 @@
-import { MAX_IMPORT_BYTES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { applyTranslations, hasMessage, t } from "./i18n.js";
 
 const THEME_KEY = "scattered-theme";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
@@ -14,6 +15,7 @@ const lassoPath = document.querySelector("#lasso-path");
 const template = document.querySelector("#node-template");
 const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
+const exportButton = document.querySelector("#export-button");
 const cancelExportButton = document.querySelector("#cancel-export-button");
 const exportJsonButton = document.querySelector("#export-json-button");
 const exportSvgButton = document.querySelector("#export-svg-button");
@@ -24,6 +26,7 @@ const cancelClearButton = document.querySelector("#cancel-clear-button");
 const themeButton = document.querySelector("#theme-button");
 const themeColor = document.querySelector('meta[name="theme-color"]');
 const toast = document.querySelector("#toast");
+const announcer = document.querySelector("#announcer");
 const historyTools = document.querySelector("#history-tools");
 const fitButton = document.querySelector("#fit-button");
 const undoButton = document.querySelector("#undo-button");
@@ -80,19 +83,24 @@ let clipboardPayload = null;
 let clipboardText = "";
 let searchMatches = [];
 let searchIndex = -1;
+let keyboardLinkSourceIds = null;
+let colorAnchor = null;
+let searchReturnFocus = null;
+let announcementFrame = 0;
 const pointers = new Map();
 const nodeElements = new Map();
 const selectedIds = new Set();
 const undoStack = [];
 const redoStack = [];
 
+applyTranslations();
 renderAll();
 applyView();
 updateHistoryControls();
 updateThemeControl();
 renderBoardList();
 updateRecoveryControl();
-if (!storageReady) markSaveFailure("本地存储不可用，请导出备份");
+if (!storageReady) markSaveFailure(t("errorStorageUnavailable"));
 
 viewport.addEventListener("pointerdown", onPointerDown);
 viewport.addEventListener("pointermove", onPointerMove);
@@ -164,8 +172,8 @@ menuButton.addEventListener("click", (event) => {
 });
 themeButton.addEventListener("click", toggleTheme);
 
-document.querySelector("#export-button").addEventListener("click", showExportChoices);
-cancelExportButton.addEventListener("click", disarmExport);
+exportButton.addEventListener("click", showExportChoices);
+cancelExportButton.addEventListener("click", (event) => disarmExport(event, true));
 exportJsonButton.addEventListener("click", exportBoard);
 exportSvgButton.addEventListener("click", exportSvg);
 exportMermaidButton.addEventListener("click", exportMermaid);
@@ -203,11 +211,15 @@ edgeLabelEditor.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     event.stopPropagation();
+    const edgeId = edgeLabelEditor.dataset.edgeId;
     finishEdgeLabel();
+    requestAnimationFrame(() => focusEdge(edgeId));
   } else if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
+    const edgeId = edgeLabelEditor.dataset.edgeId;
     finishEdgeLabel(true);
+    requestAnimationFrame(() => focusEdge(edgeId));
   }
 });
 boardTitle.addEventListener("dblclick", (event) => {
@@ -222,25 +234,31 @@ boardTitleEditor.addEventListener("blur", () => finishBoardTitle());
 boardTitleEditor.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
+    event.stopPropagation();
     finishBoardTitle();
+    boardTitle.focus();
   } else if (event.key === "Escape") {
     event.preventDefault();
+    event.stopPropagation();
     finishBoardTitle(true);
+    boardTitle.focus();
   }
 });
 searchInput.addEventListener("input", updateSearch);
 searchInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
+    event.stopPropagation();
     moveSearch(event.shiftKey ? -1 : 1);
   } else if (event.key === "Escape") {
     event.preventDefault();
-    closeSearch();
+    event.stopPropagation();
+    closeSearch(true);
   }
 });
 searchPreviousButton.addEventListener("click", () => moveSearch(-1));
 searchNextButton.addEventListener("click", () => moveSearch(1));
-searchCloseButton.addEventListener("click", closeSearch);
+searchCloseButton.addEventListener("click", () => closeSearch(true));
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -253,6 +271,7 @@ if (new URLSearchParams(location.search).get("debug") === "1") {
 }
 
 function onPointerDown(event) {
+  if (keyboardLinkSourceIds) finishKeyboardLink();
   if (!event.target.closest(".color-palette, .color-handle, #color-selection")) hideColorPalette();
   if (!event.target.closest(".app-mark") && !boardTitleEditor.hidden) finishBoardTitle();
   if (!event.target.closest(".app-mark, .board-picker")) setBoardPickerOpen(false);
@@ -352,7 +371,17 @@ function onPointerDown(event) {
     finishEditing(node.dataset.id);
     if (!selectedIds.has(node.dataset.id)) selectNode(node.dataset.id);
     const sourceIds = selectionMode ? [...selectedIds] : [node.dataset.id];
-    mode = { type: "link", pointerId: event.pointerId, sourceIds, x: event.clientX, y: event.clientY };
+    mode = {
+      type: "link",
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      sourceIds,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+    };
     updateLinkPreview(event.clientX, event.clientY);
     return;
   }
@@ -501,6 +530,9 @@ function onPointerMove(event) {
   }
 
   if (mode?.type === "link" && mode.pointerId === event.pointerId) {
+    if (!mode.moved && hasDragIntent(mode.pointerType, event.clientX - mode.startX, event.clientY - mode.startY)) {
+      mode.moved = true;
+    }
     mode.x = event.clientX;
     mode.y = event.clientY;
     updateLinkPreview(event.clientX, event.clientY);
@@ -550,12 +582,22 @@ function onPointerUp(event) {
       scheduleSave();
     }
   } else if (currentMode?.type === "link") {
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".node");
-    if (target && !currentMode.sourceIds.includes(target.dataset.id)) {
-      checkpoint();
-      board.edges = toggleConnectionsToTarget(board.edges, currentMode.sourceIds, target.dataset.id);
-      queueEdgeRender();
-      scheduleSave();
+    const hit = document.elementFromPoint(event.clientX, event.clientY);
+    const target = hit?.closest(".node");
+    if (target) {
+      if (!currentMode.sourceIds.includes(target.dataset.id)) {
+        checkpoint();
+        board.edges = toggleConnectionsToTarget(board.edges, currentMode.sourceIds, target.dataset.id);
+        queueEdgeRender();
+        scheduleSave();
+      }
+    } else {
+      const moved = currentMode.moved
+        || hasDragIntent(currentMode.pointerType, event.clientX - currentMode.startX, event.clientY - currentMode.startY);
+      if (moved && isBlankCanvasTarget(hit)) {
+        const point = screenToWorld({ x: event.clientX, y: event.clientY }, board.view);
+        createNode(point.x, point.y, event.pointerType === "pen", currentMode.sourceIds);
+      }
     }
     linkPreview.toggleAttribute("hidden", true);
     document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
@@ -570,6 +612,7 @@ function cancelGesture() {
   clearLongPress();
   pointers.clear();
   mode = null;
+  finishKeyboardLink();
   viewport.classList.remove("panning");
   linkPreview.toggleAttribute("hidden", true);
   hideLasso();
@@ -610,6 +653,7 @@ function setMenuOpen(open) {
   if (open) setBoardPickerOpen(false);
   menu.hidden = !open;
   menuButton.setAttribute("aria-expanded", String(open));
+  if (open) requestAnimationFrame(() => exportButton.focus());
   if (!open) {
     disarmClear();
     disarmExport();
@@ -622,6 +666,7 @@ function setBoardPickerOpen(open) {
   if (open) {
     setMenuOpen(false);
     renderBoardList();
+    requestAnimationFrame(() => boardList.querySelector('[aria-current="true"]')?.focus() || newBoardButton.focus());
   } else {
     disarmDeleteBoard();
   }
@@ -630,13 +675,13 @@ function setBoardPickerOpen(open) {
 function armDeleteBoard() {
   boardPicker.classList.add("confirming-delete");
   cancelDeleteBoardButton.hidden = false;
-  deleteBoardButton.setAttribute("aria-label", "确认删除当前画布");
+  deleteBoardButton.setAttribute("aria-label", t("confirmDeleteBoard"));
 }
 
 function disarmDeleteBoard() {
   boardPicker.classList.remove("confirming-delete");
   cancelDeleteBoardButton.hidden = true;
-  deleteBoardButton.setAttribute("aria-label", "删除当前画布");
+  deleteBoardButton.setAttribute("aria-label", t("deleteBoard"));
 }
 
 function beginWorkspaceAction() {
@@ -672,8 +717,7 @@ function renderBoardList() {
     option.type = "button";
     option.className = "board-list-option";
     option.dataset.id = item.id;
-    option.setAttribute("role", "option");
-    option.setAttribute("aria-selected", String(item.id === workspace.activeId));
+    if (item.id === workspace.activeId) option.setAttribute("aria-current", "true");
     const title = document.createElement("span");
     title.className = "board-list-title";
     title.textContent = item.title || "Untitled";
@@ -692,7 +736,7 @@ async function newBoard(event) {
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
-    showToast("无法新建画布，请先导出备份");
+    showToast(t("errorCreateBoard"));
   } finally {
     endWorkspaceAction();
   }
@@ -707,7 +751,7 @@ async function duplicateBoard(event) {
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
-    showToast("无法复制画布，请先导出备份");
+    showToast(t("errorDuplicateBoard"));
   } finally {
     endWorkspaceAction();
   }
@@ -728,7 +772,7 @@ async function removeCurrentBoard(event) {
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
-    markSaveFailure("无法删除画布，请先导出备份");
+    markSaveFailure(t("errorDeleteBoard"));
   } finally {
     endWorkspaceAction();
   }
@@ -737,6 +781,7 @@ async function removeCurrentBoard(event) {
 async function openBoard(id) {
   if (id === workspace.activeId) {
     setBoardPickerOpen(false);
+    boardsButton.focus();
     return;
   }
   if (!beginWorkspaceAction()) return;
@@ -748,7 +793,7 @@ async function openBoard(id) {
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
-    showToast("无法打开这个画布");
+    showToast(t("errorOpenBoard"));
   } finally {
     endWorkspaceAction();
   }
@@ -784,7 +829,7 @@ async function restoreRecentBoard(event) {
     setMenuOpen(false);
     boardsButton.focus();
   } catch {
-    showToast("无法恢复本地副本");
+    showToast(t("errorRestoreBoard"));
   } finally {
     endWorkspaceAction();
   }
@@ -804,23 +849,42 @@ function finishCurrentInput() {
 function openSearch(event) {
   event?.preventDefault();
   event?.stopPropagation();
+  const active = document.activeElement;
+  const returnFocus = active?.closest?.(".search-panel")
+    ? searchReturnFocus
+    : active?.closest?.("#menu")
+      ? menuButton
+      : active?.closest?.(".board-picker")
+        ? boardsButton
+        : active?.closest?.(".color-palette")
+          ? colorAnchor
+          : active === boardTitleEditor
+            ? boardTitle
+            : active === edgeLabelEditor
+              ? menuButton
+              : active?.closest?.(".node") || active;
   setMenuOpen(false);
   setBoardPickerOpen(false);
   finishCurrentInput();
+  searchReturnFocus = returnFocus && returnFocus !== document.body ? returnFocus : menuButton;
   searchPanel.hidden = false;
+  searchButton.setAttribute("aria-expanded", "true");
   updateSearch();
   searchInput.focus();
   searchInput.select();
 }
 
-function closeSearch() {
+function closeSearch(restoreFocus = false) {
   searchInput.blur();
   searchPanel.hidden = true;
+  searchButton.setAttribute("aria-expanded", "false");
   searchMatches = [];
   searchIndex = -1;
   searchInput.value = "";
   searchCount.textContent = "";
   nodeElements.forEach((element) => element.classList.remove("search-match", "search-current"));
+  if (restoreFocus) searchReturnFocus?.focus?.();
+  searchReturnFocus = null;
 }
 
 function updateSearch() {
@@ -849,6 +913,16 @@ function updateSearchVisuals() {
     element.classList.toggle("search-current", id === currentId);
   });
   searchCount.textContent = searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : searchInput.value ? "0" : "";
+  const current = findNode(currentId, false);
+  if (current) {
+    searchCount.setAttribute("aria-label", t("searchPosition", {
+      current: searchIndex + 1,
+      total: searchMatches.length,
+      text: accessibleNoteText(current),
+    }));
+  } else {
+    searchCount.removeAttribute("aria-label");
+  }
   searchPreviousButton.disabled = searchMatches.length < 2;
   searchNextButton.disabled = searchMatches.length < 2;
 }
@@ -902,6 +976,7 @@ function onPaste(event) {
   selectionMode = false;
   renderAll();
   scheduleSave();
+  requestAnimationFrame(() => nodeElements.get(node.id)?.focus());
 }
 
 function duplicateSelection(event) {
@@ -938,34 +1013,39 @@ function pasteGraph(payload, origin) {
   selectedEdgeId = null;
   renderAll();
   scheduleSave();
+  requestAnimationFrame(() => nodeElements.get(pasted.nodes[0]?.id)?.focus());
 }
 
 function disarmClear() {
   menu.classList.remove("confirming-clear");
   cancelClearButton.hidden = true;
-  clearButton.setAttribute("aria-label", "清空画布");
+  clearButton.setAttribute("aria-label", t("clearBoard"));
 }
 
 function showExportChoices(event) {
   event.stopPropagation();
   menu.classList.add("choosing-export");
+  exportButton.setAttribute("aria-expanded", "true");
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
     button.hidden = false;
   });
+  requestAnimationFrame(() => exportJsonButton.focus());
 }
 
-function disarmExport(event) {
+function disarmExport(event, restoreFocus = false) {
   event?.stopPropagation();
   menu.classList.remove("choosing-export");
+  exportButton.setAttribute("aria-expanded", "false");
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
     button.hidden = true;
   });
+  if (restoreFocus) exportButton.focus();
 }
 
 function updateThemeControl() {
   const dark = document.documentElement.dataset.theme === "dark";
   themeButton.setAttribute("aria-pressed", String(dark));
-  themeButton.setAttribute("aria-label", dark ? "切换到浅色模式" : "切换到暗色模式");
+  themeButton.setAttribute("aria-label", t("darkMode"));
   themeColor.content = dark ? "#16150f" : "#f2f4f7";
 }
 
@@ -974,7 +1054,7 @@ function handleNodeTap(id) {
 }
 
 function onDoubleClick(event) {
-  if (event.target.closest(".app-mark, .board-picker, .search-panel, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor")) return;
+  if (event.target.closest(".app-mark, .board-picker, .search-panel, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .node-editor, .resize-handle, .link-handle")) return;
   event.preventDefault();
   const edgeElement = event.target.closest(".edge");
   if (edgeElement) {
@@ -993,12 +1073,14 @@ function onDoubleClick(event) {
   createNode(point.x, point.y, fromPen);
 }
 
-function createNode(x, y, fromPen = false) {
+function createNode(x, y, fromPen = false, sourceIds = []) {
   checkpoint();
   const node = { id: createId(), text: "", x, y, color: "plain", width: 218 };
   board.nodes.push(node);
+  if (sourceIds.length) board.edges = toggleConnectionsToTarget(board.edges, sourceIds, node.id);
   updateEmptyState();
   renderNode(node, true);
+  if (sourceIds.length) queueEdgeRender();
   updateHistoryControls();
   selectNode(node.id);
   editNode(node.id, true, fromPen);
@@ -1021,7 +1103,9 @@ function updateEmptyState() {
 }
 
 function updateBoardTitle() {
-  boardTitle.textContent = board.title || "Untitled";
+  const title = board.title || "Untitled";
+  boardTitle.textContent = title;
+  boardTitle.setAttribute("aria-label", t("boardTitleEdit", { title }));
   document.title = board.title && board.title !== "Untitled" ? `${board.title} · Scattered` : "Scattered";
 }
 
@@ -1052,12 +1136,16 @@ function finishBoardTitle(cancel = false) {
 
 function renderNode(node, isNew = false) {
   const element = template.content.firstElementChild.cloneNode(true);
+  applyTranslations(element);
   element.dataset.id = node.id;
   element.dataset.new = String(isNew);
   element.dataset.color = node.color || "plain";
   element.style.setProperty("--node-width", `${node.width || 218}px`);
   element.querySelector(".node-editor").value = node.text;
   syncNodeContent(element, node);
+  const editor = element.querySelector(".node-editor");
+  const resizeHandle = element.querySelector(".resize-handle");
+  const linkHandle = element.querySelector(".link-handle");
   element.querySelector(".node-delete").addEventListener("click", (event) => {
     event.stopPropagation();
     deleteNode(node.id);
@@ -1066,16 +1154,70 @@ function renderNode(node, isNew = false) {
     event.stopPropagation();
     openColorPalette([node.id], event.currentTarget);
   });
+  resizeHandle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) checkpoint();
+    const step = (event.shiftKey ? 32 : 8) * (event.key === "ArrowLeft" ? -1 : 1);
+    node.width = clamp((node.width || 218) + step, 160, 520);
+    element.style.setProperty("--node-width", `${node.width}px`);
+    queueEdgeRender();
+    scheduleSave();
+  });
+  linkHandle.addEventListener("click", (event) => {
+    if (event.detail !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selectedIds.has(node.id)) selectNode(node.id);
+    startKeyboardLink(selectionMode ? [...selectedIds] : [node.id]);
+  });
   element.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (event.target === editor) {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        finishEditing(node.id);
+        nodeElements.get(node.id)?.focus();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finishEditing(node.id, true);
+        nodeElements.get(node.id)?.focus();
+      }
+      return;
+    }
+    if (event.target !== element) return;
+    if (keyboardLinkSourceIds && event.key === "Enter" && !keyboardLinkSourceIds.includes(node.id)) {
       event.preventDefault();
-      finishEditing(node.id);
-    } else if (event.key === "Escape") {
+      event.stopPropagation();
+      connectKeyboardLinkTo(node.id);
+    } else if (event.key.toLowerCase() === "l") {
       event.preventDefault();
-      finishEditing(node.id, true);
+      event.stopPropagation();
+      if (!selectedIds.has(node.id)) selectNode(node.id);
+      startKeyboardLink(selectionMode ? [...selectedIds] : [node.id]);
+    } else if (event.key === "Enter" || event.key === "F2") {
+      event.preventDefault();
+      event.stopPropagation();
+      editNode(node.id);
+    } else if (event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.shiftKey) {
+        selectionMode = true;
+        toggleNodeSelection(node.id);
+      } else {
+        selectNode(node.id);
+      }
+      announce(t("selectedNotes", { count: selectedIds.size }));
+    } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      moveNodesWithKeyboard(node.id, event);
     }
   });
-  element.querySelector(".node-editor").addEventListener("input", (event) => {
+  editor.addEventListener("input", (event) => {
     const nextText = event.currentTarget.value.slice(0, 20_000);
     if (node.text !== nextText && element.dataset.editCheckpointed !== "true") {
       checkpoint();
@@ -1085,7 +1227,7 @@ function renderNode(node, isNew = false) {
     resizeEditor(element);
     scheduleSave();
   });
-  element.querySelector(".node-editor").addEventListener("blur", () => finishEditing(node.id));
+  editor.addEventListener("blur", () => finishEditing(node.id));
   nodeElements.set(node.id, element);
   nodeLayer.append(element);
   positionNode(node);
@@ -1143,10 +1285,29 @@ function finishEditing(onlyId = null, explicitCancel = false) {
 
 function syncNodeContent(element, node) {
   const prompt = emptyNotePrompt(node.id);
+  const promptLanguage = emptyNotePromptLanguage(node.id);
   const empty = !node.text.trim();
   element.classList.toggle("empty-note", empty);
-  element.querySelector(".node-text").textContent = empty ? prompt : node.text;
-  element.querySelector(".node-editor").placeholder = prompt;
+  const text = element.querySelector(".node-text");
+  const editor = element.querySelector(".node-editor");
+  text.textContent = empty ? prompt : node.text;
+  if (empty) text.lang = promptLanguage;
+  else text.removeAttribute("lang");
+  editor.placeholder = prompt;
+  updateNodeAccessibility(element, node);
+}
+
+function updateNodeAccessibility(element, node) {
+  const text = accessibleNoteText(node);
+  const connections = board.edges.filter((edge) => edge.from === node.id || edge.to === node.id).length;
+  const selected = selectedIds.has(node.id) ? t("noteSelectedSuffix") : "";
+  const connected = connections ? t("noteConnectionsSuffix", { count: connections }) : "";
+  element.setAttribute("aria-label", `${t("noteName", { text })}${selected}${connected}`);
+  element.setAttribute("aria-keyshortcuts", "Enter F2 Space Shift+Space Delete ArrowUp ArrowDown ArrowLeft ArrowRight L");
+}
+
+function accessibleNoteText(node) {
+  return node.text.trim().replace(/\s+/g, " ").slice(0, 80) || t("emptyNote");
 }
 
 function resizeEditor(element) {
@@ -1162,6 +1323,55 @@ function selectNode(id) {
   if (id) selectedIds.add(id);
   selectionMode = false;
   updateSelection();
+}
+
+function moveNodesWithKeyboard(focusedId, event) {
+  if (!selectedIds.has(focusedId)) selectNode(focusedId);
+  const step = event.shiftKey ? 10 : 1;
+  const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+  const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+  if (!event.repeat) checkpoint();
+  selectedIds.forEach((id) => {
+    const node = findNode(id, false);
+    if (!node) return;
+    node.x += dx;
+    node.y += dy;
+    positionNode(node);
+  });
+  queueEdgeRender();
+  scheduleSave();
+}
+
+function startKeyboardLink(sourceIds) {
+  keyboardLinkSourceIds = [...new Set(sourceIds)].filter((id) => findNode(id, false));
+  if (keyboardLinkSourceIds.length === 0) return;
+  viewport.classList.add("keyboard-linking");
+  announce(t("connectionMode"));
+}
+
+function connectKeyboardLinkTo(targetId) {
+  if (!keyboardLinkSourceIds?.length || keyboardLinkSourceIds.includes(targetId)) return;
+  checkpoint();
+  board.edges = toggleConnectionsToTarget(board.edges, keyboardLinkSourceIds, targetId);
+  finishKeyboardLink();
+  renderEdges();
+  scheduleSave();
+  announce(t("connectionUpdated"));
+  nodeElements.get(targetId)?.focus();
+}
+
+function finishKeyboardLink() {
+  keyboardLinkSourceIds = null;
+  viewport.classList.remove("keyboard-linking");
+}
+
+function cancelKeyboardLink(shouldAnnounce = true) {
+  if (!keyboardLinkSourceIds) return false;
+  const sourceId = keyboardLinkSourceIds[0];
+  finishKeyboardLink();
+  if (shouldAnnounce) announce(t("connectionCancelled"));
+  nodeElements.get(sourceId)?.focus();
+  return true;
 }
 
 function selectEdge(id) {
@@ -1226,7 +1436,8 @@ function finishEdgeLabel(cancel = false) {
 
 function deleteSelectedEdge(event) {
   event?.stopPropagation();
-  if (!findEdge(selectedEdgeId, false)) return;
+  const edge = findEdge(selectedEdgeId, false);
+  if (!edge) return;
   checkpoint();
   board.edges = board.edges.filter((edge) => edge.id !== selectedEdgeId);
   selectedEdgeId = null;
@@ -1234,6 +1445,7 @@ function deleteSelectedEdge(event) {
   edgeLabelEditor.hidden = true;
   renderEdges();
   scheduleSave();
+  requestAnimationFrame(() => focusNoteOrBoards(edge.from));
 }
 
 function toggleNodeSelection(id) {
@@ -1249,6 +1461,8 @@ function updateSelection() {
     const selected = selectedIds.has(nodeId);
     element.classList.toggle("selected", selected);
     element.classList.toggle("selection-primary", selected && nodeId === primaryId);
+    const node = findNode(nodeId, false);
+    if (node) updateNodeAccessibility(element, node);
   });
   viewport.classList.toggle("multi-selecting", selectionMode);
   updateSelectionBar();
@@ -1261,29 +1475,31 @@ function updateSelectionBar() {
   const directions = new Set(connectedEdges.map((edge) => edge.arrow || "none"));
   const direction = directions.size > 1 ? "mixed" : directions.values().next().value || "none";
   arrowSelectionButton.disabled = connectedEdges.length === 0;
-  arrowSelectionButton.setAttribute("aria-label", `为所选标签的连线${arrowAction(direction)}`);
+  arrowSelectionButton.setAttribute("aria-label", arrowAction(direction));
   disconnectSelectionButton.disabled = connectedEdges.length === 0;
 }
 
 function updateArrowButton(button, direction) {
   button.dataset.direction = direction;
-  button.setAttribute("aria-pressed", direction === "none" ? "false" : direction === "mixed" ? "mixed" : "true");
   button.setAttribute("aria-label", arrowAction(direction));
 }
 
 function arrowAction(direction) {
   return direction === "forward"
-    ? "反转箭头"
+    ? t("reverseArrow")
     : direction === "reverse"
-      ? "移除箭头"
+      ? t("removeArrow")
       : direction === "mixed"
-        ? "统一为正向箭头"
-        : "添加正向箭头";
+        ? t("unifyForwardArrow")
+        : t("addForwardArrow");
 }
 
 function openColorPalette(ids, anchor, preferBelow = false) {
   colorTargetIds = ids.filter((id) => findNode(id, false));
   if (colorTargetIds.length === 0) return;
+  colorAnchor?.setAttribute("aria-expanded", "false");
+  colorAnchor = anchor;
+  colorAnchor.setAttribute("aria-expanded", "true");
   const colors = new Set(colorTargetIds.map((id) => findNode(id).color || "plain"));
   colorPalette.querySelectorAll(".color-swatch").forEach((swatch) => {
     swatch.setAttribute("aria-pressed", String(colors.size === 1 && colors.has(swatch.dataset.color)));
@@ -1294,19 +1510,25 @@ function openColorPalette(ids, anchor, preferBelow = false) {
   colorPalette.classList.toggle("below", below);
   colorPalette.style.left = `${clamp(rect.left + rect.width / 2, 116, innerWidth - 116)}px`;
   colorPalette.style.top = `${below ? rect.bottom + 8 : rect.top - 8}px`;
+  requestAnimationFrame(() => colorPalette.querySelector('[aria-pressed="true"]')?.focus()
+    || colorPalette.querySelector(".color-swatch")?.focus());
 }
 
-function hideColorPalette() {
+function hideColorPalette(restoreFocus = false) {
+  const anchor = colorAnchor;
+  anchor?.setAttribute("aria-expanded", "false");
+  colorAnchor = null;
   colorTargetIds = [];
   colorPalette.hidden = true;
   colorPalette.classList.remove("below");
+  if (restoreFocus) anchor?.focus?.();
 }
 
 function applyColor(color) {
   const targets = new Set(colorTargetIds);
   const changed = board.nodes.filter((node) => targets.has(node.id) && node.color !== color);
   if (changed.length === 0) {
-    hideColorPalette();
+    hideColorPalette(true);
     return;
   }
   checkpoint();
@@ -1314,7 +1536,7 @@ function applyColor(color) {
     node.color = color;
     nodeElements.get(node.id).dataset.color = color;
   });
-  hideColorPalette();
+  hideColorPalette(true);
   scheduleSave();
 }
 
@@ -1347,9 +1569,13 @@ function deleteSelection() {
   selectionMode = false;
   renderAll();
   scheduleSave();
+  requestAnimationFrame(() => focusNoteOrBoards());
 }
 
 function deleteNode(id, record = true) {
+  const element = nodeElements.get(id);
+  const restoreFocus = element?.contains(document.activeElement);
+  const index = board.nodes.findIndex((node) => node.id === id);
   if (record) checkpoint();
   board.nodes = board.nodes.filter((node) => node.id !== id);
   board.edges = board.edges.filter((edge) => edge.from !== id && edge.to !== id);
@@ -1362,6 +1588,15 @@ function deleteNode(id, record = true) {
   updateEmptyState();
   updateHistoryControls();
   scheduleSave();
+  if (restoreFocus) {
+    const nextId = board.nodes[Math.min(Math.max(index, 0), board.nodes.length - 1)]?.id;
+    requestAnimationFrame(() => focusNoteOrBoards(nextId));
+  }
+}
+
+function focusNoteOrBoards(id) {
+  const target = id ? nodeElements.get(id) : nodeElements.values().next().value;
+  (target || boardsButton).focus();
 }
 
 function renderEdges() {
@@ -1380,7 +1615,8 @@ function renderEdges() {
     group.dataset.id = edge.id;
     group.setAttribute("role", "button");
     group.setAttribute("tabindex", "0");
-    group.setAttribute("aria-label", edge.label ? `连线：${edge.label}` : "连线");
+    group.setAttribute("aria-label", edgeAccessibleName(edge));
+    group.setAttribute("aria-keyshortcuts", "Enter Space Delete");
 
     const pathData = geometry.path;
     const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1402,17 +1638,38 @@ function renderEdges() {
       group.append(label);
     }
     group.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
+      if (!["Enter", " ", "Backspace", "Delete"].includes(event.key)) return;
       event.preventDefault();
       event.stopPropagation();
       selectEdge(edge.id);
       if (event.key === "Enter") openEdgeLabelEditor();
+      if (event.key === "Backspace" || event.key === "Delete") deleteSelectedEdge();
     });
     fragment.append(group);
   });
   edgeLayer.replaceChildren(fragment);
+  nodeElements.forEach((element, nodeId) => {
+    const node = findNode(nodeId, false);
+    if (node) updateNodeAccessibility(element, node);
+  });
   updateSelectionBar();
   positionEdgeControls();
+}
+
+function edgeAccessibleName(edge) {
+  const fromNode = findNode(edge.from, false);
+  const toNode = findNode(edge.to, false);
+  let from = fromNode ? accessibleNoteText(fromNode) : t("untitledNote");
+  let to = toNode ? accessibleNoteText(toNode) : t("untitledNote");
+  if (edge.arrow === "reverse") [from, to] = [to, from];
+  const connection = edge.arrow
+    ? t("edgeDirected", { from, to })
+    : t("edgeUndirected", { from, to });
+  return edge.label ? `${connection}${t("edgeLabelSuffix", { label: edge.label })}` : connection;
+}
+
+function focusEdge(id) {
+  [...edgeLayer.querySelectorAll(".edge")].find((element) => element.dataset.id === id)?.focus();
 }
 
 function queueEdgeRender() {
@@ -1441,6 +1698,10 @@ function updateLinkPreview(screenX, screenY) {
   if (paths.length === 0) return;
   linkPreview.setAttribute("d", paths.join(" "));
   linkPreview.toggleAttribute("hidden", false);
+}
+
+function isBlankCanvasTarget(element) {
+  return element?.id === "gesture-surface";
 }
 
 function nodeCenter(id) {
@@ -1512,7 +1773,7 @@ function positionEdgeControls() {
   target.style.top = `${top}px`;
   edgeToolbar.hidden = !edgeLabelEditor.hidden;
   updateArrowButton(edgeArrowButton, edge.arrow || "none");
-  edgeLabelButton.setAttribute("aria-pressed", String(Boolean(edge.label)));
+  edgeLabelButton.classList.toggle("active", Boolean(edge.label));
 }
 
 function applyView() {
@@ -1567,13 +1828,33 @@ function onKeyDown(event) {
     openSearch(event);
     return;
   }
-  if (!document.activeElement?.matches("textarea, input") && event.code === "Space") {
+  const activeElement = document.activeElement;
+  const canvasShortcutTarget = !activeElement
+    || activeElement === document.body
+    || activeElement === document.documentElement
+    || activeElement.classList?.contains("node")
+    || (keyboardLinkSourceIds && activeElement.classList?.contains("link-handle"));
+  const overlayOpen = !menu.hidden || !boardPicker.hidden || !searchPanel.hidden || !colorPalette.hidden;
+  if (canvasShortcutTarget && !overlayOpen && !event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "n") {
+    event.preventDefault();
+    const point = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, board.view);
+    const sourceIds = keyboardLinkSourceIds || [];
+    createNode(point.x - 109, point.y - 24, false, sourceIds);
+    finishKeyboardLink();
+    announce(t(sourceIds.length ? "linkedNoteCreated" : "noteCreated"));
+    return;
+  }
+  if (!activeElement?.matches("textarea, input, button, a, [role=button]") && event.code === "Space") {
     event.preventDefault();
     spacePressed = true;
     viewport.classList.add("pan-ready");
     return;
   }
-  if (document.activeElement?.matches("textarea, input")) return;
+  if (activeElement?.matches("textarea, input")) return;
+  if (event.key === "Escape" && cancelKeyboardLink()) {
+    event.preventDefault();
+    return;
+  }
   if (event.key === "Escape" && !searchPanel.hidden) {
     event.preventDefault();
     closeSearch();
@@ -1588,22 +1869,29 @@ function onKeyDown(event) {
   if (event.key === "Escape" && !boardPicker.hidden) {
     event.preventDefault();
     setBoardPickerOpen(false);
+    boardsButton.focus();
     return;
   }
   if (event.key === "Escape" && !colorPalette.hidden) {
     event.preventDefault();
-    hideColorPalette();
+    hideColorPalette(true);
     return;
   }
   if (event.key === "Escape" && menu.classList.contains("choosing-export")) {
     event.preventDefault();
-    disarmExport();
+    disarmExport(null, true);
     return;
   }
   if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
     event.preventDefault();
     disarmClear();
     clearButton.focus();
+    return;
+  }
+  if (event.key === "Escape" && !menu.hidden) {
+    event.preventDefault();
+    setMenuOpen(false);
+    menuButton.focus();
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
@@ -1626,6 +1914,9 @@ function onKeyDown(event) {
   } else if ((event.key === "Backspace" || event.key === "Delete") && selectedEdgeId) {
     event.preventDefault();
     deleteSelectedEdge();
+  } else if ((event.key === "Backspace" || event.key === "Delete") && activeElement?.classList.contains("node") && !selectedIds.has(activeElement.dataset.id)) {
+    event.preventDefault();
+    deleteNode(activeElement.dataset.id);
   } else if ((event.key === "Backspace" || event.key === "Delete") && selectedIds.size > 0) {
     event.preventDefault();
     if (selectionMode) deleteSelection();
@@ -1663,7 +1954,7 @@ function stagePendingSave() {
   try {
     stagePendingDocument(localStorage, workspace, board);
   } catch {
-    markSaveFailure("自动保存失败，请先导出备份");
+    markSaveFailure(t("errorSave"));
   }
 }
 
@@ -1672,7 +1963,7 @@ async function saveBoardNow() {
   saveTimer = null;
   syncOpenInputs();
   if (!storageReady) {
-    markSaveFailure("本地存储不可用，请导出备份");
+    markSaveFailure(t("errorStorageUnavailable"));
     return false;
   }
   if (!boardDirty) return true;
@@ -1692,11 +1983,11 @@ async function saveBoardNow() {
       clearPendingDocument(localStorage);
       clearSaveFailure();
       renderBoardList();
-      if (conflicted) showToast("检测到另一页面的修改，当前内容已另存为副本");
+      if (conflicted) showToast(t("conflictCopy"));
       return true;
     });
   } catch {
-    markSaveFailure("自动保存失败，请先导出备份");
+    markSaveFailure(t("errorSave"));
     return false;
   }
 }
@@ -1717,7 +2008,7 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
     saved = await withWorkspaceLock(() => replaceDocument(localStorage, workspace, nextBoard, recoveryReason));
     clearSaveFailure();
   } catch {
-    markSaveFailure("自动保存失败，请先导出备份");
+    markSaveFailure(t("errorSave"));
     return false;
   } finally {
     endWorkspaceAction();
@@ -1725,7 +2016,7 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
   if (workspace.activeId !== previousId) {
     replaceBoard(saved);
     updateRecoveryControl();
-    showToast("检测到另一页面的修改，当前内容已另存为副本");
+    showToast(t("conflictCopy"));
     return true;
   }
   cancelGesture();
@@ -1802,6 +2093,8 @@ function redo() {
 function applyHistory(source, target) {
   const snapshot = source.pop();
   if (!snapshot) return;
+  const focusedNodeId = document.activeElement?.closest?.(".node")?.dataset.id;
+  const focusedEdgeId = document.activeElement?.closest?.(".edge")?.dataset.id;
   target.push(snapshotState());
   const restored = JSON.parse(snapshot);
   board.title = restored.title || "Untitled";
@@ -1817,6 +2110,13 @@ function applyHistory(source, target) {
   applyView();
   scheduleSave();
   updateHistoryControls();
+  if (focusedNodeId || focusedEdgeId) {
+    requestAnimationFrame(() => {
+      if (focusedNodeId && nodeElements.has(focusedNodeId)) nodeElements.get(focusedNodeId).focus();
+      else if (focusedEdgeId && findEdge(focusedEdgeId, false)) focusEdge(focusedEdgeId);
+      else focusNoteOrBoards(selectedIds.values().next().value);
+    });
+  }
 }
 
 function updateHistoryControls() {
@@ -1838,14 +2138,35 @@ function prepareExport(closeMenu = true) {
   if (closeMenu) setMenuOpen(false);
 }
 
-function exportBoard() {
+async function exportBoard() {
   prepareExport();
-  downloadText(JSON.stringify(board, null, 2), "application/json", "json");
+  try {
+    const content = JSON.stringify(createWorkspaceBackup(localStorage, workspace, board), null, 2);
+    await shareOrDownloadBlob(
+      new Blob([content], { type: "application/json" }),
+      `Scattered-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      t("workspaceBackupTitle"),
+    );
+  } catch {
+    showToast(t("errorJsonExport"));
+  } finally {
+    menuButton.focus();
+  }
 }
 
-function exportMermaid() {
+async function exportMermaid() {
   prepareExport();
-  downloadText(boardToMermaidMarkdown(board), "text/markdown;charset=utf-8", "md");
+  try {
+    await shareOrDownloadBlob(
+      new Blob([boardToMermaidMarkdown(board)], { type: "text/markdown;charset=utf-8" }),
+      `${exportFileName()}.md`,
+      board.title || "Scattered",
+    );
+  } catch {
+    showToast(t("errorMermaidExport"));
+  } finally {
+    menuButton.focus();
+  }
 }
 
 async function exportSvg(event) {
@@ -1853,26 +2174,32 @@ async function exportSvg(event) {
   prepareExport();
   try {
     const filename = `${exportFileName()}.svg`;
-    const file = new File([createBoardSvg(board)], filename, { type: "image/svg+xml" });
-    const shareData = { files: [file], title: board.title || "Scattered" };
-    const canShare = navigator.maxTouchPoints > 0 && navigator.share && navigator.canShare?.(shareData);
-    if (canShare) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch (error) {
-        if (error.name === "AbortError") return;
-      }
-    }
-    downloadBlob(file, filename);
+    await shareOrDownloadBlob(
+      new Blob([createBoardSvg(board)], { type: "image/svg+xml" }),
+      filename,
+      board.title || "Scattered",
+    );
   } catch {
-    showToast("SVG 导出失败");
+    showToast(t("errorSvgExport"));
+  } finally {
+    menuButton.focus();
   }
 }
 
-function downloadText(content, type, extension) {
-  const blob = new Blob([content], { type });
-  downloadBlob(blob, `${exportFileName()}.${extension}`);
+async function shareOrDownloadBlob(blob, filename, title) {
+  const file = new File([blob], filename, { type: blob.type });
+  const shareData = { files: [file], title };
+  let canShare = false;
+  try { canShare = Boolean(navigator.share && navigator.canShare?.(shareData)); } catch {}
+  if (canShare) {
+    try {
+      await navigator.share(shareData);
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  downloadBlob(file, filename);
 }
 
 function downloadBlob(blob, filename) {
@@ -1899,13 +2226,31 @@ async function importBoard(event) {
   event.target.value = "";
   if (!file) return;
   try {
-    if (file.size > MAX_IMPORT_BYTES) throw new Error("备份文件过大（上限 2 MB）");
-    const imported = parseImportedBoard(await file.text());
-    await replaceCurrentBoard(imported, "import");
+    if (file.size > MAX_WORKSPACE_IMPORT_BYTES) throw new Error("import.workspaceTooLarge");
+    const encoded = await file.text();
+    const importedWorkspace = parseImportedWorkspace(encoded);
+    if (importedWorkspace) await mergeImportedWorkspace(importedWorkspace);
+    else await replaceCurrentBoard(parseImportedBoard(encoded), "import");
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "无法导入这个文件");
+    showToast(error instanceof Error && hasMessage(error.message) ? t(error.message) : t("errorImport"));
   } finally {
     setMenuOpen(false);
+    menuButton.focus();
+  }
+}
+
+async function mergeImportedWorkspace(imported) {
+  if (!beginWorkspaceAction()) return false;
+  try {
+    if (!await commitCurrentBoard()) return false;
+    const importedBoard = await withWorkspaceLock(() => addImportedWorkspace(localStorage, workspace, imported));
+    replaceBoard(importedBoard);
+    clearSaveFailure();
+    announce(t("workspaceImported", { count: imported.boards.length }));
+    menuButton.focus();
+    return true;
+  } finally {
+    endWorkspaceAction();
   }
 }
 
@@ -1913,7 +2258,7 @@ async function clearBoard() {
   if (!menu.classList.contains("confirming-clear")) {
     menu.classList.add("confirming-clear");
     cancelClearButton.hidden = false;
-    clearButton.setAttribute("aria-label", "确认清空画布");
+    clearButton.setAttribute("aria-label", t("confirmClearBoard"));
     return;
   }
   const cleared = { ...blankBoard(), title: board.title || "Untitled" };
@@ -1942,6 +2287,7 @@ function showToast(message, persistent = false) {
   toast.textContent = message;
   toast.hidden = false;
   toast.dataset.persistent = String(persistent);
+  announce(message);
   if (!persistent) {
     toastTimer = setTimeout(() => {
       if (saveFailureMessage) {
@@ -1952,6 +2298,16 @@ function showToast(message, persistent = false) {
       }
     }, 1800);
   }
+}
+
+function announce(message) {
+  if (!announcer || !message) return;
+  cancelAnimationFrame(announcementFrame);
+  announcer.textContent = "";
+  announcementFrame = requestAnimationFrame(() => {
+    announcer.textContent = message;
+    announcementFrame = 0;
+  });
 }
 
 function findNode(id, required = true) {

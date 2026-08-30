@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="zh-Hans">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f2f4f7" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -42,10 +42,10 @@
     <title>Scattered</title>
   </head>
   <body>
-    <main id="viewport" aria-label="自由思考画布">
+    <main id="viewport" aria-label="自由思考画布" data-i18n-aria="canvas">
       <div id="gesture-surface" aria-hidden="true"></div>
-      <div id="world" aria-live="polite">
-        <svg id="connections" aria-label="标签连线">
+      <div id="world">
+        <svg id="connections" role="group" aria-label="标签连线" data-i18n-aria="connections">
           <defs>
             <marker id="edge-arrowhead" markerWidth="12" markerHeight="12" refX="10.4" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse" viewBox="0 0 12 12" overflow="visible">
               <path class="arrowhead" d="M1.4 1.5 10.4 6 1.4 10.5 4.2 6Z"></path>
@@ -61,8 +61,8 @@
         <path id="lasso-path" hidden></path>
       </svg>
 
-      <header class="app-mark" aria-label="画布标题">
-        <button id="boards-button" class="boards-button" type="button" aria-label="打开画布列表" aria-expanded="false">
+      <header class="app-mark" aria-label="画布标题" data-i18n-aria="appTitle">
+        <button id="boards-button" class="boards-button" type="button" aria-label="打开画布列表" data-i18n-aria="openBoards" aria-controls="board-picker" aria-expanded="false">
           <svg class="app-logo" viewBox="0 0 30 24" aria-hidden="true">
             <circle class="app-logo-dot dot-1" cx="5.2" cy="7" r="1.7"></circle>
             <circle class="app-logo-dot dot-2" cx="12.2" cy="4.8" r="2.2"></circle>
@@ -75,32 +75,32 @@
             <path d="m1 1 3 3 3-3"></path>
           </svg>
         </button>
-        <button id="board-title" type="button" aria-label="画布标题，双击编辑">Untitled</button>
-        <input id="board-title-editor" type="text" maxlength="120" aria-label="编辑画布标题" spellcheck="false" hidden />
+        <button id="board-title" type="button" aria-label="Canvas title: Untitled. Double-click or press Enter to edit" data-i18n-aria="boardTitleEdit" aria-keyshortcuts="Enter">Untitled</button>
+        <input id="board-title-editor" type="text" maxlength="120" aria-label="编辑画布标题" data-i18n-aria="editBoardTitle" spellcheck="false" hidden />
       </header>
 
-      <section id="board-picker" class="board-picker" aria-label="画布列表" hidden>
+      <section id="board-picker" class="board-picker" role="group" aria-label="画布列表" data-i18n-aria="boardList" hidden>
         <div class="board-picker-tools">
-          <button id="new-board-button" type="button" aria-label="新建画布">
+          <button id="new-board-button" type="button" aria-label="新建画布" data-i18n-aria="newBoard">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
           </button>
-          <button id="duplicate-board-button" type="button" aria-label="复制当前画布">
+          <button id="duplicate-board-button" type="button" aria-label="复制当前画布" data-i18n-aria="duplicateBoard">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
           </button>
-          <button id="restore-button" type="button" aria-label="恢复最近一次清空、覆盖或删除" hidden>
+          <button id="restore-button" type="button" aria-label="恢复最近一次清空、覆盖或删除" data-i18n-aria="restoreRecent" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 8V3m0 5h5M5.5 7A8 8 0 1 1 4 14"></path>
               <path d="M12 8v5l3 2"></path>
             </svg>
           </button>
-          <button id="cancel-delete-board-button" type="button" aria-label="取消删除画布" hidden>
+          <button id="cancel-delete-board-button" type="button" aria-label="取消删除画布" data-i18n-aria="cancelDeleteBoard" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
           </button>
-          <button id="delete-board-button" class="danger" type="button" aria-label="删除当前画布">
+          <button id="delete-board-button" class="danger" type="button" aria-label="删除当前画布" data-i18n-aria="deleteBoard">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path></svg>
           </button>
         </div>
-        <div id="board-list" class="board-list" role="listbox" aria-label="本地画布"></div>
+        <div id="board-list" class="board-list" role="group" aria-label="本地画布" data-i18n-aria="localBoards"></div>
       </section>
 
       <section id="empty-state" class="empty-state" hidden>
@@ -121,87 +121,87 @@
             <path d="M28 20c10 0 8 18 18 18"></path>
           </svg>
         </div>
-        <p>双击任意位置创建卡片 <span aria-hidden="true">·</span> Double-tap anywhere to create a note</p>
+        <p><span lang="zh-Hans">双击任意位置创建卡片</span> <span aria-hidden="true">·</span> <span lang="en">Double-tap anywhere to create a note</span></p>
       </section>
 
-      <nav id="history-tools" class="history-tools" aria-label="视图、撤销与重做" hidden>
-        <button id="fit-button" class="quiet-button" type="button" aria-label="居中显示全部标签" disabled>
+      <div id="history-tools" class="history-tools" role="group" aria-label="视图、撤销与重做" data-i18n-aria="historyActions" hidden>
+        <button id="fit-button" class="quiet-button" type="button" aria-label="居中显示全部标签" data-i18n-aria="fitBoard" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
             <circle cx="12" cy="12" r="2.5"></circle>
           </svg>
         </button>
-        <button id="undo-button" class="quiet-button" type="button" aria-label="撤销" disabled>
+        <button id="undo-button" class="quiet-button" type="button" aria-label="撤销" data-i18n-aria="undo" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"></path>
           </svg>
         </button>
-        <button id="redo-button" class="quiet-button" type="button" aria-label="重做" disabled>
+        <button id="redo-button" class="quiet-button" type="button" aria-label="重做" data-i18n-aria="redo" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="m15 7 5 5-5 5M19 12h-8a6 6 0 0 0-6 6"></path>
           </svg>
         </button>
-      </nav>
+      </div>
 
-      <button id="menu-button" class="quiet-button menu-button" type="button" aria-label="画布菜单" aria-expanded="false">•••</button>
-      <section id="menu" class="menu" hidden aria-label="画布菜单">
-        <button id="export-button" type="button" aria-label="导出备份">
+      <button id="menu-button" class="quiet-button menu-button" type="button" aria-label="画布菜单" data-i18n-aria="canvasMenu" aria-controls="menu" aria-expanded="false">•••</button>
+      <section id="menu" class="menu" role="group" hidden aria-label="画布菜单" data-i18n-aria="canvasMenu">
+        <button id="export-button" type="button" aria-label="导出备份" data-i18n-aria="exportBackup" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3v12M8 11l4 4 4-4M5 19h14"></path>
           </svg>
         </button>
-        <button id="cancel-export-button" class="export-choice" type="button" aria-label="取消导出" hidden>
+        <button id="cancel-export-button" class="export-choice" type="button" aria-label="取消导出" data-i18n-aria="cancelExport" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 7l10 10M17 7 7 17"></path>
           </svg>
         </button>
-        <button id="export-json-button" class="export-choice" type="button" aria-label="导出 JSON 备份" hidden>
+        <button id="export-json-button" class="export-choice" type="button" aria-label="导出 JSON 备份" data-i18n-aria="exportJson" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 4H8a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h1M15 4h1a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-1"></path>
           </svg>
         </button>
-        <button id="export-svg-button" class="export-choice" type="button" aria-label="导出 SVG 矢量图" hidden>
+        <button id="export-svg-button" class="export-choice" type="button" aria-label="导出 SVG 矢量图" data-i18n-aria="exportSvg" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="3.5" y="5" width="17" height="14" rx="3"></rect>
             <circle cx="15.5" cy="9.2" r="1.4"></circle>
             <path d="m6.5 16 4-4 3.2 3 2.1-2 2.2 3"></path>
           </svg>
         </button>
-        <button id="export-mermaid-button" class="export-choice" type="button" aria-label="导出 Mermaid Markdown" hidden>
+        <button id="export-mermaid-button" class="export-choice" type="button" aria-label="导出 Mermaid Markdown" data-i18n-aria="exportMermaid" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="m9 7-5 5 5 5M15 7l5 5-5 5M13.5 4.5l-3 15"></path>
           </svg>
         </button>
-        <button id="import-button" type="button" aria-label="导入备份">
+        <button id="import-button" type="button" aria-label="导入备份" data-i18n-aria="importBackup">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
           </svg>
         </button>
         <input id="import-input" type="file" accept="application/json,.json" hidden />
-        <button id="search-button" type="button" aria-label="搜索标签">
+        <button id="search-button" type="button" aria-label="搜索标签" data-i18n-aria="searchNotes" aria-controls="search-panel" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="10.5" cy="10.5" r="6.5"></circle>
             <path d="m15.5 15.5 5 5"></path>
           </svg>
         </button>
-        <a id="github-link" href="https://github.com/kydchen/scattered" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库">
+        <a id="github-link" href="https://github.com/kydchen/scattered" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库" data-i18n-aria="githubRepository">
           <svg viewBox="-1 -1 26 26" aria-hidden="true">
             <path fill="currentColor" stroke="none" d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"></path>
           </svg>
         </a>
-        <button id="cancel-clear-button" type="button" aria-label="取消清空" hidden>
+        <button id="cancel-clear-button" type="button" aria-label="取消清空" data-i18n-aria="cancelClear" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 7l10 10M17 7 7 17"></path>
           </svg>
         </button>
-        <button id="clear-button" class="danger" type="button" aria-label="清空画布">
+        <button id="clear-button" class="danger" type="button" aria-label="清空画布" data-i18n-aria="clearBoard">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
           </svg>
         </button>
       </section>
 
-      <button id="theme-button" class="quiet-button theme-button" type="button" aria-label="切换到暗色模式" aria-pressed="false">
+      <button id="theme-button" class="quiet-button theme-button" type="button" aria-label="暗色模式" data-i18n-aria="darkMode" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path class="theme-moon" d="M20 15.5A8.2 8.2 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
           <g class="theme-sun">
@@ -211,54 +211,54 @@
         </svg>
       </button>
 
-      <section id="selection-bar" class="selection-bar" aria-label="多选操作" hidden>
-        <button id="color-selection" class="selection-action" type="button" aria-label="更改所选标签颜色">
+      <section id="selection-bar" class="selection-bar" role="group" aria-label="多选操作" data-i18n-aria="selectionActions" hidden>
+        <button id="color-selection" class="selection-action" type="button" aria-label="更改所选标签颜色" data-i18n-aria="colorSelected" aria-controls="color-palette" aria-expanded="false">
           <svg class="color-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="9" cy="9" r="5" fill="#e8cc66"></circle>
             <circle cx="15" cy="9" r="5" fill="#8fc9b0"></circle>
             <circle cx="12" cy="15" r="5" fill="#82a9df"></circle>
           </svg>
         </button>
-        <button id="duplicate-selection" class="selection-action" type="button" aria-label="复制所选标签">
+        <button id="duplicate-selection" class="selection-action" type="button" aria-label="复制所选标签" data-i18n-aria="duplicateSelected">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="8" y="8" width="11" height="11" rx="2"></rect>
             <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
           </svg>
         </button>
-        <button id="arrow-selection" class="selection-action" type="button" aria-label="批量切换所选标签的连线箭头">
+        <button id="arrow-selection" class="selection-action" type="button" aria-label="批量切换所选标签的连线箭头" data-i18n-aria="arrowSelected">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 12h16"></path>
             <path d="M15 7l5 5-5 5"></path>
           </svg>
         </button>
-        <button id="disconnect-selection" class="selection-action" type="button" aria-label="断开所选标签的全部连线">
+        <button id="disconnect-selection" class="selection-action" type="button" aria-label="断开所选标签的全部连线" data-i18n-aria="disconnectSelected">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="4" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
             <circle cx="20" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
             <path d="M6.5 12h3M14.5 12h3M10.5 8.5l3 7M13.5 8.5l-3 7"></path>
           </svg>
         </button>
-        <button id="delete-selection" class="selection-action danger" type="button" aria-label="删除所选标签">
+        <button id="delete-selection" class="selection-action danger" type="button" aria-label="删除所选标签" data-i18n-aria="deleteSelected">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
           </svg>
         </button>
       </section>
 
-      <section id="edge-toolbar" class="edge-toolbar" aria-label="连线操作" hidden>
-        <button id="edge-arrow" type="button" aria-label="添加正向箭头" aria-pressed="false" data-direction="none">
+      <section id="edge-toolbar" class="edge-toolbar" role="group" aria-label="连线操作" data-i18n-aria="edgeActions" hidden>
+        <button id="edge-arrow" type="button" aria-label="添加正向箭头" data-i18n-aria="addForwardArrow" data-direction="none">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 12h16"></path>
             <path class="arrow-head arrow-head-forward" d="M15 7l5 5-5 5"></path>
             <path class="arrow-head arrow-head-reverse" d="M9 7l-5 5 5 5"></path>
           </svg>
         </button>
-        <button id="edge-label" type="button" aria-label="编辑连线文字" aria-pressed="false">
+        <button id="edge-label" type="button" aria-label="编辑连线文字" data-i18n-aria="editEdgeLabel">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 6h14M12 6v13M8.5 19h7"></path>
           </svg>
         </button>
-        <button id="edge-delete" class="danger" type="button" aria-label="断开这条连线">
+        <button id="edge-delete" class="danger" type="button" aria-label="断开这条连线" data-i18n-aria="disconnectEdge">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="4" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
             <circle cx="20" cy="12" r="2.25" fill="currentColor" stroke="none"></circle>
@@ -266,61 +266,62 @@
           </svg>
         </button>
       </section>
-      <input id="edge-label-editor" class="edge-label-editor" type="text" maxlength="120" aria-label="连线文字" hidden />
+      <input id="edge-label-editor" class="edge-label-editor" type="text" maxlength="120" aria-label="连线文字" data-i18n-aria="edgeLabelInput" hidden />
 
-      <section id="color-palette" class="color-palette" aria-label="标签颜色" hidden>
-        <button class="color-swatch" data-color="plain" type="button" aria-label="原白" aria-pressed="false"></button>
-        <button class="color-swatch" data-color="yellow" type="button" aria-label="暖黄" aria-pressed="false"></button>
-        <button class="color-swatch" data-color="mint" type="button" aria-label="薄荷绿" aria-pressed="false"></button>
-        <button class="color-swatch" data-color="blue" type="button" aria-label="雾蓝" aria-pressed="false"></button>
-        <button class="color-swatch" data-color="rose" type="button" aria-label="淡莓" aria-pressed="false"></button>
+      <section id="color-palette" class="color-palette" role="group" aria-label="标签颜色" data-i18n-aria="noteColors" hidden>
+        <button class="color-swatch" data-color="plain" type="button" aria-label="原白" data-i18n-aria="colorPlain" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="yellow" type="button" aria-label="暖黄" data-i18n-aria="colorYellow" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="mint" type="button" aria-label="薄荷绿" data-i18n-aria="colorMint" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="blue" type="button" aria-label="雾蓝" data-i18n-aria="colorBlue" aria-pressed="false"></button>
+        <button class="color-swatch" data-color="rose" type="button" aria-label="淡莓" data-i18n-aria="colorRose" aria-pressed="false"></button>
       </section>
 
-      <section id="search-panel" class="search-panel" aria-label="搜索标签" hidden>
+      <section id="search-panel" class="search-panel" role="search" aria-label="搜索标签" data-i18n-aria="searchNotes" hidden>
         <svg class="search-mark" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6.5"></circle>
           <path d="m15.5 15.5 5 5"></path>
         </svg>
-        <input id="search-input" type="search" maxlength="200" placeholder="Find notes" autocomplete="off" enterkeyhint="search" aria-label="搜索标签文字" />
+        <input id="search-input" type="search" maxlength="200" placeholder="Find notes" data-i18n-placeholder="searchPlaceholder" autocomplete="off" enterkeyhint="search" aria-label="搜索标签文字" data-i18n-aria="searchInput" />
         <output id="search-count" aria-live="polite"></output>
-        <button id="search-previous" type="button" aria-label="上一个搜索结果">
+        <button id="search-previous" type="button" aria-label="上一个搜索结果" data-i18n-aria="previousSearchResult">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"></path></svg>
         </button>
-        <button id="search-next" type="button" aria-label="下一个搜索结果">
+        <button id="search-next" type="button" aria-label="下一个搜索结果" data-i18n-aria="nextSearchResult">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
         </button>
-        <button id="search-close" type="button" aria-label="关闭搜索">
+        <button id="search-close" type="button" aria-label="关闭搜索" data-i18n-aria="closeSearch">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
         </button>
       </section>
 
-      <div id="toast" class="toast" role="status" hidden></div>
+      <div id="toast" class="toast" aria-hidden="true" hidden></div>
+      <div id="announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </main>
 
     <template id="node-template">
       <article class="node" tabindex="0">
-        <div class="node-actions" role="toolbar" aria-label="标签操作">
-          <button class="card-action color-handle" type="button" aria-label="更改标签颜色">
+        <div class="node-actions" role="group" aria-label="标签操作" data-i18n-aria="nodeActions">
+          <button class="card-action color-handle" type="button" aria-label="更改标签颜色" data-i18n-aria="changeNodeColor" aria-controls="color-palette" aria-expanded="false">
             <svg class="color-icon" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="9" cy="9" r="5" fill="#e8cc66"></circle>
               <circle cx="15" cy="9" r="5" fill="#8fc9b0"></circle>
               <circle cx="12" cy="15" r="5" fill="#82a9df"></circle>
             </svg>
           </button>
-          <button class="card-action node-delete danger" type="button" aria-label="删除这张卡片">
+          <button class="card-action node-delete danger" type="button" aria-label="删除这张卡片" data-i18n-aria="deleteNode">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"></path>
             </svg>
           </button>
         </div>
         <div class="node-text"></div>
-        <textarea class="node-editor" rows="1" aria-label="想法内容" spellcheck="true" hidden></textarea>
-        <button class="resize-handle" type="button" aria-label="调整标签宽度">
+        <textarea class="node-editor" rows="1" aria-label="想法内容" data-i18n-aria="noteContent" spellcheck="true" hidden></textarea>
+        <button class="resize-handle" type="button" aria-label="调整标签宽度" data-i18n-aria="resizeNode" aria-keyshortcuts="ArrowLeft ArrowRight">
           <svg viewBox="0 0 36 18" aria-hidden="true">
             <path d="M2 9h32M7 4 2 9l5 5M29 4l5 5-5 5"></path>
           </svg>
         </button>
-        <button class="link-handle" type="button" aria-label="拖到另一张卡片建立连接"></button>
+        <button class="link-handle" type="button" aria-label="连接到另一张标签" data-i18n-aria="linkNode" aria-keyshortcuts="Enter"></button>
       </article>
     </template>
 
