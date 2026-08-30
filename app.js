@@ -271,7 +271,29 @@ if (new URLSearchParams(location.search).get("debug") === "1") {
 }
 
 function onPointerDown(event) {
-  if (keyboardLinkSourceIds) finishKeyboardLink();
+  if (keyboardLinkSourceIds) {
+    const control = event.target.closest(".app-mark, .board-picker, .search-panel, .edge-toolbar, .edge-label-editor, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .resize-handle, .link-handle");
+    const primaryPointer = event.pointerType !== "mouse" || event.button === 0;
+    if (primaryPointer && !control) {
+      const target = event.target.closest(".node");
+      if (target) {
+        event.preventDefault();
+        if (keyboardLinkSourceIds.includes(target.dataset.id)) cancelKeyboardLink(false);
+        else connectKeyboardLinkTo(target.dataset.id);
+        return;
+      }
+      if (isBlankCanvasTarget(event.target)) {
+        event.preventDefault();
+        const sourceIds = [...keyboardLinkSourceIds];
+        const point = screenToWorld({ x: event.clientX, y: event.clientY }, board.view);
+        finishKeyboardLink();
+        createNode(point.x, point.y, event.pointerType === "pen", sourceIds);
+        announce(t("linkedNoteCreated"));
+        return;
+      }
+    }
+    finishKeyboardLink();
+  }
   if (!event.target.closest(".color-palette, .color-handle, #color-selection")) hideColorPalette();
   if (!event.target.closest(".app-mark") && !boardTitleEditor.hidden) finishBoardTitle();
   if (!event.target.closest(".app-mark, .board-picker")) setBoardPickerOpen(false);
@@ -382,7 +404,7 @@ function onPointerDown(event) {
       y: event.clientY,
       moved: false,
     };
-    updateLinkPreview(event.clientX, event.clientY);
+    updateLinkPreview(sourceIds, event.clientX, event.clientY);
     return;
   }
 
@@ -455,6 +477,11 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (keyboardLinkSourceIds && event.pointerType !== "touch") {
+    updateLinkPreview(keyboardLinkSourceIds, event.clientX, event.clientY);
+    updateLinkTarget(keyboardLinkSourceIds, event.clientX, event.clientY);
+    return;
+  }
   if (!pointers.has(event.pointerId)) return;
   pointers.set(event.pointerId, { ...pointers.get(event.pointerId), x: event.clientX, y: event.clientY });
 
@@ -535,10 +562,8 @@ function onPointerMove(event) {
     }
     mode.x = event.clientX;
     mode.y = event.clientY;
-    updateLinkPreview(event.clientX, event.clientY);
-    document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".node");
-    if (target && !mode.sourceIds.includes(target.dataset.id)) target.classList.add("link-target");
+    updateLinkPreview(mode.sourceIds, event.clientX, event.clientY);
+    updateLinkTarget(mode.sourceIds, event.clientX, event.clientY);
   }
 }
 
@@ -1363,6 +1388,8 @@ function connectKeyboardLinkTo(targetId) {
 function finishKeyboardLink() {
   keyboardLinkSourceIds = null;
   viewport.classList.remove("keyboard-linking");
+  linkPreview.toggleAttribute("hidden", true);
+  document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
 }
 
 function cancelKeyboardLink(shouldAnnounce = true) {
@@ -1689,15 +1716,21 @@ function applyResize(target, screenX) {
   queueEdgeRender();
 }
 
-function updateLinkPreview(screenX, screenY) {
+function updateLinkPreview(sourceIds, screenX, screenY) {
   const to = screenToWorld({ x: screenX, y: screenY }, board.view);
-  const paths = mode.sourceIds.flatMap((id) => {
+  const paths = sourceIds.flatMap((id) => {
     const from = nodeCenter(id);
     return from ? [connectionCurve(from, to).path] : [];
   });
   if (paths.length === 0) return;
   linkPreview.setAttribute("d", paths.join(" "));
   linkPreview.toggleAttribute("hidden", false);
+}
+
+function updateLinkTarget(sourceIds, screenX, screenY) {
+  document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
+  const target = document.elementFromPoint(screenX, screenY)?.closest(".node");
+  if (target && !sourceIds.includes(target.dataset.id)) target.classList.add("link-target");
 }
 
 function isBlankCanvasTarget(element) {

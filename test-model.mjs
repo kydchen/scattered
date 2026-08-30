@@ -1009,6 +1009,7 @@ const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
 const applyResizeSource = app.match(/function applyResize[\s\S]*?\n}/)?.[0] ?? "";
 const pointerDownSource = app.match(/function onPointerDown[\s\S]*?\n}\n\nfunction onPointerMove/)?.[0] ?? "";
+const pointerMoveSource = app.match(/function onPointerMove[\s\S]*?\n}\n\nfunction onPointerUp/)?.[0] ?? "";
 const doubleClickSource = app.match(/function onDoubleClick[\s\S]*?\n}\n\nfunction createNode/)?.[0] ?? "";
 const saveBoardNowSource = app.match(/async function saveBoardNow[\s\S]*?\n}\n\nasync function commitCurrentBoard/)?.[0] ?? "";
 const stagePendingSaveSource = app.match(/function stagePendingSave[\s\S]*?\n}\n\nasync function saveBoardNow/)?.[0] ?? "";
@@ -1017,6 +1018,7 @@ const replacementSource = app.match(/function replaceCurrentBoard[\s\S]*?\n}\n\n
 const openSearchSource = app.match(/function openSearch[\s\S]*?\n}\n\nfunction closeSearch/)?.[0] ?? "";
 const onKeyDownSource = app.match(/function onKeyDown[\s\S]*?\n}\n\nfunction initializeWorkspace/)?.[0] ?? "";
 const applyHistorySource = app.match(/function applyHistory[\s\S]*?\n}\n\nfunction updateHistoryControls/)?.[0] ?? "";
+const finishKeyboardLinkSource = app.match(/function finishKeyboardLink[\s\S]*?\n}\n\nfunction cancelKeyboardLink/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
 const selectionArrowMarkup = html.match(/<button id="arrow-selection"[\s\S]*?<\/button>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
@@ -1057,6 +1059,10 @@ assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_WORKSPACE_
 assert.doesNotMatch(app, /function preserveForRecovery/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?workspaceActionPending[\s\S]*?aria-busy[\s\S]*?disabled = true/);
 assert.match(app, /type: "link"[\s\S]*?pointerType: event\.pointerType[\s\S]*?startX: event\.clientX[\s\S]*?moved: false/);
+assert.match(pointerDownSource, /if \(keyboardLinkSourceIds\)[\s\S]*?connectKeyboardLinkTo\(target\.dataset\.id\)[\s\S]*?isBlankCanvasTarget\(event\.target\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", sourceIds\)/);
+assert.match(pointerMoveSource, /keyboardLinkSourceIds[\s\S]*?updateLinkPreview\(keyboardLinkSourceIds, event\.clientX, event\.clientY\)[\s\S]*?updateLinkTarget\(keyboardLinkSourceIds, event\.clientX, event\.clientY\)/);
+assert.match(finishKeyboardLinkSource, /linkPreview\.toggleAttribute\("hidden", true\)[\s\S]*?\.node\.link-target/);
+assert.match(app, /function updateLinkPreview\(sourceIds, screenX, screenY\)[\s\S]*?sourceIds\.flatMap/);
 assert.match(app, /currentMode\?\.type === "link"[\s\S]*?isBlankCanvasTarget\(hit\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", currentMode\.sourceIds\)/);
 assert.match(app, /function isBlankCanvasTarget\(element\) \{\s*return element\?\.id === "gesture-surface";/);
 assert.match(app, /function createNode\(x, y, fromPen = false, sourceIds = \[\]\)[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?queueEdgeRender\(\)/);
@@ -1127,7 +1133,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v30/);
+assert.match(serviceWorker, /scattered-v31/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);
