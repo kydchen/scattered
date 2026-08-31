@@ -102,6 +102,14 @@ assert.deepEqual(
   ),
   { x: -3, y: 52 },
 );
+assert.deepEqual(
+  minimumRevealDelta(
+    { left: 160, right: 378, top: 556, bottom: 608 },
+    { left: 0, top: 400, width: 402, height: 263 },
+    { left: 24, right: 24, top: 72, bottom: 72 },
+  ),
+  { x: 0, y: -17 },
+);
 assert.deepEqual(fitBoundsToViewport(
   { left: 100, top: 50, right: 500, bottom: 250 },
   { width: 1000, height: 600 },
@@ -1148,6 +1156,9 @@ assert.doesNotMatch(selectionArrowMarkup, /data-direction|aria-pressed|arrow-hea
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
 assert.match(css, /#viewport\.revealing-note[\s\S]*?background-position 180ms[\s\S]*?#viewport\.revealing-note #world[\s\S]*?transform 180ms/);
+const revealNodeSource = app.match(/function softlyRevealNode\(id\)[\s\S]*?\n}\n\nfunction finishRevealMotion/)?.[0] || "";
+assert.match(revealNodeSource, /board\.view\.x \+ node\.x \* scale[\s\S]*?board\.view\.y \+ node\.y \* scale/);
+assert.doesNotMatch(revealNodeSource, /getBoundingClientRect/);
 assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
@@ -1163,7 +1174,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v33/);
+assert.match(serviceWorker, /scattered-v34/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);

@@ -1,4 +1,4 @@
-const CACHE = "scattered-v33";
+const CACHE = "scattered-v34";
 const ASSETS = ["./", "./index.html", "./styles.css", "./model.js", "./workspace.js", "./svg-export.js", "./i18n.js", "./app.js", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {

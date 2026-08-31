@@ -1171,7 +1171,8 @@ function revealEditingNode() {
 
 function softlyRevealNode(id) {
   const element = nodeElements.get(id);
-  if (!element) return;
+  const node = findNode(id, false);
+  if (!element || !node) return;
   const visual = window.visualViewport;
   const visibleViewport = {
     left: visual?.offsetLeft || 0,
@@ -1179,7 +1180,15 @@ function softlyRevealNode(id) {
     width: visual?.width || viewport.clientWidth,
     height: visual?.height || viewport.clientHeight,
   };
-  const delta = minimumRevealDelta(element.getBoundingClientRect(), visibleViewport, CREATION_SAFE_INSETS);
+  const scale = board.view.scale;
+  const left = board.view.x + node.x * scale;
+  const top = board.view.y + node.y * scale;
+  const delta = minimumRevealDelta({
+    left,
+    top,
+    right: left + element.offsetWidth * scale,
+    bottom: top + element.offsetHeight * scale,
+  }, visibleViewport, CREATION_SAFE_INSETS);
   if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) return;
   // ponytail: preserve the user's zoom; if a note cannot fit, center it on that axis instead of auto-zooming.
   viewport.classList.add("revealing-note");
