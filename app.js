@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { applyTranslations, hasMessage, t } from "./i18n.js";
@@ -6,6 +6,9 @@ import { applyTranslations, hasMessage, t } from "./i18n.js";
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
+const DEFAULT_NODE_WIDTH = 218;
+const DEFAULT_NODE_HEIGHT = 48;
+const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewport = document.querySelector("#viewport");
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
@@ -77,6 +80,8 @@ let saveFailureMessage = "";
 let workspaceActionPending = false;
 let connectionStyle = readConnectionStyle();
 let edgeRenderFrame = 0;
+let revealMotionTimer = null;
+let revealViewportFrame = 0;
 let palmGuardUntil = 0;
 let lastPenUpAt = 0;
 let colorTargetIds = [];
@@ -130,7 +135,10 @@ window.addEventListener("resize", () => {
   hideColorPalette();
   renderEdges();
   updateHistoryControls();
+  revealEditingNode();
 });
+window.visualViewport?.addEventListener("resize", revealEditingNode);
+window.visualViewport?.addEventListener("scroll", revealEditingNode);
 window.addEventListener("blur", () => {
   spacePressed = false;
   viewport.classList.remove("pan-ready", "panning");
@@ -276,6 +284,7 @@ if (new URLSearchParams(location.search).get("debug") === "1") {
 }
 
 function onPointerDown(event) {
+  finishRevealMotion();
   if (keyboardLinkSourceIds) {
     const control = event.target.closest(".app-mark, .board-picker, .search-panel, .edge-toolbar, .edge-label-editor, .menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions, .resize-handle, .link-handle");
     const primaryPointer = event.pointerType !== "mouse" || event.button === 0;
@@ -651,6 +660,7 @@ function cancelGesture() {
 
 function onWheel(event) {
   event.preventDefault();
+  finishRevealMotion();
   if (event.ctrlKey || event.metaKey) {
     const before = screenToWorld({ x: event.clientX, y: event.clientY }, board.view);
     board.view.scale = clamp(board.view.scale * Math.exp(-event.deltaY * 0.008), 0.35, 2);
@@ -1128,9 +1138,16 @@ function onDoubleClick(event) {
   createNode(point.x, point.y, fromPen);
 }
 
-function createNode(x, y, fromPen = false, sourceIds = []) {
+function createNode(centerX, centerY, fromPen = false, sourceIds = []) {
   checkpoint();
-  const node = { id: createId(), text: "", x, y, color: "plain", width: 218 };
+  const node = {
+    id: createId(),
+    text: "",
+    x: centerX - DEFAULT_NODE_WIDTH / 2,
+    y: centerY - DEFAULT_NODE_HEIGHT / 2,
+    color: "plain",
+    width: DEFAULT_NODE_WIDTH,
+  };
   board.nodes.push(node);
   if (sourceIds.length) board.edges = toggleConnectionsToTarget(board.edges, sourceIds, node.id);
   updateEmptyState();
@@ -1139,7 +1156,48 @@ function createNode(x, y, fromPen = false, sourceIds = []) {
   updateHistoryControls();
   selectNode(node.id);
   editNode(node.id, true, fromPen);
+  softlyRevealNode(node.id);
   scheduleSave();
+}
+
+function revealEditingNode() {
+  if (revealViewportFrame) return;
+  revealViewportFrame = requestAnimationFrame(() => {
+    revealViewportFrame = 0;
+    const id = document.querySelector(".node.editing")?.dataset.id;
+    if (id) softlyRevealNode(id);
+  });
+}
+
+function softlyRevealNode(id) {
+  const element = nodeElements.get(id);
+  if (!element) return;
+  const visual = window.visualViewport;
+  const visibleViewport = {
+    left: visual?.offsetLeft || 0,
+    top: visual?.offsetTop || 0,
+    width: visual?.width || viewport.clientWidth,
+    height: visual?.height || viewport.clientHeight,
+  };
+  const delta = minimumRevealDelta(element.getBoundingClientRect(), visibleViewport, CREATION_SAFE_INSETS);
+  if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) return;
+  // ponytail: preserve the user's zoom; if a note cannot fit, center it on that axis instead of auto-zooming.
+  viewport.classList.add("revealing-note");
+  board.view.x += delta.x;
+  board.view.y += delta.y;
+  applyView();
+  scheduleSave();
+  updateHistoryControls();
+  clearTimeout(revealMotionTimer);
+  revealMotionTimer = setTimeout(finishRevealMotion, 220);
+}
+
+function finishRevealMotion() {
+  clearTimeout(revealMotionTimer);
+  cancelAnimationFrame(revealViewportFrame);
+  revealMotionTimer = null;
+  revealViewportFrame = 0;
+  viewport.classList.remove("revealing-note");
 }
 
 function renderAll() {
@@ -1902,7 +1960,7 @@ function onKeyDown(event) {
     event.preventDefault();
     const point = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, board.view);
     const sourceIds = keyboardLinkSourceIds || [];
-    createNode(point.x - 109, point.y - 24, false, sourceIds);
+    createNode(point.x, point.y, false, sourceIds);
     finishKeyboardLink();
     announce(t(sourceIds.length ? "linkedNoteCreated" : "noteCreated"));
     return;

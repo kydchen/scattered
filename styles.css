@@ -171,6 +171,14 @@ button {
   will-change: transform;
 }
 
+#viewport.revealing-note {
+  transition: background-position 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+#viewport.revealing-note #world {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 #connections {
   position: absolute;
   inset: 0 auto auto 0;

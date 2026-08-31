@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, captureRecovery, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { messages, t } from "./i18n.js";
@@ -78,6 +78,30 @@ assert.deepEqual(pastedGraph.edges[0], { id: "new-3", from: "new-1", to: "new-2"
 assert.equal(pasteSelectedGraph({ type: "other" }, { x: 0, y: 0 }), null);
 
 assert.deepEqual(screenToWorld({ x: 120, y: 80 }, { x: 20, y: 30, scale: 2 }), { x: 50, y: 25 });
+assert.deepEqual(
+  minimumRevealDelta(
+    { left: 100, right: 318, top: 200, bottom: 248 },
+    { left: 0, top: 0, width: 390, height: 844 },
+    { left: 24, right: 24, top: 72, bottom: 72 },
+  ),
+  { x: 0, y: 0 },
+);
+assert.deepEqual(
+  minimumRevealDelta(
+    { left: 140, right: 382, top: 200, bottom: 248 },
+    { left: 0, top: 0, width: 390, height: 844 },
+    { left: 24, right: 24, top: 72, bottom: 72 },
+  ),
+  { x: -16, y: 0 },
+);
+assert.deepEqual(
+  minimumRevealDelta(
+    { left: -20, right: 416, top: 20, bottom: 68 },
+    { left: 0, top: 0, width: 390, height: 300 },
+    { left: 24, right: 24, top: 72, bottom: 72 },
+  ),
+  { x: -3, y: 52 },
+);
 assert.deepEqual(fitBoundsToViewport(
   { left: 100, top: 50, right: 500, bottom: 250 },
   { width: 1000, height: 600 },
@@ -1068,7 +1092,7 @@ assert.match(finishKeyboardLinkSource, /linkPreview\.toggleAttribute\("hidden", 
 assert.match(app, /function updateLinkPreview\(sourceIds, screenX, screenY\)[\s\S]*?sourceIds\.flatMap/);
 assert.match(app, /currentMode\?\.type === "link"[\s\S]*?isBlankCanvasTarget\(hit\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", currentMode\.sourceIds\)/);
 assert.match(app, /function isBlankCanvasTarget\(element\) \{\s*return element\?\.id === "gesture-surface";/);
-assert.match(app, /function createNode\(x, y, fromPen = false, sourceIds = \[\]\)[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?queueEdgeRender\(\)/);
+assert.match(app, /function createNode\(centerX, centerY, fromPen = false, sourceIds = \[\]\)[\s\S]*?centerX - DEFAULT_NODE_WIDTH \/ 2[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?softlyRevealNode\(node\.id\)/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?\["node", "resize", "pan", "pinch"\]\.includes\(mode\?\.type\)[\s\S]*?boardDirty = true[\s\S]*?cancelGesture\(\);/);
 assert.match(app, /function endWorkspaceAction\(\)[\s\S]*?disabled = false/);
 assert.match(app, /\["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"\][\s\S]*?blockWorkspaceInteraction[\s\S]*?capture: true/);
@@ -1123,6 +1147,7 @@ assert.match(selectionArrowMarkup, /M4 12h16[\s\S]*?M15 7l5 5-5 5/);
 assert.doesNotMatch(selectionArrowMarkup, /data-direction|aria-pressed|arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
 assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
+assert.match(css, /#viewport\.revealing-note[\s\S]*?background-position 180ms[\s\S]*?#viewport\.revealing-note #world[\s\S]*?transform 180ms/);
 assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
@@ -1138,7 +1163,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v32/);
+assert.match(serviceWorker, /scattered-v33/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);

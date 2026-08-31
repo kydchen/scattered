@@ -306,6 +306,27 @@ export function screenToWorld(point, view) {
   };
 }
 
+export function minimumRevealDelta(bounds, viewport, insets) {
+  const safe = {
+    left: viewport.left + insets.left,
+    right: viewport.left + viewport.width - insets.right,
+    top: viewport.top + insets.top,
+    bottom: viewport.top + viewport.height - insets.bottom,
+  };
+  const axisDelta = (start, end, safeStart, safeEnd) => {
+    if (safeEnd < safeStart || end - start > safeEnd - safeStart) {
+      return (safeStart + safeEnd - start - end) / 2;
+    }
+    if (start < safeStart) return safeStart - start;
+    if (end > safeEnd) return safeEnd - end;
+    return 0;
+  };
+  return {
+    x: axisDelta(bounds.left, bounds.right, safe.left, safe.right),
+    y: axisDelta(bounds.top, bounds.bottom, safe.top, safe.bottom),
+  };
+}
+
 export function fitBoundsToViewport(bounds, viewport, padding = 64) {
   const width = Math.max(1, bounds.right - bounds.left);
   const height = Math.max(1, bounds.bottom - bounds.top);
