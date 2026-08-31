@@ -54,8 +54,8 @@ export function wrapSvgText(text, maxWidth, widthOf) {
   return lines;
 }
 
-export function createBoardSvg(board, measure = measureText) {
-  const layout = buildLayout(board, measure);
+export function createBoardSvg(board, connectionStyle = "straight", measure = measureText) {
+  const layout = buildLayout(board, measure, connectionStyle);
   const width = layout.bounds.right - layout.bounds.left;
   const height = layout.bounds.bottom - layout.bounds.top;
   const previewScale = Math.min(1, PREVIEW_MAX.width / width, PREVIEW_MAX.height / height);
@@ -94,7 +94,7 @@ ${nodes}
 </svg>`;
 }
 
-function buildLayout(board, measure) {
+function buildLayout(board, measure, connectionStyle) {
   const nodes = (board.nodes || []).map((node) => {
     const width = clamp(Number(node.width) || 218, 160, 520);
     const text = String(node.text || "");
@@ -116,7 +116,7 @@ function buildLayout(board, measure) {
         else to = insetPoint(to, from, 5 / distance);
       }
     }
-    const curve = connectionCurve(from, to);
+    const curve = connectionCurve(from, to, connectionStyle);
     const label = String(edge.label || "");
     return [{ ...edge, ...curve, from, to, label, labelWidth: label ? measure(label, EDGE_LABEL_SIZE, 560) + 12 : 0 }];
   });

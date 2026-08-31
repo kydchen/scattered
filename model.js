@@ -364,14 +364,14 @@ export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function connectionCurve(from, to) {
+export function connectionCurve(from, to, style = "curved") {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const distance = Math.hypot(dx, dy);
-  if (distance < 0.001) {
+  if (distance < 0.001 || style === "straight") {
     return {
       path: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
-      midpoint: { ...from },
+      midpoint: distance < 0.001 ? { ...from } : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
       control1: { ...from },
       control2: { ...to },
     };

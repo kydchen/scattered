@@ -128,10 +128,13 @@ assert.deepEqual([...applyLassoSelection(["a", "b"], ["b", "c"], true)], ["a", "
 
 const forwardCurve = connectionCurve({ x: 0, y: 0 }, { x: 100, y: 100 });
 const reverseCurve = connectionCurve({ x: 100, y: 100 }, { x: 0, y: 0 });
+const straightConnection = connectionCurve({ x: 0, y: 0 }, { x: 100, y: 100 }, "straight");
 assert.match(forwardCurve.path, / C /);
 assert.deepEqual(forwardCurve.midpoint, reverseCurve.midpoint);
 assert.notDeepEqual(forwardCurve.midpoint, { x: 50, y: 50 });
 assert.ok(forwardCurve.control1 && forwardCurve.control2);
+assert.match(straightConnection.path, / L /);
+assert.deepEqual(straightConnection.midpoint, { x: 50, y: 50 });
 
 assert.deepEqual(wrapSvgText("中文测试\nlongword", 20, (value) => [...value].length * 10), ["中文", "测试", "lo", "ng", "wo", "rd"]);
 const exportedSvg = createBoardSvg({
@@ -141,7 +144,7 @@ const exportedSvg = createBoardSvg({
     { id: "b", text: "A distant idea", x: 4500, y: 2500, width: 260, color: "blue" },
   ],
   edges: [{ id: "e", from: "a", to: "b", arrow: "forward", label: "支持 & extends" }],
-}, (value, size) => [...value].length * size * 0.6);
+}, "straight", (value, size) => [...value].length * size * 0.6);
 const viewBox = exportedSvg.match(/viewBox="([^"]+)"/)?.[1].split(" ").map(Number) || [];
 const displaySize = exportedSvg.match(/<svg[^>]*width="([^"]+)" height="([^"]+)"/)?.slice(1).map(Number) || [];
 assert.equal(viewBox.length, 4);
@@ -1098,6 +1101,7 @@ assert.match(html, /id="boards-button"[\s\S]*?aria-expanded="false"[\s\S]*?class
 assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="restore-button"[\s\S]*?id="cancel-delete-board-button"[\s\S]*?id="delete-board-button"/);
 assert.doesNotMatch(menuMarkup, /id="restore-button"/);
 assert.match(html, /id="search-panel"[\s\S]*?id="search-input"[\s\S]*?id="search-previous"[\s\S]*?id="search-next"/);
+assert.match(menuMarkup, /id="connection-style-button"[^>]*aria-pressed="false"[^>]*data-style="straight"/);
 assert.match(html, /id="cancel-clear-button"[\s\S]*?aria-label="取消清空"/);
 assert.match(html, /id="empty-state"[\s\S]*?Double-tap anywhere/);
 assert.match(html, /<html lang="en">/);
@@ -1122,7 +1126,8 @@ assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
 assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
-assert.match(app, /createBoardSvg\(board\)/);
+assert.match(app, /createBoardSvg\(board, connectionStyle\)/);
+assert.match(app, /localStorage\.setItem\(CONNECTION_STYLE_KEY, connectionStyle\)/);
 assert.match(app, /navigator\.canShare/);
 assert.match(app, /copySelectedGraph\(board, selectedIds\)/);
 assert.match(app, /pasteSelectedGraph\(payload, origin\)/);
@@ -1133,7 +1138,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v31/);
+assert.match(serviceWorker, /scattered-v32/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);

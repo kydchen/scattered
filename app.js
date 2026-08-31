@@ -4,6 +4,7 @@ import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument,
 import { applyTranslations, hasMessage, t } from "./i18n.js";
 
 const THEME_KEY = "scattered-theme";
+const CONNECTION_STYLE_KEY = "scattered-connection-style";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const viewport = document.querySelector("#viewport");
 const world = document.querySelector("#world");
@@ -54,6 +55,7 @@ const deleteBoardButton = document.querySelector("#delete-board-button");
 const cancelDeleteBoardButton = document.querySelector("#cancel-delete-board-button");
 const restoreButton = document.querySelector("#restore-button");
 const searchButton = document.querySelector("#search-button");
+const connectionStyleButton = document.querySelector("#connection-style-button");
 const searchPanel = document.querySelector("#search-panel");
 const searchInput = document.querySelector("#search-input");
 const searchCount = document.querySelector("#search-count");
@@ -73,6 +75,7 @@ let toastTimer = null;
 let boardDirty = false;
 let saveFailureMessage = "";
 let workspaceActionPending = false;
+let connectionStyle = readConnectionStyle();
 let edgeRenderFrame = 0;
 let palmGuardUntil = 0;
 let lastPenUpAt = 0;
@@ -98,6 +101,7 @@ renderAll();
 applyView();
 updateHistoryControls();
 updateThemeControl();
+updateConnectionStyleControl();
 renderBoardList();
 updateRecoveryControl();
 if (!storageReady) markSaveFailure(t("errorStorageUnavailable"));
@@ -180,6 +184,7 @@ exportMermaidButton.addEventListener("click", exportMermaid);
 importButton.addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
 searchButton.addEventListener("click", openSearch);
+connectionStyleButton.addEventListener("click", toggleConnectionStyle);
 restoreButton.addEventListener("click", restoreRecentBoard);
 clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
@@ -674,6 +679,24 @@ function toggleTheme(event) {
   updateThemeControl();
 }
 
+function readConnectionStyle() {
+  try {
+    return localStorage.getItem(CONNECTION_STYLE_KEY) === "curved" ? "curved" : "straight";
+  } catch {
+    return "straight";
+  }
+}
+
+function toggleConnectionStyle(event) {
+  event.stopPropagation();
+  connectionStyle = connectionStyle === "straight" ? "curved" : "straight";
+  try {
+    localStorage.setItem(CONNECTION_STYLE_KEY, connectionStyle);
+  } catch {}
+  updateConnectionStyleControl();
+  renderEdges();
+}
+
 function setMenuOpen(open) {
   if (open) setBoardPickerOpen(false);
   menu.hidden = !open;
@@ -1072,6 +1095,13 @@ function updateThemeControl() {
   themeButton.setAttribute("aria-pressed", String(dark));
   themeButton.setAttribute("aria-label", t("darkMode"));
   themeColor.content = dark ? "#16150f" : "#f2f4f7";
+}
+
+function updateConnectionStyleControl() {
+  const curved = connectionStyle === "curved";
+  connectionStyleButton.dataset.style = connectionStyle;
+  connectionStyleButton.setAttribute("aria-pressed", String(curved));
+  connectionStyleButton.setAttribute("aria-label", t(curved ? "curvedConnections" : "straightConnections"));
 }
 
 function handleNodeTap(id) {
@@ -1720,7 +1750,7 @@ function updateLinkPreview(sourceIds, screenX, screenY) {
   const to = screenToWorld({ x: screenX, y: screenY }, board.view);
   const paths = sourceIds.flatMap((id) => {
     const from = nodeCenter(id);
-    return from ? [connectionCurve(from, to).path] : [];
+    return from ? [connectionCurve(from, to, connectionStyle).path] : [];
   });
   if (paths.length === 0) return;
   linkPreview.setAttribute("d", paths.join(" "));
@@ -1767,7 +1797,7 @@ function edgeGeometry(edge) {
       }
     }
   }
-  const curve = connectionCurve(from, to);
+  const curve = connectionCurve(from, to, connectionStyle);
   return {
     from,
     to,
@@ -2208,7 +2238,7 @@ async function exportSvg(event) {
   try {
     const filename = `${exportFileName()}.svg`;
     await shareOrDownloadBlob(
-      new Blob([createBoardSvg(board)], { type: "image/svg+xml" }),
+      new Blob([createBoardSvg(board, connectionStyle)], { type: "image/svg+xml" }),
       filename,
       board.title || "Scattered",
     );
