@@ -1066,6 +1066,7 @@ assert.match(nodeTextCss, /-webkit-user-select:\s*none;/);
 assert.match(nodeEditorCss, /(?:^|\n)\s*user-select:\s*text;/);
 assert.match(nodeEditorCss, /-webkit-user-select:\s*text;/);
 assert.match(css, /\.node\.empty-note \.node-text,[\s\S]*?font-style:\s*italic;[\s\S]*?font-weight:\s*400;/);
+assert.match(css, /\.node-text a\[x-apple-data-detectors\],[\s\S]*?text-decoration:\s*none !important;/);
 
 const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
@@ -1083,6 +1084,13 @@ const onKeyDownSource = app.match(/function onKeyDown[\s\S]*?\n}\n\nfunction ini
 const applyHistorySource = app.match(/function applyHistory[\s\S]*?\n}\n\nfunction updateHistoryControls/)?.[0] ?? "";
 const finishKeyboardLinkSource = app.match(/function finishKeyboardLink[\s\S]*?\n}\n\nfunction cancelKeyboardLink/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
+const driveSyncErrorCodeSource = app.match(/function driveSyncErrorCode[\s\S]*?\n}/)?.[0] ?? "";
+const driveSyncErrorCode = Function(`"use strict"; ${driveSyncErrorCodeSource}; return driveSyncErrorCode;`)();
+assert.equal(driveSyncErrorCode({ code: "auth" }), "auth");
+assert.equal(driveSyncErrorCode(new Error("Drive sync failed: drive-403")), "drive-403");
+assert.equal(driveSyncErrorCode(new TypeError("Load failed")), "network");
+assert.equal(driveSyncErrorCode(new Error("Unexpected")), "unknown");
+assert.match(html, /<meta name="format-detection" content="telephone=no" \/>/);
 const selectionArrowMarkup = html.match(/<button id="arrow-selection"[\s\S]*?<\/button>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
   app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? ""
@@ -1213,7 +1221,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v38/);
+assert.match(serviceWorker, /scattered-v39/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

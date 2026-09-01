@@ -353,6 +353,13 @@ button {
   -webkit-touch-callout: none;
 }
 
+.node-text a[x-apple-data-detectors],
+.node-text a[href^="tel:"] {
+  color: inherit !important;
+  font: inherit !important;
+  text-decoration: none !important;
+}
+
 .node.empty-note .node-text,
 .node-editor::placeholder {
   color: var(--placeholder);

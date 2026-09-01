@@ -115,6 +115,10 @@ const driveSync = createDriveSync({
   canApply: canApplyDriveWorkspace,
   onStatus: updateDriveSyncControl,
   onConflict: (count) => showToast(t("driveConflict", { count })),
+  onError: (error) => {
+    driveErrorNotified = true;
+    showToast(`${t("driveSyncFailed")} · ${driveSyncErrorCode(error)}`);
+  },
 });
 
 applyTranslations();
@@ -802,6 +806,13 @@ function updateDriveSyncControl(status) {
     showToast(t("driveSyncFailed"));
   }
   if (["unavailable", "disconnected"].includes(status)) disarmDriveControls();
+}
+
+function driveSyncErrorCode(error) {
+  if (error?.code === "auth") return "auth";
+  const matched = /^Drive sync failed: ([a-z0-9-]+)$/.exec(String(error?.message || ""));
+  if (matched) return matched[1];
+  return error?.name === "TypeError" ? "network" : "unknown";
 }
 
 function canApplyDriveWorkspace() {
