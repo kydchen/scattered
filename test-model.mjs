@@ -331,6 +331,41 @@ pendingSync.schedule(60_000);
 assert.deepEqual(pendingSyncStatuses, ["connected"]);
 pendingSync.stop();
 
+let releaseAccountLookup;
+let accountLookupStarted;
+const accountLookupReady = new Promise((resolve) => { accountLookupStarted = resolve; });
+const disconnectRaceStatuses = [];
+let boundAfterDisconnect = false;
+const disconnectRace = createDriveSync({
+  apiUrl: "https://broker.example",
+  storage: new MemoryStorage([
+    ["scattered-drive-session-v1", "v1.c2VhbGVk"],
+    ["scattered-drive-device-v1", "device-race"],
+  ]),
+  getBoundAccount: () => null,
+  bindAccount: () => { boundAfterDisconnect = true; },
+  getWorkspace: () => { throw new Error("Workspace access continued after disconnect"); },
+  onStatus: (status) => disconnectRaceStatuses.push(status),
+  fetch: async (url) => {
+    const href = String(url);
+    if (href === "https://broker.example/token") {
+      return Response.json({ accessToken: "drive-token", expiresIn: 3_600 });
+    }
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
+      accountLookupStarted();
+      return new Promise((resolve) => { releaseAccountLookup = resolve; });
+    }
+    return new Response("unexpected", { status: 500 });
+  },
+});
+const disconnectRaceRun = disconnectRace.syncNow();
+await accountLookupReady;
+disconnectRace.disconnect();
+releaseAccountLookup(Response.json({ user: { permissionId: "account-race" } }));
+assert.equal(await disconnectRaceRun, false);
+assert.equal(boundAfterDisconnect, false);
+assert.equal(disconnectRaceStatuses.at(-1), "disconnected");
+
 function storedWorkspace(storage) {
   return JSON.parse(storage.getItem("scattered-workspace-v2"));
 }
@@ -376,9 +411,32 @@ workspaceSlots.switchTo(accountA);
 const restoredAccountA = loadWorkspace(workspaceSlots.storage, () => time++);
 assert.equal(restoredAccountA.board.title, "Account A");
 assert.equal(hasRecovery(workspaceSlots.storage), true);
+workspaceSlots.switchToGuest();
+assert.equal(workspaceSlots.isGuest, true);
+assert.equal(workspaceSlots.accountKey, null);
+const guestSlot = loadWorkspace(workspaceSlots.storage, () => time++);
+assert.equal(guestSlot.board.title, "Untitled");
+assert.equal(hasRecovery(workspaceSlots.storage), false);
+saveDocument(workspaceSlots.storage, guestSlot.workspace, { ...guestSlot.board, title: "Between accounts" }, () => time++);
+const guestSyncWorkspace = createSyncWorkspace(workspaceSlots.storage, guestSlot.workspace);
 workspaceSlots.switchTo(accountB);
-assert.equal(loadWorkspace(workspaceSlots.storage, () => time++).board.title, "Account B");
+const restoredAccountB = loadWorkspace(workspaceSlots.storage, () => time++);
+const claimedGuest = await mergeSyncWorkspaces(
+  guestSyncWorkspace,
+  createSyncWorkspace(workspaceSlots.storage, restoredAccountB.workspace),
+  [],
+);
+applySyncWorkspace(workspaceSlots.storage, restoredAccountB.workspace, claimedGuest.workspace, () => time++);
+workspaceSlots.resetGuest();
+assert.deepEqual(
+  new Set(createSyncWorkspace(workspaceSlots.storage, restoredAccountB.workspace).boards.map((item) => item.board.title)),
+  new Set(["Between accounts", "Account B"]),
+);
 assert.ok([...slotBaseStorage.values.keys()].some((key) => key.startsWith(`scattered-account-workspace-v1:${accountB}:`)));
+workspaceSlots.switchTo(accountA);
+assert.equal(loadWorkspace(workspaceSlots.storage, () => time++).board.title, "Account A");
+workspaceSlots.switchToGuest();
+assert.equal(loadWorkspace(workspaceSlots.storage, () => time++).board.title, "Untitled");
 workspaceSlots.switchTo(accountA);
 
 const workspaceBackupStorage = new MemoryStorage();
@@ -1242,6 +1300,10 @@ const driveApplySource = app.match(/function canApplyDriveWorkspace\(\)[\s\S]*?\
 assert.doesNotMatch(driveApplySource, /boardPicker\.hidden/);
 const boardPickerSource = app.match(/function setBoardPickerOpen\(open\)[\s\S]*?\n}/)?.[0] || "";
 assert.match(boardPickerSource, /driveSync\.schedule\(0\)/);
+assert.match(app, /bindAccount:\s*bindDriveAccount/);
+assert.match(app, /if \(!driveSync\.connected && workspaceSlots\.accountKey\)[\s\S]*?switchToGuest\(\)[\s\S]*?initializeWorkspace\(\)/);
+assert.match(app, /async function disconnectDriveAccount[\s\S]*?driveSync\.disconnect\(\)[\s\S]*?switchToGuest\(\)[\s\S]*?loadWorkspace\(workspaceStorage\)[\s\S]*?setBoardPickerOpen\(false\)/);
+assert.match(app, /async function switchDriveAccount[\s\S]*?previousWasGuest[\s\S]*?mergeSyncWorkspaces\(guest, accountSnapshot, \[\]\)[\s\S]*?resetGuest\(\)/);
 const fitOpenedBoardSource = app.match(/function fitOpenedBoardIfOffscreen\(\)[\s\S]*?\n}/)?.[0] || "";
 assert.match(fitOpenedBoardSource, /rectIntersectsViewport[\s\S]*?fittedView\(\)[\s\S]*?scheduleSave\(\)/);
 assert.match(app, /function replaceBoard\(nextBoard\)[\s\S]*?applyView\(\)[\s\S]*?fitOpenedBoardIfOffscreen\(\)/);
@@ -1260,7 +1322,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v42/);
+assert.match(serviceWorker, /scattered-v43/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

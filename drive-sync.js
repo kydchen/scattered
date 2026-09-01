@@ -39,6 +39,8 @@ export function createDriveSync(options) {
   let running = false;
   let queued = false;
   let syncStage = "idle";
+  let syncGeneration = 0;
+  let activeAbortController = null;
 
   const controller = {
     available: Boolean(apiUrl),
@@ -77,6 +79,9 @@ export function createDriveSync(options) {
   }
 
   function stop() {
+    syncGeneration += 1;
+    activeAbortController?.abort();
+    activeAbortController = null;
     clearTimeout(timer);
     clearInterval(pollTimer);
     globalThis.removeEventListener?.("online", onWake);
@@ -91,6 +96,12 @@ export function createDriveSync(options) {
   }
 
   function disconnect() {
+    syncGeneration += 1;
+    activeAbortController?.abort();
+    activeAbortController = null;
+    clearTimeout(timer);
+    timer = null;
+    queued = false;
     session = null;
     accessToken = null;
     accessTokenExpiresAt = 0;
@@ -119,14 +130,19 @@ export function createDriveSync(options) {
       return false;
     }
     running = true;
+    const generation = syncGeneration;
+    const abortController = new AbortController();
+    activeAbortController = abortController;
     setStatus("syncing");
     try {
-      const result = await withSyncLock(performSync);
+      const result = await withSyncLock(() => performSync(generation));
+      ensureSyncActive(generation);
       setStatus("synced");
       if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
     } catch (error) {
       if (error && typeof error === "object" && !error.syncStage) error.syncStage = syncStage;
+      if (generation !== syncGeneration || error?.name === "AbortError" || error?.code === "cancelled") return false;
       if (error?.code === "busy") {
         setStatus("connected");
         schedule(900);
@@ -149,6 +165,7 @@ export function createDriveSync(options) {
       setStatus("error");
       return false;
     } finally {
+      if (activeAbortController === abortController) activeAbortController = null;
       syncStage = "idle";
       running = false;
       if (queued) {
@@ -158,9 +175,10 @@ export function createDriveSync(options) {
     }
   }
 
-  async function performSync() {
+  async function performSync(generation) {
     syncStage = "account";
     const driveAccountKey = await getDriveAccountKey();
+    ensureSyncActive(generation);
     const boundAccountKey = options.getBoundAccount?.() || null;
     if (boundAccountKey && boundAccountKey !== driveAccountKey) {
       if (!options.switchAccount) throw accountMismatchError();
@@ -170,18 +188,22 @@ export function createDriveSync(options) {
       if (!options.bindAccount) throw accountMismatchError();
       await options.bindAccount(driveAccountKey);
     }
+    ensureSyncActive(generation);
     if (options.getBoundAccount?.() !== driveAccountKey) throw syncError("account-switch");
 
     syncStage = "local";
     const local = await options.getWorkspace();
+    ensureSyncActive(generation);
     syncStage = "prepare";
     const [localIndex, localFingerprint, files] = await Promise.all([
       indexSyncWorkspace(local),
       fingerprintSyncWorkspace(local),
       listDeviceFiles(),
     ]);
+    ensureSyncActive(generation);
     syncStage = "download";
     const snapshots = await Promise.all(files.map(readSnapshot));
+    ensureSyncActive(generation);
     const heads = cloudSnapshotHeads(snapshots);
     if (files.length > 0 && heads.length === 0) throw syncError("snapshot-heads");
     const ownFile = files
@@ -198,7 +220,9 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
+      ensureSyncActive(generation);
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+      ensureSyncActive(generation);
       saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
       return { conflicts: 0 };
     }
@@ -234,6 +258,7 @@ export function createDriveSync(options) {
     if (nextFingerprint !== localFingerprint) {
       if (options.canApply && !options.canApply()) throw busyError();
       syncStage = "apply";
+      ensureSyncActive(generation);
       await options.applyWorkspace(nextWorkspace, localFingerprint);
     }
 
@@ -246,7 +271,9 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
+      ensureSyncActive(generation);
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+      ensureSyncActive(generation);
       saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
     } else {
       saveState(storage, stateFromSnapshot(heads[0], nextFingerprint, ownFile?.id), driveAccountKey, migrateLegacyState);
@@ -375,7 +402,7 @@ export function createDriveSync(options) {
     const token = await getAccessToken();
     const headers = new Headers(init.headers || {});
     headers.set("Authorization", `Bearer ${token}`);
-    const response = await fetcher(url, { ...init, headers });
+    const response = await fetcher(url, { ...init, headers, signal: init.signal || activeAbortController?.signal });
     if (response.status === 401 && retry) {
       accessToken = null;
       accessTokenExpiresAt = 0;
@@ -390,6 +417,7 @@ export function createDriveSync(options) {
     const response = await fetcher(`${apiUrl}/token`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session}` },
+      signal: activeAbortController?.signal,
     });
     if (response.status === 401 || response.status === 403) throw authError();
     if (!response.ok) throw syncError(`broker-${response.status}`);
@@ -438,6 +466,13 @@ export function createDriveSync(options) {
 
   function onVisibilityChange() {
     if (globalThis.document?.visibilityState === "visible") onWake();
+  }
+
+  function ensureSyncActive(generation) {
+    if (session && generation === syncGeneration) return;
+    const error = new Error("Drive sync cancelled");
+    error.code = "cancelled";
+    throw error;
   }
 }
 

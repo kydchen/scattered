@@ -1,7 +1,7 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
-import { fingerprintSyncWorkspace } from "./sync-model.js";
+import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { DRIVE_SYNC_API } from "./sync-config.js";
 import { applyTranslations, hasMessage, t } from "./i18n.js";
@@ -114,7 +114,7 @@ const driveSync = createDriveSync({
   storage: localStorage,
   getWorkspace: () => createSyncWorkspace(workspaceStorage, workspace),
   getBoundAccount: () => workspaceSlots.accountKey,
-  bindAccount: (accountKey) => workspaceSlots.bind(accountKey),
+  bindAccount: bindDriveAccount,
   switchAccount: switchDriveAccount,
   applyWorkspace: applyDriveWorkspace,
   canApply: canApplyDriveWorkspace,
@@ -125,6 +125,14 @@ const driveSync = createDriveSync({
     showToast(`${t("driveSyncFailed")} · ${driveSyncErrorCode(error)}`);
   },
 });
+
+if (!driveSync.connected && workspaceSlots.accountKey) {
+  workspaceSlots.switchToGuest();
+  const guestWorkspace = initializeWorkspace();
+  workspace = guestWorkspace.workspace;
+  board = guestWorkspace.board;
+  storageReady = guestWorkspace.storageReady;
+}
 
 applyTranslations();
 renderAll();
@@ -225,12 +233,7 @@ cancelDriveButton.addEventListener("click", (event) => {
   disarmDriveControls();
   driveSyncButton.focus();
 });
-disconnectDriveButton.addEventListener("click", (event) => {
-  event.stopPropagation();
-  driveSync.disconnect();
-  disarmDriveControls();
-  driveSyncButton.focus();
-});
+disconnectDriveButton.addEventListener("click", (event) => { void disconnectDriveAccount(event); });
 clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -786,6 +789,29 @@ async function useDriveSync(event) {
   driveSync.connect();
 }
 
+async function disconnectDriveAccount(event) {
+  event.stopPropagation();
+  if (!beginWorkspaceAction()) return;
+  const previousAccount = workspaceSlots.accountKey;
+  try {
+    if (!await commitCurrentBoard()) return;
+    driveSync.disconnect();
+    workspaceSlots.switchToGuest();
+    const loaded = await withWorkspaceLock(() => loadWorkspace(workspaceStorage));
+    workspace = loaded.workspace;
+    replaceBoard(loaded.board);
+    clearSaveFailure();
+    updateRecoveryControl();
+    setBoardPickerOpen(false);
+    boardsButton.focus();
+  } catch {
+    if (previousAccount) workspaceSlots.switchTo(previousAccount);
+    showToast(t("driveSyncFailed"));
+  } finally {
+    endWorkspaceAction();
+  }
+}
+
 function disarmDriveControls() {
   boardPicker.classList.remove("managing-drive");
   cancelDriveButton.hidden = true;
@@ -863,23 +889,47 @@ async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
 async function switchDriveAccount(accountKey) {
   if (!canApplyDriveWorkspace() || !beginWorkspaceAction()) throw driveBusyError();
   const previousAccount = workspaceSlots.accountKey;
+  const previousWasGuest = workspaceSlots.isGuest;
   const previousWorkspace = workspace;
   const previousBoard = board;
   try {
-    workspaceSlots.switchTo(accountKey);
-    const loaded = await withWorkspaceLock(() => loadWorkspace(workspaceStorage));
+    const loaded = await withWorkspaceLock(async () => {
+      const guest = previousWasGuest ? createSyncWorkspace(workspaceStorage, workspace) : null;
+      workspaceSlots.switchTo(accountKey);
+      const account = loadWorkspace(workspaceStorage);
+      if (!guest || isDisposableSyncWorkspace(guest)) {
+        if (guest) workspaceSlots.resetGuest();
+        return account;
+      }
+      const accountSnapshot = createSyncWorkspace(workspaceStorage, account.workspace);
+      const claimed = isDisposableSyncWorkspace(accountSnapshot)
+        ? guest
+        : (await mergeSyncWorkspaces(guest, accountSnapshot, [])).workspace;
+      const claimedBoard = applySyncWorkspace(workspaceStorage, account.workspace, claimed);
+      workspaceSlots.resetGuest();
+      return { workspace: account.workspace, board: claimedBoard };
+    });
     workspace = loaded.workspace;
     replaceBoard(loaded.board);
     clearSaveFailure();
     updateRecoveryControl();
   } catch (error) {
-    if (previousAccount) workspaceSlots.switchTo(previousAccount);
+    if (previousWasGuest) workspaceSlots.switchToGuest();
+    else if (previousAccount) workspaceSlots.switchTo(previousAccount);
     workspace = previousWorkspace;
     replaceBoard(previousBoard);
     throw error;
   } finally {
     endWorkspaceAction();
   }
+}
+
+async function bindDriveAccount(accountKey) {
+  if (workspaceSlots.isGuest) {
+    await switchDriveAccount(accountKey);
+    return;
+  }
+  workspaceSlots.bind(accountKey);
 }
 
 function syncBoardContent(value) {

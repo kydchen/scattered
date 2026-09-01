@@ -21,9 +21,11 @@ const PENDING_KEY = `${PENDING_PREFIX}${PENDING_SESSION_ID}`;
 const IMPORT_JOURNAL_PREFIX = "scattered-import-journal-v1:";
 const IMPORT_JOURNAL_STALE_MS = 2 * 60 * 1000;
 const ACCOUNT_SCOPE_PREFIX = "scattered-account-workspace-v1:";
+const GUEST_SCOPE_PREFIX = "scattered-guest-workspace-v1:";
 const ACTIVE_SCOPE_KEY = "scattered-active-workspace-scope-v1";
 const LOCAL_ACCOUNT_KEY = "scattered-local-workspace-account-v1";
 const LOCAL_SCOPE = "local";
+const GUEST_SCOPE = "guest";
 const WORKSPACE_EXPORT_FORMAT = "scattered-workspace";
 const SYNC_WORKSPACE_FORMAT = "scattered-sync-workspace";
 const SYNC_WORKSPACE_VERSION = 1;
@@ -47,12 +49,15 @@ export function createWorkspaceSlots(baseStorage) {
 
   return {
     storage,
+    get isGuest() { return scope === GUEST_SCOPE; },
     get accountKey() {
+      if (scope === GUEST_SCOPE) return null;
       if (scope !== LOCAL_SCOPE) return scope;
       return readStoredAccount(baseStorage, LOCAL_ACCOUNT_KEY);
     },
     bind(accountKey) {
       requireAccountKey(accountKey);
+      if (scope === GUEST_SCOPE) throw new Error("sync.accountClaimRequired");
       const current = this.accountKey;
       if (current && current !== accountKey) throw new Error("sync.accountMismatch");
       if (scope === LOCAL_SCOPE && !current) writeVerified(baseStorage, LOCAL_ACCOUNT_KEY, accountKey);
@@ -64,20 +69,41 @@ export function createWorkspaceSlots(baseStorage) {
       writeVerified(baseStorage, ACTIVE_SCOPE_KEY, nextScope);
       scope = nextScope;
     },
+    switchToGuest() {
+      writeVerified(baseStorage, ACTIVE_SCOPE_KEY, GUEST_SCOPE);
+      scope = GUEST_SCOPE;
+    },
+    resetGuest() {
+      const recoveryKey = `${GUEST_SCOPE_PREFIX}${RECOVERY_KEY}`;
+      const keys = [];
+      for (let index = 0; index < baseStorage.length; index += 1) {
+        const key = baseStorage.key(index);
+        if (typeof key === "string" && key.startsWith(GUEST_SCOPE_PREFIX) && key !== recoveryKey) keys.push(key);
+      }
+      keys.forEach((key) => {
+        try { baseStorage.removeItem(key); } catch {}
+      });
+    },
   };
 
   function scopedKey(key) {
-    return scope === LOCAL_SCOPE ? key : `${ACCOUNT_SCOPE_PREFIX}${scope}:${key}`;
+    if (scope === LOCAL_SCOPE) return key;
+    if (scope === GUEST_SCOPE) return `${GUEST_SCOPE_PREFIX}${key}`;
+    return `${ACCOUNT_SCOPE_PREFIX}${scope}:${key}`;
   }
 
   function visibleKeys() {
     const keys = [];
-    const prefix = scope === LOCAL_SCOPE ? "" : `${ACCOUNT_SCOPE_PREFIX}${scope}:`;
+    const prefix = scope === GUEST_SCOPE
+      ? GUEST_SCOPE_PREFIX
+      : scope === LOCAL_SCOPE
+        ? ""
+        : `${ACCOUNT_SCOPE_PREFIX}${scope}:`;
     for (let index = 0; index < baseStorage.length; index += 1) {
       const key = baseStorage.key(index);
       if (typeof key !== "string") continue;
       if (scope === LOCAL_SCOPE) {
-        if (!key.startsWith(ACCOUNT_SCOPE_PREFIX)) keys.push(key);
+        if (!key.startsWith(ACCOUNT_SCOPE_PREFIX) && !key.startsWith(GUEST_SCOPE_PREFIX)) keys.push(key);
       } else if (key.startsWith(prefix)) {
         keys.push(key.slice(prefix.length));
       }
@@ -1081,7 +1107,7 @@ function restoreStorageItem(storage, key, value) {
 function readActiveScope(storage) {
   try {
     const value = storage.getItem(ACTIVE_SCOPE_KEY);
-    return value === LOCAL_SCOPE || validAccountKey(value) ? value : LOCAL_SCOPE;
+    return value === LOCAL_SCOPE || value === GUEST_SCOPE || validAccountKey(value) ? value : LOCAL_SCOPE;
   } catch {
     return LOCAL_SCOPE;
   }
