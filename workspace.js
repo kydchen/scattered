@@ -21,6 +21,8 @@ const PENDING_KEY = `${PENDING_PREFIX}${PENDING_SESSION_ID}`;
 const IMPORT_JOURNAL_PREFIX = "scattered-import-journal-v1:";
 const IMPORT_JOURNAL_STALE_MS = 2 * 60 * 1000;
 const WORKSPACE_EXPORT_FORMAT = "scattered-workspace";
+const SYNC_WORKSPACE_FORMAT = "scattered-sync-workspace";
+const SYNC_WORKSPACE_VERSION = 1;
 const MAX_RECOVERY = 5;
 const DOCUMENT_FORMAT = "scattered-document";
 const DOCUMENT_STORAGE_VERSION = 1;
@@ -103,6 +105,139 @@ export function createWorkspaceBackup(storage, workspace, currentBoard) {
     throw new Error("export.invalidWorkspace");
   }
   return backup;
+}
+
+export function createSyncWorkspace(storage, workspace) {
+  const latest = mergeWorkspace(storage, workspace);
+  const boards = latest.boards.map((item) => {
+    const loaded = readDocument(storage, item.id);
+    if (!loaded.board || !loaded.revision) throw new Error("sync.invalidWorkspace");
+    return {
+      id: item.id,
+      revision: loaded.revision,
+      updatedAt: loaded.updatedAt || item.updatedAt || 0,
+      board: loaded.board,
+    };
+  });
+  const snapshot = {
+    format: SYNC_WORKSPACE_FORMAT,
+    version: SYNC_WORKSPACE_VERSION,
+    activeId: boards.some((item) => item.id === latest.activeId) ? latest.activeId : boards[0]?.id || null,
+    boards,
+    tombstones: mergeTombstones([], latest.tombstones || []),
+  };
+  validateSyncWorkspace(snapshot);
+  return snapshot;
+}
+
+export function parseSyncWorkspace(value) {
+  let encoded;
+  try {
+    encoded = typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    throw new Error("sync.invalidWorkspace");
+  }
+  if (typeof encoded !== "string"
+    || new TextEncoder().encode(encoded).byteLength > MAX_WORKSPACE_IMPORT_BYTES) {
+    throw new Error("sync.invalidWorkspace");
+  }
+  let candidate;
+  try {
+    candidate = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("sync.invalidWorkspace");
+  }
+  return validateSyncWorkspace(candidate);
+}
+
+export function applySyncWorkspace(storage, workspace, value, now = Date.now) {
+  const incoming = parseSyncWorkspace(value);
+  const current = mergeWorkspace(storage, workspace);
+  const tombstones = mergeTombstones(current.tombstones || [], incoming.tombstones || []);
+  const deletedIds = new Set(tombstones.map((item) => item.id));
+  const incomingIds = new Set(incoming.boards.map((item) => item.id));
+  const onlyBoard = current.boards.length === 1 ? readDocument(storage, current.boards[0].id).board : null;
+  const disposableId = current.boards.length === 1
+    && current.tombstones.length === 0
+    && onlyBoard
+    && boardContentMatches(onlyBoard, blankBoard())
+    ? current.boards[0].id
+    : null;
+  if (current.boards.some((item) => item.id !== disposableId && !incomingIds.has(item.id) && !deletedIds.has(item.id))) {
+    throw new Error("sync.invalidWorkspace");
+  }
+  const localViews = new Map(current.boards.flatMap((item) => {
+    const local = readDocument(storage, item.id).board;
+    return local?.view ? [[item.id, local.view]] : [];
+  }));
+  const targetBoards = incoming.boards
+    .filter((item) => !deletedIds.has(item.id))
+    .map((item) => localViews.has(item.id)
+      ? { ...item, board: { ...item.board, view: localViews.get(item.id) } }
+      : item);
+  if (targetBoards.length === 0) {
+    const id = createId();
+    const board = blankBoard();
+    targetBoards.push({ id, revision: createId(), updatedAt: now(), board });
+  }
+  const targetIds = new Set(targetBoards.map((item) => item.id));
+  const activeId = targetIds.has(workspace.activeId)
+    ? workspace.activeId
+    : targetIds.has(incoming.activeId)
+      ? incoming.activeId
+      : targetBoards[0].id;
+  const nextWorkspace = {
+    version: 1,
+    activeId,
+    boards: targetBoards.map((item) => ({
+      id: item.id,
+      title: item.board.title,
+      updatedAt: item.updatedAt,
+      revision: item.revision,
+    })).sort((left, right) => right.updatedAt - left.updatedAt),
+    tombstones,
+  };
+  const touchedIds = new Set([...current.boards.map((item) => item.id), ...targetIds]);
+  const previousDocuments = [...touchedIds].map((id) => ({
+    id,
+    primary: storage.getItem(boardKey(id)),
+    backup: storage.getItem(backupKey(id)),
+  }));
+  const previousWorkspace = storage.getItem(WORKSPACE_KEY);
+  const previousWorkspaceBackup = storage.getItem(WORKSPACE_BACKUP_KEY);
+  const previousRecovery = storage.getItem(RECOVERY_KEY);
+
+  try {
+    current.boards.filter((item) => item.id !== disposableId && !targetIds.has(item.id)).forEach((item) => {
+      const removed = readDocument(storage, item.id).board;
+      if (removed) captureRecovery(storage, item.id, removed, "delete", now);
+    });
+    targetBoards.forEach((item) => {
+      const key = boardKey(item.id);
+      const previous = storage.getItem(key);
+      const next = encodeDocument(item.board, item.revision, item.updatedAt);
+      if (parseDocument(previous) && previous !== next) storage.setItem(backupKey(item.id), previous);
+      storage.setItem(key, next);
+    });
+    writeWorkspaceCopies(storage, nextWorkspace);
+  } catch (error) {
+    previousDocuments.forEach(({ id, primary, backup }) => {
+      restoreStorageItem(storage, boardKey(id), primary);
+      restoreStorageItem(storage, backupKey(id), backup);
+    });
+    restoreStorageItem(storage, WORKSPACE_KEY, previousWorkspace);
+    restoreStorageItem(storage, WORKSPACE_BACKUP_KEY, previousWorkspaceBackup);
+    restoreStorageItem(storage, RECOVERY_KEY, previousRecovery);
+    throw error;
+  }
+
+  applyWorkspace(workspace, nextWorkspace);
+  current.boards.forEach((item) => {
+    if (targetIds.has(item.id)) return;
+    try { storage.removeItem(boardKey(item.id)); } catch {}
+    try { storage.removeItem(backupKey(item.id)); } catch {}
+  });
+  return targetBoards.find((item) => item.id === activeId)?.board || targetBoards[0].board;
 }
 
 export function parseImportedWorkspace(encoded) {
@@ -911,10 +1046,70 @@ function validateWorkspaceContents(boards, errorCode) {
   }
 }
 
+function validateSyncWorkspace(value) {
+  if (!isPlainObject(value)
+    || value.format !== SYNC_WORKSPACE_FORMAT
+    || value.version !== SYNC_WORKSPACE_VERSION
+    || !Array.isArray(value.boards)
+    || value.boards.length === 0
+    || value.boards.length > MAX_WORKSPACE_IMPORT_BOARDS
+    || !Array.isArray(value.tombstones)) throw new Error("sync.invalidWorkspace");
+  const ids = new Set();
+  const boards = value.boards.map((item) => {
+    if (!isPlainObject(item)
+      || !isSyncToken(item.id)
+      || ids.has(item.id)
+      || !isSyncToken(item.revision)
+      || !Number.isSafeInteger(Number(item.updatedAt))
+      || Number(item.updatedAt) < 0) throw new Error("sync.invalidWorkspace");
+    ids.add(item.id);
+    const board = parseImportedBoard(JSON.stringify(item.board), {
+      maxBytes: MAX_WORKSPACE_IMPORT_BYTES,
+      maxNodes: Infinity,
+      maxEdges: Infinity,
+    });
+    return {
+      id: item.id,
+      revision: item.revision,
+      updatedAt: Number(item.updatedAt),
+      board,
+    };
+  });
+  validateWorkspaceContents(boards.map((item) => item.board), "sync.invalidWorkspace");
+  const tombstoneIds = new Set();
+  const tombstones = value.tombstones.map((item) => {
+    if (!isPlainObject(item)
+      || !isSyncToken(item.id)
+      || ids.has(item.id)
+      || tombstoneIds.has(item.id)
+      || !Number.isSafeInteger(Number(item.deletedAt))
+      || Number(item.deletedAt) < 0) throw new Error("sync.invalidWorkspace");
+    tombstoneIds.add(item.id);
+    return { id: item.id, deletedAt: Number(item.deletedAt) };
+  });
+  if (typeof value.activeId !== "string" || !ids.has(value.activeId)) throw new Error("sync.invalidWorkspace");
+  const normalized = {
+    format: SYNC_WORKSPACE_FORMAT,
+    version: SYNC_WORKSPACE_VERSION,
+    activeId: value.activeId,
+    boards,
+    tombstones,
+  };
+  if (new TextEncoder().encode(JSON.stringify(normalized)).byteLength > MAX_WORKSPACE_IMPORT_BYTES) {
+    throw new Error("sync.invalidWorkspace");
+  }
+  return normalized;
+}
+
 function boardContentMatches(left, right) {
   const { view: _leftView, ...leftContent } = left;
   const { view: _rightView, ...rightContent } = right;
   return JSON.stringify(leftContent) === JSON.stringify(rightContent);
+}
+
+function isSyncToken(value) {
+  return typeof value === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
 }
 
 function isPlainObject(value) {

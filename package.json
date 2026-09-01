@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test-model.mjs",
+    "test": "node test-model.mjs && node test-drive-sync.mjs && node worker/test-worker.mjs",
     "start": "python3 -m http.server 4173",
     "debug": "python3 debug_server.py 4173"
   }

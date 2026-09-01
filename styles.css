@@ -757,6 +757,67 @@ button {
   background: var(--danger-soft);
 }
 
+.board-picker.managing-drive > :not(.board-picker-tools),
+.board-picker.managing-drive .board-picker-tools > :not(#cancel-drive-button):not(#disconnect-drive-button) {
+  display: none;
+}
+
+.board-picker.managing-drive {
+  width: auto;
+}
+
+.board-picker.managing-drive .board-picker-tools {
+  padding-bottom: 0;
+}
+
+.drive-sync-button {
+  color: var(--thread) !important;
+}
+
+.drive-status-dot,
+.drive-status-ring,
+.drive-status-alert {
+  display: none;
+}
+
+.drive-sync-button[data-status="connected"] .drive-status-dot,
+.drive-sync-button[data-status="synced"] .drive-status-dot {
+  display: block;
+  fill: currentColor;
+  stroke: var(--panel-strong);
+  stroke-width: 1.5;
+}
+
+.drive-sync-button[data-status="connected"] .drive-status-dot {
+  opacity: .52;
+}
+
+.drive-sync-button[data-status="syncing"] .drive-status-ring {
+  display: block;
+  stroke-dasharray: 9 44;
+  transform-origin: 12px 12px;
+  animation: drive-sync-spin 1s linear infinite;
+}
+
+.drive-sync-button[data-status="error"] {
+  color: var(--danger) !important;
+}
+
+.drive-sync-button[data-status="error"] .drive-status-alert {
+  display: block;
+  stroke-width: 2.2;
+}
+
+@keyframes drive-sync-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drive-sync-button[data-status="syncing"] .drive-status-ring {
+    animation: none;
+  }
+}
+
 .board-picker svg {
   width: 21px;
   height: 21px;

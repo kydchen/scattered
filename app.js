@@ -1,6 +1,9 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { fingerprintSyncWorkspace } from "./sync-model.js";
+import { createDriveSync } from "./drive-sync.js";
+import { DRIVE_SYNC_API } from "./sync-config.js";
 import { applyTranslations, hasMessage, t } from "./i18n.js";
 
 const THEME_KEY = "scattered-theme";
@@ -57,6 +60,9 @@ const duplicateBoardButton = document.querySelector("#duplicate-board-button");
 const deleteBoardButton = document.querySelector("#delete-board-button");
 const cancelDeleteBoardButton = document.querySelector("#cancel-delete-board-button");
 const restoreButton = document.querySelector("#restore-button");
+const driveSyncButton = document.querySelector("#drive-sync-button");
+const cancelDriveButton = document.querySelector("#cancel-drive-button");
+const disconnectDriveButton = document.querySelector("#disconnect-drive-button");
 const searchButton = document.querySelector("#search-button");
 const connectionStyleButton = document.querySelector("#connection-style-button");
 const searchPanel = document.querySelector("#search-panel");
@@ -95,11 +101,21 @@ let keyboardLinkSourceIds = null;
 let colorAnchor = null;
 let searchReturnFocus = null;
 let announcementFrame = 0;
+let driveErrorNotified = false;
 const pointers = new Map();
 const nodeElements = new Map();
 const selectedIds = new Set();
 const undoStack = [];
 const redoStack = [];
+const driveSync = createDriveSync({
+  apiUrl: storageReady ? DRIVE_SYNC_API : "",
+  storage: localStorage,
+  getWorkspace: () => createSyncWorkspace(localStorage, workspace),
+  applyWorkspace: applyDriveWorkspace,
+  canApply: canApplyDriveWorkspace,
+  onStatus: updateDriveSyncControl,
+  onConflict: (count) => showToast(t("driveConflict", { count })),
+});
 
 applyTranslations();
 renderAll();
@@ -194,6 +210,18 @@ importInput.addEventListener("change", importBoard);
 searchButton.addEventListener("click", openSearch);
 connectionStyleButton.addEventListener("click", toggleConnectionStyle);
 restoreButton.addEventListener("click", restoreRecentBoard);
+driveSyncButton.addEventListener("click", useDriveSync);
+cancelDriveButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  disarmDriveControls();
+  driveSyncButton.focus();
+});
+disconnectDriveButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  driveSync.disconnect();
+  disarmDriveControls();
+  driveSyncButton.focus();
+});
 clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -276,6 +304,8 @@ searchCloseButton.addEventListener("click", () => closeSearch(true));
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
+
+driveSync.start();
 
 if (new URLSearchParams(location.search).get("debug") === "1") {
   import("./debug-client.js")
@@ -727,7 +757,94 @@ function setBoardPickerOpen(open) {
     requestAnimationFrame(() => boardList.querySelector('[aria-current="true"]')?.focus() || newBoardButton.focus());
   } else {
     disarmDeleteBoard();
+    disarmDriveControls();
   }
+}
+
+async function useDriveSync(event) {
+  event.stopPropagation();
+  if (driveSync.connected) {
+    disarmDeleteBoard();
+    boardPicker.classList.add("managing-drive");
+    cancelDriveButton.hidden = false;
+    disconnectDriveButton.hidden = false;
+    requestAnimationFrame(() => cancelDriveButton.focus());
+    return;
+  }
+  if (!await commitCurrentBoard()) return;
+  driveSync.connect();
+}
+
+function disarmDriveControls() {
+  boardPicker.classList.remove("managing-drive");
+  cancelDriveButton.hidden = true;
+  disconnectDriveButton.hidden = true;
+}
+
+function updateDriveSyncControl(status) {
+  driveSyncButton.hidden = status === "unavailable";
+  driveSyncButton.dataset.status = status;
+  driveSyncButton.setAttribute("aria-busy", String(status === "syncing"));
+  const label = {
+    unavailable: "connectDrive",
+    disconnected: "connectDrive",
+    connected: "driveConnected",
+    syncing: "driveSyncing",
+    synced: "driveSynced",
+    error: "driveSyncError",
+  }[status] || "connectDrive";
+  driveSyncButton.setAttribute("aria-label", t(label));
+  if (status === "synced") driveErrorNotified = false;
+  if (status === "error" && !driveErrorNotified) {
+    driveErrorNotified = true;
+    showToast(t("driveSyncFailed"));
+  }
+  if (["unavailable", "disconnected"].includes(status)) disarmDriveControls();
+}
+
+function canApplyDriveWorkspace() {
+  return storageReady
+    && !workspaceActionPending
+    && !boardDirty
+    && !mode
+    && selectedIds.size === 0
+    && !selectedEdgeId
+    && boardPicker.hidden
+    && menu.hidden
+    && searchPanel.hidden
+    && !document.querySelector(".node.editing")
+    && boardTitleEditor.hidden
+    && edgeLabelEditor.hidden;
+}
+
+async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
+  if (!canApplyDriveWorkspace() || !beginWorkspaceAction()) throw driveBusyError();
+  try {
+    const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
+    const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
+    const nextBoard = await withWorkspaceLock(async () => {
+      const latest = createSyncWorkspace(localStorage, workspace);
+      if (await fingerprintSyncWorkspace(latest) !== expectedFingerprint) throw driveBusyError();
+      return applySyncWorkspace(localStorage, workspace, nextWorkspace);
+    });
+    if (activeWouldChange) replaceBoard(nextBoard);
+    else renderBoardList();
+    clearSaveFailure();
+    updateRecoveryControl();
+  } finally {
+    endWorkspaceAction();
+  }
+}
+
+function syncBoardContent(value) {
+  const { view: _view, ...content } = normalizeBoard(value);
+  return JSON.stringify(content);
+}
+
+function driveBusyError() {
+  const error = new Error("Workspace changed during cloud sync");
+  error.code = "busy";
+  return error;
 }
 
 function armDeleteBoard() {
@@ -749,7 +866,7 @@ function beginWorkspaceAction() {
   cancelGesture();
   boardPicker.setAttribute("aria-busy", "true");
   menu.setAttribute("aria-busy", "true");
-  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, clearButton, cancelClearButton, importButton]
+  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, driveSyncButton, cancelDriveButton, disconnectDriveButton, clearButton, cancelClearButton, importButton]
     .forEach((button) => { button.disabled = true; });
   return true;
 }
@@ -758,7 +875,7 @@ function endWorkspaceAction() {
   workspaceActionPending = false;
   boardPicker.setAttribute("aria-busy", "false");
   menu.setAttribute("aria-busy", "false");
-  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, clearButton, cancelClearButton, importButton]
+  [newBoardButton, duplicateBoardButton, deleteBoardButton, cancelDeleteBoardButton, restoreButton, driveSyncButton, cancelDriveButton, disconnectDriveButton, clearButton, cancelClearButton, importButton]
     .forEach((button) => { button.disabled = false; });
 }
 
@@ -791,6 +908,7 @@ async function newBoard(event) {
   try {
     if (!await commitCurrentBoard()) return;
     replaceBoard(await withWorkspaceLock(() => createDocument(localStorage, workspace)));
+    driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
@@ -806,6 +924,7 @@ async function duplicateBoard(event) {
   try {
     if (!await commitCurrentBoard()) return;
     replaceBoard(await withWorkspaceLock(() => duplicateDocument(localStorage, workspace, board)));
+    driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus();
   } catch {
@@ -825,6 +944,7 @@ async function removeCurrentBoard(event) {
   try {
     if (!await commitCurrentBoard()) return;
     replaceBoard(await withWorkspaceLock(() => deleteDocument(localStorage, workspace)));
+    driveSync.schedule();
     clearSaveFailure();
     updateRecoveryControl();
     setBoardPickerOpen(false);
@@ -881,6 +1001,7 @@ async function restoreRecentBoard(event) {
     const restored = await withWorkspaceLock(() => restoreLatest(localStorage, workspace, board));
     if (restored) {
       replaceBoard(restored);
+      driveSync.schedule();
     }
     updateRecoveryControl();
     setBoardPickerOpen(false);
@@ -2098,7 +2219,7 @@ async function saveBoardNow() {
   }
   if (!boardDirty) return true;
   try {
-    return await withWorkspaceLock(() => {
+    const savedSuccessfully = await withWorkspaceLock(() => {
       const previousId = workspace.activeId;
       const saved = saveDocument(localStorage, workspace, board);
       const conflicted = workspace.activeId !== previousId;
@@ -2116,6 +2237,8 @@ async function saveBoardNow() {
       if (conflicted) showToast(t("conflictCopy"));
       return true;
     });
+    if (savedSuccessfully) driveSync.schedule();
+    return savedSuccessfully;
   } catch {
     markSaveFailure(t("errorSave"));
     return false;
@@ -2137,6 +2260,7 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
     previousBoard = JSON.stringify(normalizeBoard(board));
     saved = await withWorkspaceLock(() => replaceDocument(localStorage, workspace, nextBoard, recoveryReason));
     clearSaveFailure();
+    driveSync.schedule();
   } catch {
     markSaveFailure(t("errorSave"));
     return false;
@@ -2375,6 +2499,7 @@ async function mergeImportedWorkspace(imported) {
     if (!await commitCurrentBoard()) return false;
     const importedBoard = await withWorkspaceLock(() => addImportedWorkspace(localStorage, workspace, imported));
     replaceBoard(importedBoard);
+    driveSync.schedule();
     clearSaveFailure();
     announce(t("workspaceImported", { count: imported.boards.length }));
     menuButton.focus();

@@ -14,7 +14,7 @@ Thanks for helping Scattered stay small, calm, and useful. Focused bug fixes and
 
 - Prefer direct manipulation and visual controls over instructions or persistent text.
 - Keep the interface minimal, but preserve meaningful accessible names for icon-only controls.
-- Keep boards local-first. Note text, connections, and exported files must not leave the browser without an explicit user action.
+- Keep boards local-first. Note text, connections, and exported files must not leave the browser unless the user explicitly enables a feature that requires it.
 - Reuse the existing browser platform and vanilla JavaScript before adding a dependency or build step.
 
 ## Develop and test
@@ -37,6 +37,7 @@ Before opening a pull request:
 - Smoke-test desktop keyboard and mouse interactions.
 - Test touch and Pencil behavior when relevant; if you cannot, say which device path remains untested.
 - Bump the cache name in `sw.js` when changing a deployed asset, so installed PWAs receive the update cleanly.
+- Changes to optional Drive sync must keep the no-account path free of Drive and broker requests and pass the Drive checks included in `npm test`.
 
 ## 简体中文
 
@@ -52,7 +53,7 @@ Before opening a pull request:
 
 - 优先使用直接操作和可视化控件，避免依赖说明文字或持续提示。
 - 界面应保持极简，但纯图标按钮仍需保留明确的无障碍名称。
-- 画布坚持本地优先；除非用户明确操作，否则卡片文字、连线和导出文件都不应离开浏览器。
+- 画布坚持本地优先；除非用户明确启用需要联网的功能，否则卡片文字、连线和导出文件都不应离开浏览器。
 - 添加依赖或构建步骤之前，优先复用现有浏览器能力和原生 JavaScript。
 
 ### 开发与测试
@@ -75,3 +76,4 @@ npm test
 - 在桌面端快速检查键盘和鼠标操作。
 - 涉及触控或 Pencil 时请做对应测试；如果手边没有设备，请明确说明尚未测试的路径。
 - 修改线上资源时同步更新 `sw.js` 的缓存名称，确保已安装的 PWA 能正常获得更新。
+- 修改可选的 Drive 同步时，必须保证无账户路径不请求 Drive 或授权中转，并通过 `npm test` 中的 Drive 检查。

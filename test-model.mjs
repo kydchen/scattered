@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, captureRecovery, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { messages, t } from "./i18n.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
@@ -1179,8 +1180,11 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v35/);
+assert.match(serviceWorker, /scattered-v36/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
+assert.match(serviceWorker, /\.\/sync-model\.js/);
+assert.match(serviceWorker, /\.\/drive-sync\.js/);
+assert.match(serviceWorker, /origin !== self\.location\.origin/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);
 assert.doesNotMatch(serviceWorker, /pdf-export|pdf-lib|fontkit|NotoSansSC/);
@@ -1202,6 +1206,148 @@ assert.match(app, /async function clearBoard[\s\S]*?confirming-clear[\s\S]*?\.\.
 assert.match(css, /html\[data-theme="dark"\]\s*\{[^}]*--canvas:\s*#16150f;[^}]*--paper:\s*#211f18;[^}]*--ink:\s*#eae4d6;/s);
 assert.match(css, /html\[data-theme="dark"\][\s\S]*?--note-yellow:\s*#3a321b;[\s\S]*?--note-mint:\s*#193129;[\s\S]*?--note-blue:\s*#1b2c43;[\s\S]*?--note-rose:\s*#3a222a;/);
 assert.match(css, /#connections \.edge\s*\{[^}]*outline:\s*none;[^}]*-webkit-tap-highlight-color:\s*transparent;/s);
+
+const syncStorage = new MemoryStorage();
+const syncLocal = loadWorkspace(syncStorage, () => time++);
+const syncOriginalId = syncLocal.workspace.activeId;
+saveDocument(syncStorage, syncLocal.workspace, {
+  ...syncLocal.board,
+  title: "Local",
+  nodes: [{ id: "local-note", text: "before", x: 0, y: 0 }],
+  view: { x: 17, y: 23, scale: 1.2 },
+}, () => time++);
+createDocument(syncStorage, syncLocal.workspace, { ...blankBoard(), title: "Removed" }, () => time++);
+deleteDocument(syncStorage, syncLocal.workspace, () => time++);
+const syncExport = createSyncWorkspace(syncStorage, syncLocal.workspace);
+assert.equal(syncExport.format, "scattered-sync-workspace");
+assert.equal(syncExport.boards[0].id, syncOriginalId);
+assert.equal(syncExport.tombstones.length, 1);
+assert.deepEqual(parseSyncWorkspace(JSON.stringify(syncExport)), syncExport);
+assert.throws(() => parseSyncWorkspace({ ...syncExport, activeId: "missing" }), /sync\.invalidWorkspace/);
+assert.throws(() => parseSyncWorkspace({
+  ...syncExport,
+  activeId: "../bad",
+  boards: syncExport.boards.map((item) => ({ ...item, id: "../bad" })),
+}), /sync\.invalidWorkspace/);
+
+const incomingSync = structuredClone(syncExport);
+incomingSync.boards[0].board.nodes[0].text = "from Drive";
+incomingSync.boards[0].board.view = { x: 999, y: 999, scale: 0.5 };
+incomingSync.boards[0].revision = "remote-revision";
+incomingSync.boards[0].updatedAt += 100;
+applySyncWorkspace(syncStorage, syncLocal.workspace, incomingSync, () => time++);
+assert.equal(storedBoard(syncStorage, syncOriginalId).nodes[0].text, "from Drive");
+assert.deepEqual(storedBoard(syncStorage, syncOriginalId).view, { x: 17, y: 23, scale: 1.2 });
+assert.equal(syncLocal.workspace.activeId, syncOriginalId);
+
+const remoteDeleteStorage = new MemoryStorage();
+const remoteDeleteLocal = loadWorkspace(remoteDeleteStorage, () => time++);
+const keptRemoteId = remoteDeleteLocal.workspace.activeId;
+createDocument(remoteDeleteStorage, remoteDeleteLocal.workspace, {
+  ...blankBoard(),
+  title: "Deleted elsewhere",
+  nodes: [{ id: "remote-delete-note", text: "recoverable", x: 0, y: 0 }],
+}, () => time++);
+const removedRemoteId = remoteDeleteLocal.workspace.activeId;
+const remoteDeleteSnapshot = createSyncWorkspace(remoteDeleteStorage, remoteDeleteLocal.workspace);
+remoteDeleteSnapshot.boards = remoteDeleteSnapshot.boards.filter((item) => item.id !== removedRemoteId);
+remoteDeleteSnapshot.activeId = keptRemoteId;
+remoteDeleteSnapshot.tombstones.push({ id: removedRemoteId, deletedAt: time++ });
+applySyncWorkspace(remoteDeleteStorage, remoteDeleteLocal.workspace, remoteDeleteSnapshot, () => time++);
+assert.equal(hasRecovery(remoteDeleteStorage), true);
+assert.equal(recoveryEntries(remoteDeleteStorage)[0].board.nodes[0].text, "recoverable");
+assert.equal(remoteDeleteStorage.getItem(`scattered-document-v2:${removedRemoteId}`), null);
+
+const disposableSyncStorage = new MemoryStorage();
+const disposableSyncLocal = loadWorkspace(disposableSyncStorage, () => time++);
+const remoteFirstWorkspace = {
+  format: "scattered-sync-workspace",
+  version: 1,
+  activeId: "remote-board",
+  boards: [{
+    id: "remote-board",
+    revision: "remote-revision",
+    updatedAt: time++,
+    board: normalizeBoard({ ...blankBoard(), title: "From another device" }),
+  }],
+  tombstones: [],
+};
+applySyncWorkspace(disposableSyncStorage, disposableSyncLocal.workspace, remoteFirstWorkspace, () => time++);
+assert.equal(disposableSyncLocal.workspace.activeId, "remote-board");
+assert.equal(hasRecovery(disposableSyncStorage), false);
+
+const failedSyncStorage = new FailingStorage([...syncStorage.values.entries()]);
+const failedSyncLocal = loadWorkspace(failedSyncStorage, () => time++);
+const failedSyncDocumentBefore = failedSyncStorage.getItem(`scattered-document-v2:${syncOriginalId}`);
+const failedSyncWorkspaceBefore = failedSyncStorage.getItem("scattered-workspace-v2");
+failedSyncStorage.failWorkspace = true;
+assert.throws(() => applySyncWorkspace(
+  failedSyncStorage,
+  failedSyncLocal.workspace,
+  { ...incomingSync, boards: incomingSync.boards.map((item) => ({
+    ...item,
+    revision: "another-remote-revision",
+    board: { ...item.board, title: "Must roll back" },
+  })) },
+  () => time++,
+), /quota/);
+assert.equal(failedSyncStorage.getItem(`scattered-document-v2:${syncOriginalId}`), failedSyncDocumentBefore);
+assert.equal(failedSyncStorage.getItem("scattered-workspace-v2"), failedSyncWorkspaceBefore);
+
+function syncBoard(id, title, text, updatedAt = 1, viewX = 0) {
+  return {
+    id,
+    revision: `${id}-${text}`,
+    updatedAt,
+    board: normalizeBoard({
+      title,
+      nodes: text ? [{ id: `${id}-note`, text, x: 0, y: 0 }] : [],
+      edges: [],
+      view: { x: viewX, y: 0, scale: 1 },
+    }),
+  };
+}
+
+function syncWorkspace(boards, tombstones = [], activeId = boards[0].id) {
+  return { format: "scattered-sync-workspace", version: 1, activeId, boards, tombstones };
+}
+
+const syncBase = syncWorkspace([syncBoard("a", "A", "base-a"), syncBoard("b", "B", "base-b")]);
+const syncBaseIndex = await indexSyncWorkspace(syncBase);
+const syncLeft = syncWorkspace([syncBoard("a", "A", "left-a", 2), syncBoard("b", "B", "base-b")]);
+const syncRight = syncWorkspace([syncBoard("a", "A", "base-a"), syncBoard("b", "B", "right-b", 3)]);
+const independentMerge = await mergeSyncWorkspaces(syncLeft, syncRight, syncBaseIndex);
+assert.equal(independentMerge.conflicts, 0);
+assert.equal(independentMerge.workspace.boards.find((item) => item.id === "a").board.nodes[0].text, "left-a");
+assert.equal(independentMerge.workspace.boards.find((item) => item.id === "b").board.nodes[0].text, "right-b");
+
+const sameBoardRight = syncWorkspace([syncBoard("a", "A", "right-a", 3), syncBoard("b", "B", "base-b")]);
+const conflictingMerge = await mergeSyncWorkspaces(syncLeft, sameBoardRight, syncBaseIndex);
+assert.equal(conflictingMerge.conflicts, 1);
+assert.equal(conflictingMerge.workspace.boards.length, 3);
+assert.ok(conflictingMerge.workspace.boards.some((item) => item.board.title === "A · 2"));
+assert.deepEqual(
+  new Set(conflictingMerge.workspace.boards.filter((item) => item.board.title.startsWith("A")).map((item) => item.board.nodes[0].text)),
+  new Set(["left-a", "right-a"]),
+);
+
+const deletedLeft = syncWorkspace([syncBoard("b", "B", "base-b")], [{ id: "a", deletedAt: 9 }], "b");
+const deleteEditMerge = await mergeSyncWorkspaces(deletedLeft, sameBoardRight, syncBaseIndex);
+assert.equal(deleteEditMerge.conflicts, 1);
+assert.ok(deleteEditMerge.workspace.tombstones.some((item) => item.id === "a"));
+assert.ok(deleteEditMerge.workspace.boards.some((item) => item.board.nodes[0]?.text === "right-a"));
+
+const viewOnlyLeft = syncWorkspace([syncBoard("a", "A", "base-a", 1, 10)]);
+const viewOnlyRight = syncWorkspace([syncBoard("a", "A", "base-a", 1, 999)]);
+assert.equal(await fingerprintSyncWorkspace(viewOnlyLeft), await fingerprintSyncWorkspace(viewOnlyRight));
+
+const baseCloud = await createCloudSnapshot(syncBase, { deviceId: "one", createdAt: 1 });
+const leftCloud = await createCloudSnapshot(syncLeft, { deviceId: "one", parents: [baseCloud], createdAt: 2 });
+const rightCloud = await createCloudSnapshot(syncRight, { deviceId: "two", parents: [baseCloud], createdAt: 3 });
+assert.deepEqual(findCommonBaseIndex(leftCloud, rightCloud), syncBaseIndex);
+assert.deepEqual(new Set(cloudSnapshotHeads([baseCloud, leftCloud, rightCloud]).map((item) => item.snapshotId)), new Set([leftCloud.snapshotId, rightCloud.snapshotId]));
+const joinedCloud = await createCloudSnapshot(independentMerge.workspace, { deviceId: "one", parents: [leftCloud, rightCloud], createdAt: 4 });
+assert.deepEqual(cloudSnapshotHeads([baseCloud, leftCloud, rightCloud, joinedCloud]).map((item) => item.snapshotId), [joinedCloud.snapshotId]);
 
 const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
 const readmeZh = readFileSync(new URL("./README.zh-CN.md", import.meta.url), "utf8");

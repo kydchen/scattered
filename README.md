@@ -6,7 +6,7 @@ Scattered is a minimalist, local-first canvas for freely arranging and connectin
 
 ![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-There is no account or application backend, and no template or forced hierarchy. Your boards stay in the current browser and remain available offline after the app has been loaded once.
+There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. If the cloud icon is available, connecting Google Drive once on each device can keep the workspace in sync; this is entirely optional.
 
 ## Install it like an app
 
@@ -24,6 +24,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Lasso, marquee-select, or long-press to select multiple notes
 - Move, recolor, duplicate, connect, disconnect, or delete a selection together
 - Keep multiple local boards and switch between them from the Scattered mark
+- Optionally sync the whole workspace through the user's own Google Drive, without creating a Scattered account
 - Clear the current board without changing its title, or delete the board itself—both actions keep a local recovery copy
 - Undo a clear immediately or restore a recovery copy after clearing, importing over, or deleting
 - Search note text and jump between matches
@@ -42,7 +43,9 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 ## Local data and privacy
 
-Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
+Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
+
+When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The small authorization broker exchanges an encrypted session for short-lived Drive access but has no content database and does not receive note text or board structure. Disconnecting removes the credential from that device; the Google grant can be revoked for all devices from the user's Google Account permissions.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
@@ -71,6 +74,8 @@ Open `http://localhost:4173`, then run the regression checks with:
 ```sh
 npm test
 ```
+
+Optional Drive sync is disabled when `sync-config.js` has no broker URL. Deployment and security setup are documented in [docs/google-drive-sync.md](docs/google-drive-sync.md).
 
 ## Inspiration
 
