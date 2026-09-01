@@ -676,6 +676,16 @@ const reattached = loadWorkspace(orphanStorage, () => time++);
 assert.ok(reattached.workspace.boards.some((item) => item.id === orphanId));
 assert.equal(switchDocument(orphanStorage, reattached.workspace, orphanId).board.title, "Orphan candidate");
 
+const staleIndexStorage = new MemoryStorage();
+const staleIndexBase = loadWorkspace(staleIndexStorage, () => time++);
+const staleIndexId = staleIndexBase.workspace.activeId;
+staleIndexStorage.removeItem(`scattered-document-v2:${staleIndexId}`);
+staleIndexStorage.removeItem(`scattered-document-backup-v2:${staleIndexId}`);
+const staleIndexReload = loadWorkspace(staleIndexStorage, () => time++);
+assert.ok(!staleIndexReload.workspace.boards.some((item) => item.id === staleIndexId));
+assert.equal(staleIndexReload.board.title, "Untitled");
+assert.doesNotThrow(() => createSyncWorkspace(staleIndexStorage, staleIndexReload.workspace));
+
 const viewStorage = new MemoryStorage();
 const viewBase = loadWorkspace(viewStorage, () => time++);
 const viewAWorkspace = structuredClone(viewBase.workspace);
@@ -1222,7 +1232,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v40/);
+assert.match(serviceWorker, /scattered-v41/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

@@ -62,6 +62,11 @@ export function loadWorkspace(storage = localStorage, now = Date.now) {
   const workspace = readWorkspace(storage) || initializeV2Storage(storage, now);
   markV2Ready(storage);
   recoverPendingDocuments(storage, workspace, now);
+  if (workspace.boards.some((item) => !readDocument(storage, item.id).board)) {
+    const repaired = reattachWorkspaceDocuments(storage, workspace)
+      || createInitialWorkspace(storage, blankBoard(), now);
+    applyWorkspace(workspace, repaired);
+  }
   const activeId = workspace.boards.some((item) => item.id === workspace.activeId)
     ? workspace.activeId
     : workspace.boards[0]?.id;
