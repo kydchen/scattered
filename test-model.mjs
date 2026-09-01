@@ -340,6 +340,7 @@ const workspaceBackup = createWorkspaceBackup(workspaceBackupStorage, workspaceB
 assert.equal(workspaceBackup.format, "scattered-workspace");
 assert.equal(workspaceBackup.boards.length, 2);
 assert.equal(workspaceBackup.boards[workspaceBackup.activeBoard].nodes[0].text, "kept");
+
 const parsedWorkspaceBackup = parseImportedWorkspace(JSON.stringify(workspaceBackup));
 assert.equal(parsedWorkspaceBackup.boards.length, 2);
 assert.equal(parseImportedWorkspace(JSON.stringify(validImport)), null);
@@ -1078,6 +1079,10 @@ assert.match(applyHistorySource, /focusedNodeId[\s\S]*?focusedEdgeId[\s\S]*?requ
 assert.match(app, /async function openBoard[\s\S]*?id === workspace\.activeId[\s\S]*?boardsButton\.focus\(\)/);
 assert.match(app, /function updateBoardTitle[\s\S]*?t\("boardTitleEdit", \{ title \}\)/);
 assert.match(app, /async function shareOrDownloadBlob[\s\S]*?try \{ canShare =[\s\S]*?error\?\.name === "AbortError"/);
+const exportBoardSource = app.match(/async function exportBoard\(\)[\s\S]*?\n}/)?.[0] || "";
+assert.match(exportBoardSource, /JSON\.stringify\(normalizeBoard\(board\), null, 2\)/);
+assert.match(exportBoardSource, /`\$\{exportFileName\(\)\}\.json`/);
+assert.doesNotMatch(exportBoardSource, /createWorkspaceBackup|Scattered-backup/);
 assert.match(pointerDownSource, /if \(!node\) \{\s*if \(activeEditor\) selectNode\(null\);\s*finishEditing\(\);/);
 assert.match(doubleClickSource, /event\.target\.closest\("\.node"\)\s*\?\?\s*document\.elementFromPoint/);
 assert.match(saveBoardNowSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return true;[\s\S]*?withWorkspaceLock[\s\S]*?saveDocument[\s\S]*?boardDirty = false;[\s\S]*?markSaveFailure[\s\S]*?return false;/);
@@ -1174,7 +1179,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v34/);
+assert.match(serviceWorker, /scattered-v35/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);

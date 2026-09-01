@@ -1,6 +1,6 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument, createDocument, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, clearPendingDocument, createDocument, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { applyTranslations, hasMessage, t } from "./i18n.js";
 
 const THEME_KEY = "scattered-theme";
@@ -2271,11 +2271,11 @@ function prepareExport(closeMenu = true) {
 async function exportBoard() {
   prepareExport();
   try {
-    const content = JSON.stringify(createWorkspaceBackup(localStorage, workspace, board), null, 2);
+    const content = JSON.stringify(normalizeBoard(board), null, 2);
     await shareOrDownloadBlob(
       new Blob([content], { type: "application/json" }),
-      `Scattered-backup-${new Date().toISOString().slice(0, 10)}.json`,
-      t("workspaceBackupTitle"),
+      `${exportFileName()}.json`,
+      board.title || "Scattered",
     );
   } catch {
     showToast(t("errorJsonExport"));

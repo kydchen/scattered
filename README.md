@@ -28,7 +28,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Undo a clear immediately or restore a recovery copy after clearing, importing over, or deleting
 - Search note text and jump between matches
 - Undo, redo, fit the whole board into view, and switch between light and dark modes
-- Back up the whole local workspace as JSON, or export the current canvas as SVG or Mermaid Markdown
+- Export the current canvas as editable JSON, SVG, or Mermaid Markdown
 
 ## Input modes
 
@@ -42,13 +42,13 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 ## Local data and privacy
 
-Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export a JSON workspace backup for anything important or when moving to another browser or device.
+Boards, recovery copies, and preferences are stored locally in the browser. Scattered has no account system and no cloud sync. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
 ## Import and export
 
-- **JSON** backs up every local board. Importing a workspace adds its boards without replacing existing ones; older single-board backups remain supported and replace only the current board, with a recovery copy kept locally.
+- **JSON** preserves the current editable canvas. Importing it replaces the current canvas and keeps a local recovery copy; older workspace backup files remain supported and add their canvases to the local list.
 - **SVG** exports the complete board as a lightweight vector image, automatically fitted to its content.
 - **Mermaid Markdown** turns notes and connections into a diagram that can be used in Markdown documents and AI-assisted workflows.
 
