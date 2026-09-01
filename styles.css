@@ -777,7 +777,9 @@ button {
   padding-bottom: 0;
 }
 
-.drive-sync-button {
+.drive-sync-button[data-status="connected"],
+.drive-sync-button[data-status="syncing"],
+.drive-sync-button[data-status="synced"] {
   color: var(--thread) !important;
 }
 
