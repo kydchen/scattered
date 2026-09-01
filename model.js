@@ -306,6 +306,13 @@ export function screenToWorld(point, view) {
   };
 }
 
+export function rectIntersectsViewport(bounds, viewport) {
+  return bounds.right > viewport.left
+    && bounds.bottom > viewport.top
+    && bounds.left < viewport.left + viewport.width
+    && bounds.top < viewport.top + viewport.height;
+}
+
 export function minimumRevealDelta(bounds, viewport, insets) {
   const safe = {
     left: viewport.left + insets.left,

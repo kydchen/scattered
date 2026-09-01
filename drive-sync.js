@@ -96,6 +96,7 @@ export function createDriveSync(options) {
   function schedule(delay = SYNC_DELAY) {
     if (!session || !controller.available) return;
     clearTimeout(timer);
+    if (!running) setStatus("connected");
     timer = setTimeout(() => { void syncNow(); }, delay);
   }
 

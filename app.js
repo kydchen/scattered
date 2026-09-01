@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { fingerprintSyncWorkspace } from "./sync-model.js";
@@ -754,6 +754,7 @@ function setBoardPickerOpen(open) {
   if (open) {
     setMenuOpen(false);
     renderBoardList();
+    if (driveSync.connected) driveSync.schedule(0);
     requestAnimationFrame(() => boardList.querySelector('[aria-current="true"]')?.focus() || newBoardButton.focus());
   } else {
     disarmDeleteBoard();
@@ -764,6 +765,7 @@ function setBoardPickerOpen(open) {
 async function useDriveSync(event) {
   event.stopPropagation();
   if (driveSync.connected) {
+    driveSync.schedule(0);
     disarmDeleteBoard();
     boardPicker.classList.add("managing-drive");
     cancelDriveButton.hidden = false;
@@ -809,7 +811,6 @@ function canApplyDriveWorkspace() {
     && !mode
     && selectedIds.size === 0
     && !selectedEdgeId
-    && boardPicker.hidden
     && menu.hidden
     && searchPanel.hidden
     && !document.querySelector(".node.editing")
@@ -989,8 +990,32 @@ function replaceBoard(nextBoard) {
   closeSearch();
   renderAll();
   applyView();
+  fitOpenedBoardIfOffscreen();
   renderBoardList();
   updateHistoryControls();
+}
+
+function fitOpenedBoardIfOffscreen() {
+  const visual = { left: 0, top: 0, width: viewport.clientWidth, height: viewport.clientHeight };
+  if (!visual.width || !visual.height || board.nodes.length === 0) return;
+  const hasVisibleNode = board.nodes.some((node) => {
+    const element = nodeElements.get(node.id);
+    if (!element) return false;
+    const left = board.view.x + node.x * board.view.scale;
+    const top = board.view.y + node.y * board.view.scale;
+    return rectIntersectsViewport({
+      left,
+      top,
+      right: left + element.offsetWidth * board.view.scale,
+      bottom: top + element.offsetHeight * board.view.scale,
+    }, visual);
+  });
+  if (hasVisibleNode) return;
+  const nextView = fittedView();
+  if (!nextView) return;
+  board.view = nextView;
+  applyView();
+  scheduleSave();
 }
 
 async function restoreRecentBoard(event) {

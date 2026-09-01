@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
@@ -79,6 +80,18 @@ assert.deepEqual(pastedGraph.edges[0], { id: "new-3", from: "new-1", to: "new-2"
 assert.equal(pasteSelectedGraph({ type: "other" }, { x: 0, y: 0 }), null);
 
 assert.deepEqual(screenToWorld({ x: 120, y: 80 }, { x: 20, y: 30, scale: 2 }), { x: 50, y: 25 });
+assert.equal(rectIntersectsViewport(
+  { left: 380, top: 120, right: 430, bottom: 180 },
+  { left: 0, top: 0, width: 390, height: 844 },
+), true);
+assert.equal(rectIntersectsViewport(
+  { left: 390, top: 120, right: 430, bottom: 180 },
+  { left: 0, top: 0, width: 390, height: 844 },
+), false);
+assert.equal(rectIntersectsViewport(
+  { left: -80, top: 120, right: 0, bottom: 180 },
+  { left: 0, top: 0, width: 390, height: 844 },
+), false);
 assert.deepEqual(
   minimumRevealDelta(
     { left: 100, right: 318, top: 200, bottom: 248 },
@@ -304,6 +317,19 @@ class RemovalFailingStorage extends MemoryStorage {
     super.removeItem(key);
   }
 }
+
+const pendingSyncStatuses = [];
+const pendingSync = createDriveSync({
+  apiUrl: "https://broker.example",
+  storage: new MemoryStorage([
+    ["scattered-drive-session-v1", "v1.c2VhbGVk"],
+    ["scattered-drive-device-v1", "device-1"],
+  ]),
+  onStatus: (status) => pendingSyncStatuses.push(status),
+});
+pendingSync.schedule(60_000);
+assert.deepEqual(pendingSyncStatuses, ["connected"]);
+pendingSync.stop();
 
 function storedWorkspace(storage) {
   return JSON.parse(storage.getItem("scattered-workspace-v2"));
@@ -1165,6 +1191,13 @@ assert.match(css, /#viewport\.revealing-note[\s\S]*?background-position 180ms[\s
 const revealNodeSource = app.match(/function softlyRevealNode\(id\)[\s\S]*?\n}\n\nfunction finishRevealMotion/)?.[0] || "";
 assert.match(revealNodeSource, /board\.view\.x \+ node\.x \* scale[\s\S]*?board\.view\.y \+ node\.y \* scale/);
 assert.doesNotMatch(revealNodeSource, /getBoundingClientRect/);
+const driveApplySource = app.match(/function canApplyDriveWorkspace\(\)[\s\S]*?\n}/)?.[0] || "";
+assert.doesNotMatch(driveApplySource, /boardPicker\.hidden/);
+const boardPickerSource = app.match(/function setBoardPickerOpen\(open\)[\s\S]*?\n}/)?.[0] || "";
+assert.match(boardPickerSource, /driveSync\.schedule\(0\)/);
+const fitOpenedBoardSource = app.match(/function fitOpenedBoardIfOffscreen\(\)[\s\S]*?\n}/)?.[0] || "";
+assert.match(fitOpenedBoardSource, /rectIntersectsViewport[\s\S]*?fittedView\(\)[\s\S]*?scheduleSave\(\)/);
+assert.match(app, /function replaceBoard\(nextBoard\)[\s\S]*?applyView\(\)[\s\S]*?fitOpenedBoardIfOffscreen\(\)/);
 assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
@@ -1180,7 +1213,7 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v37/);
+assert.match(serviceWorker, /scattered-v38/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
