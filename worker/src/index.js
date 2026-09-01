@@ -38,7 +38,7 @@ async function startOAuth(request, env) {
     response_type: "code",
     scope: DRIVE_SCOPE,
     access_type: "offline",
-    prompt: "consent",
+    prompt: "consent select_account",
     include_granted_scopes: "true",
     state,
   });
