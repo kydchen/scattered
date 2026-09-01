@@ -1,6 +1,6 @@
 import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { fingerprintSyncWorkspace } from "./sync-model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { DRIVE_SYNC_API } from "./sync-config.js";
@@ -73,6 +73,8 @@ const searchNextButton = document.querySelector("#search-next");
 const searchCloseButton = document.querySelector("#search-close");
 const duplicateSelectionButton = document.querySelector("#duplicate-selection");
 
+const workspaceSlots = createWorkspaceSlots(localStorage);
+const workspaceStorage = workspaceSlots.storage;
 const initialWorkspace = initializeWorkspace();
 let workspace = initialWorkspace.workspace;
 let board = initialWorkspace.board;
@@ -110,7 +112,10 @@ const redoStack = [];
 const driveSync = createDriveSync({
   apiUrl: storageReady ? DRIVE_SYNC_API : "",
   storage: localStorage,
-  getWorkspace: () => createSyncWorkspace(localStorage, workspace),
+  getWorkspace: () => createSyncWorkspace(workspaceStorage, workspace),
+  getBoundAccount: () => workspaceSlots.accountKey,
+  bindAccount: (accountKey) => workspaceSlots.bind(accountKey),
+  switchAccount: switchDriveAccount,
   applyWorkspace: applyDriveWorkspace,
   canApply: canApplyDriveWorkspace,
   onStatus: updateDriveSyncControl,
@@ -842,14 +847,36 @@ async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
     const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
     const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
     const nextBoard = await withWorkspaceLock(async () => {
-      const latest = createSyncWorkspace(localStorage, workspace);
+      const latest = createSyncWorkspace(workspaceStorage, workspace);
       if (await fingerprintSyncWorkspace(latest) !== expectedFingerprint) throw driveBusyError();
-      return applySyncWorkspace(localStorage, workspace, nextWorkspace);
+      return applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
     });
     if (activeWouldChange) replaceBoard(nextBoard);
     else renderBoardList();
     clearSaveFailure();
     updateRecoveryControl();
+  } finally {
+    endWorkspaceAction();
+  }
+}
+
+async function switchDriveAccount(accountKey) {
+  if (!canApplyDriveWorkspace() || !beginWorkspaceAction()) throw driveBusyError();
+  const previousAccount = workspaceSlots.accountKey;
+  const previousWorkspace = workspace;
+  const previousBoard = board;
+  try {
+    workspaceSlots.switchTo(accountKey);
+    const loaded = await withWorkspaceLock(() => loadWorkspace(workspaceStorage));
+    workspace = loaded.workspace;
+    replaceBoard(loaded.board);
+    clearSaveFailure();
+    updateRecoveryControl();
+  } catch (error) {
+    if (previousAccount) workspaceSlots.switchTo(previousAccount);
+    workspace = previousWorkspace;
+    replaceBoard(previousBoard);
+    throw error;
   } finally {
     endWorkspaceAction();
   }
@@ -926,7 +953,7 @@ async function newBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    replaceBoard(await withWorkspaceLock(() => createDocument(localStorage, workspace)));
+    replaceBoard(await withWorkspaceLock(() => createDocument(workspaceStorage, workspace)));
     driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus();
@@ -942,7 +969,7 @@ async function duplicateBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    replaceBoard(await withWorkspaceLock(() => duplicateDocument(localStorage, workspace, board)));
+    replaceBoard(await withWorkspaceLock(() => duplicateDocument(workspaceStorage, workspace, board)));
     driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus();
@@ -962,7 +989,7 @@ async function removeCurrentBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    replaceBoard(await withWorkspaceLock(() => deleteDocument(localStorage, workspace)));
+    replaceBoard(await withWorkspaceLock(() => deleteDocument(workspaceStorage, workspace)));
     driveSync.schedule();
     clearSaveFailure();
     updateRecoveryControl();
@@ -984,7 +1011,7 @@ async function openBoard(id) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    const loaded = await withWorkspaceLock(() => switchDocument(localStorage, workspace, id));
+    const loaded = await withWorkspaceLock(() => switchDocument(workspaceStorage, workspace, id));
     if (!loaded) return;
     replaceBoard(loaded.board);
     setBoardPickerOpen(false);
@@ -1041,7 +1068,7 @@ async function restoreRecentBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    const restored = await withWorkspaceLock(() => restoreLatest(localStorage, workspace, board));
+    const restored = await withWorkspaceLock(() => restoreLatest(workspaceStorage, workspace, board));
     if (restored) {
       replaceBoard(restored);
       driveSync.schedule();
@@ -1058,7 +1085,7 @@ async function restoreRecentBoard(event) {
 }
 
 function updateRecoveryControl() {
-  restoreButton.hidden = !storageReady || !hasRecovery(localStorage);
+  restoreButton.hidden = !storageReady || !hasRecovery(workspaceStorage);
 }
 
 function finishCurrentInput() {
@@ -2223,7 +2250,7 @@ function onKeyDown(event) {
 
 function initializeWorkspace() {
   try {
-    return { ...loadWorkspace(localStorage), storageReady: true };
+    return { ...loadWorkspace(workspaceStorage), storageReady: true };
   } catch {
     const id = createId();
     return {
@@ -2246,7 +2273,7 @@ function stagePendingSave() {
   syncOpenInputs();
   if (!boardDirty) return;
   try {
-    stagePendingDocument(localStorage, workspace, board);
+    stagePendingDocument(workspaceStorage, workspace, board);
   } catch {
     markSaveFailure(t("errorSave"));
   }
@@ -2264,7 +2291,7 @@ async function saveBoardNow() {
   try {
     const savedSuccessfully = await withWorkspaceLock(() => {
       const previousId = workspace.activeId;
-      const saved = saveDocument(localStorage, workspace, board);
+      const saved = saveDocument(workspaceStorage, workspace, board);
       const conflicted = workspace.activeId !== previousId;
       if (conflicted) {
         cancelGesture();
@@ -2274,7 +2301,7 @@ async function saveBoardNow() {
         applyView();
       }
       boardDirty = false;
-      clearPendingDocument(localStorage);
+      clearPendingDocument(workspaceStorage);
       clearSaveFailure();
       renderBoardList();
       if (conflicted) showToast(t("conflictCopy"));
@@ -2301,7 +2328,7 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
   try {
     if (!await commitCurrentBoard()) return false;
     previousBoard = JSON.stringify(normalizeBoard(board));
-    saved = await withWorkspaceLock(() => replaceDocument(localStorage, workspace, nextBoard, recoveryReason));
+    saved = await withWorkspaceLock(() => replaceDocument(workspaceStorage, workspace, nextBoard, recoveryReason));
     clearSaveFailure();
     driveSync.schedule();
   } catch {
@@ -2540,7 +2567,7 @@ async function mergeImportedWorkspace(imported) {
   if (!beginWorkspaceAction()) return false;
   try {
     if (!await commitCurrentBoard()) return false;
-    const importedBoard = await withWorkspaceLock(() => addImportedWorkspace(localStorage, workspace, imported));
+    const importedBoard = await withWorkspaceLock(() => addImportedWorkspace(workspaceStorage, workspace, imported));
     replaceBoard(importedBoard);
     driveSync.schedule();
     clearSaveFailure();

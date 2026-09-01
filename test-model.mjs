@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { messages, t } from "./i18n.js";
 
@@ -353,6 +353,34 @@ function importJournalKeys(storage) {
 }
 
 let time = 100;
+const accountA = `gdrive-${"a".repeat(64)}`;
+const accountB = `gdrive-${"b".repeat(64)}`;
+const slotBaseStorage = new MemoryStorage();
+const workspaceSlots = createWorkspaceSlots(slotBaseStorage);
+const unboundSlot = loadWorkspace(workspaceSlots.storage, () => time++);
+const accountABoard = saveDocument(
+  workspaceSlots.storage,
+  unboundSlot.workspace,
+  { ...unboundSlot.board, title: "Account A" },
+  () => time++,
+);
+captureRecovery(workspaceSlots.storage, unboundSlot.workspace.activeId, accountABoard, "replace", () => time++);
+workspaceSlots.bind(accountA);
+assert.equal(workspaceSlots.accountKey, accountA);
+workspaceSlots.switchTo(accountB);
+const accountBSlot = loadWorkspace(workspaceSlots.storage, () => time++);
+assert.equal(accountBSlot.board.title, "Untitled");
+assert.equal(hasRecovery(workspaceSlots.storage), false);
+saveDocument(workspaceSlots.storage, accountBSlot.workspace, { ...accountBSlot.board, title: "Account B" }, () => time++);
+workspaceSlots.switchTo(accountA);
+const restoredAccountA = loadWorkspace(workspaceSlots.storage, () => time++);
+assert.equal(restoredAccountA.board.title, "Account A");
+assert.equal(hasRecovery(workspaceSlots.storage), true);
+workspaceSlots.switchTo(accountB);
+assert.equal(loadWorkspace(workspaceSlots.storage, () => time++).board.title, "Account B");
+assert.ok([...slotBaseStorage.values.keys()].some((key) => key.startsWith(`scattered-account-workspace-v1:${accountB}:`)));
+workspaceSlots.switchTo(accountA);
+
 const workspaceBackupStorage = new MemoryStorage();
 const workspaceBackupBase = loadWorkspace(workspaceBackupStorage, () => time++);
 saveDocument(workspaceBackupStorage, workspaceBackupBase.workspace, { ...workspaceBackupBase.board, title: "First" }, () => time++);
@@ -1133,7 +1161,7 @@ assert.match(pointerDownSource, /if \(!node\) \{\s*if \(activeEditor\) selectNod
 assert.match(doubleClickSource, /event\.target\.closest\("\.node"\)\s*\?\?\s*document\.elementFromPoint/);
 assert.match(saveBoardNowSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return true;[\s\S]*?withWorkspaceLock[\s\S]*?saveDocument[\s\S]*?boardDirty = false;[\s\S]*?markSaveFailure[\s\S]*?return false;/);
 assert.match(saveBoardNowSource, /if \(conflicted\)[\s\S]*?board = saved;[\s\S]*?renderAll\(\)/);
-assert.match(replacementSource, /beginWorkspaceAction\(\)[\s\S]*?await commitCurrentBoard\(\)[\s\S]*?withWorkspaceLock[\s\S]*?replaceDocument\(localStorage, workspace, nextBoard, recoveryReason\)/);
+assert.match(replacementSource, /beginWorkspaceAction\(\)[\s\S]*?await commitCurrentBoard\(\)[\s\S]*?withWorkspaceLock[\s\S]*?replaceDocument\(workspaceStorage, workspace, nextBoard, recoveryReason\)/);
 assert.match(replacementSource, /workspace\.activeId !== previousId[\s\S]*?replaceBoard\(saved\)[\s\S]*?cancelGesture\(\)[\s\S]*?closeSearch\(\)[\s\S]*?checkpoint\(\)[\s\S]*?board = saved/);
 ["newBoard", "duplicateBoard", "removeCurrentBoard", "openBoard", "restoreRecentBoard"].forEach((name) => {
   const source = app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))?.[0] ?? "";
@@ -1156,13 +1184,13 @@ assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?\["node", "resize", 
 assert.match(app, /function endWorkspaceAction\(\)[\s\S]*?disabled = false/);
 assert.match(app, /\["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"\][\s\S]*?blockWorkspaceInteraction[\s\S]*?capture: true/);
 assert.match(app, /function blockWorkspaceInteraction\(event\) \{[\s\S]*?workspaceActionPending[\s\S]*?preventDefault\(\)[\s\S]*?stopImmediatePropagation\(\)/);
-assert.match(app, /async function removeCurrentBoard[\s\S]*?confirming-delete[\s\S]*?armDeleteBoard\(\)[\s\S]*?deleteDocument\(localStorage, workspace\)/);
+assert.match(app, /async function removeCurrentBoard[\s\S]*?confirming-delete[\s\S]*?armDeleteBoard\(\)[\s\S]*?deleteDocument\(workspaceStorage, workspace\)/);
 assert.match(app, /async function removeCurrentBoard[\s\S]*?clearSaveFailure\(\)[\s\S]*?markSaveFailure\(t\("errorDeleteBoard"\)\)/);
 assert.match(app, /function scheduleSave\(\)[\s\S]*?boardDirty = true;/);
 assert.match(app, /addEventListener\("pagehide"[\s\S]*?stagePendingSave\(\)[\s\S]*?saveBoardNow\(\)/);
-assert.match(stagePendingSaveSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return;[\s\S]*?stagePendingDocument\(localStorage, workspace, board\)/);
+assert.match(stagePendingSaveSource, /syncOpenInputs\(\);[\s\S]*?if \(!boardDirty\) return;[\s\S]*?stagePendingDocument\(workspaceStorage, workspace, board\)/);
 assert.match(syncOpenInputsSource, /if \(changed\) boardDirty = true;[\s\S]*?return changed;/);
-assert.match(saveBoardNowSource, /saveDocument[\s\S]*?clearPendingDocument\(localStorage\)/);
+assert.match(saveBoardNowSource, /saveDocument[\s\S]*?clearPendingDocument\(workspaceStorage\)/);
 assert.match(app, /function snapshotState[\s\S]*?view: board\.view/);
 assert.match(app, /function applyHistory[\s\S]*?board\.view = restored\.view[\s\S]*?applyView\(\)/);
 assert.match(app, /function showToast[\s\S]*?if \(saveFailureMessage\)[\s\S]*?toast\.dataset\.persistent = "true"/);
@@ -1227,12 +1255,12 @@ assert.match(app, /copySelectedGraph\(board, selectedIds\)/);
 assert.match(app, /pasteSelectedGraph\(payload, origin\)/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "f"/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "d"/);
-assert.match(app, /loadWorkspace\(localStorage\)/);
+assert.match(app, /loadWorkspace\(workspaceStorage\)/);
 assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board-button[\s\S]*?#delete-board-button/);
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v41/);
+assert.match(serviceWorker, /scattered-v42/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

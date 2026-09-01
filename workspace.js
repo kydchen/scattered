@@ -20,6 +20,10 @@ const PENDING_SESSION_ID = createId();
 const PENDING_KEY = `${PENDING_PREFIX}${PENDING_SESSION_ID}`;
 const IMPORT_JOURNAL_PREFIX = "scattered-import-journal-v1:";
 const IMPORT_JOURNAL_STALE_MS = 2 * 60 * 1000;
+const ACCOUNT_SCOPE_PREFIX = "scattered-account-workspace-v1:";
+const ACTIVE_SCOPE_KEY = "scattered-active-workspace-scope-v1";
+const LOCAL_ACCOUNT_KEY = "scattered-local-workspace-account-v1";
+const LOCAL_SCOPE = "local";
 const WORKSPACE_EXPORT_FORMAT = "scattered-workspace";
 const SYNC_WORKSPACE_FORMAT = "scattered-sync-workspace";
 const SYNC_WORKSPACE_VERSION = 1;
@@ -30,6 +34,57 @@ export const MAX_WORKSPACE_IMPORT_BYTES = 10 * 1024 * 1024;
 export const MAX_WORKSPACE_IMPORT_BOARDS = 1_000;
 export const MAX_WORKSPACE_IMPORT_NODES = 20_000;
 export const MAX_WORKSPACE_IMPORT_EDGES = 40_000;
+
+export function createWorkspaceSlots(baseStorage) {
+  let scope = readActiveScope(baseStorage);
+  const storage = {
+    get length() { return visibleKeys().length; },
+    key(index) { return visibleKeys()[index] ?? null; },
+    getItem(key) { return baseStorage.getItem(scopedKey(key)); },
+    setItem(key, value) { baseStorage.setItem(scopedKey(key), value); },
+    removeItem(key) { baseStorage.removeItem(scopedKey(key)); },
+  };
+
+  return {
+    storage,
+    get accountKey() {
+      if (scope !== LOCAL_SCOPE) return scope;
+      return readStoredAccount(baseStorage, LOCAL_ACCOUNT_KEY);
+    },
+    bind(accountKey) {
+      requireAccountKey(accountKey);
+      const current = this.accountKey;
+      if (current && current !== accountKey) throw new Error("sync.accountMismatch");
+      if (scope === LOCAL_SCOPE && !current) writeVerified(baseStorage, LOCAL_ACCOUNT_KEY, accountKey);
+    },
+    switchTo(accountKey) {
+      requireAccountKey(accountKey);
+      const localAccount = readStoredAccount(baseStorage, LOCAL_ACCOUNT_KEY);
+      const nextScope = localAccount === accountKey ? LOCAL_SCOPE : accountKey;
+      writeVerified(baseStorage, ACTIVE_SCOPE_KEY, nextScope);
+      scope = nextScope;
+    },
+  };
+
+  function scopedKey(key) {
+    return scope === LOCAL_SCOPE ? key : `${ACCOUNT_SCOPE_PREFIX}${scope}:${key}`;
+  }
+
+  function visibleKeys() {
+    const keys = [];
+    const prefix = scope === LOCAL_SCOPE ? "" : `${ACCOUNT_SCOPE_PREFIX}${scope}:`;
+    for (let index = 0; index < baseStorage.length; index += 1) {
+      const key = baseStorage.key(index);
+      if (typeof key !== "string") continue;
+      if (scope === LOCAL_SCOPE) {
+        if (!key.startsWith(ACCOUNT_SCOPE_PREFIX)) keys.push(key);
+      } else if (key.startsWith(prefix)) {
+        keys.push(key.slice(prefix.length));
+      }
+    }
+    return keys;
+  }
+}
 
 export function withWorkspaceLock(action) {
   const locks = globalThis.navigator?.locks;
@@ -1020,6 +1075,40 @@ function restoreStorageItem(storage, key, value) {
   } catch {
     // Preserve the original storage error; backups remain the final fallback.
     return false;
+  }
+}
+
+function readActiveScope(storage) {
+  try {
+    const value = storage.getItem(ACTIVE_SCOPE_KEY);
+    return value === LOCAL_SCOPE || validAccountKey(value) ? value : LOCAL_SCOPE;
+  } catch {
+    return LOCAL_SCOPE;
+  }
+}
+
+function readStoredAccount(storage, key) {
+  let value;
+  try { value = storage.getItem(key); } catch { throw new Error("sync.accountStorage"); }
+  if (value === null) return null;
+  requireAccountKey(value);
+  return value;
+}
+
+function requireAccountKey(value) {
+  if (!validAccountKey(value)) throw new Error("sync.invalidAccount");
+}
+
+function validAccountKey(value) {
+  return typeof value === "string" && /^gdrive-[a-f0-9]{64}$/.test(value);
+}
+
+function writeVerified(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+    if (storage.getItem(key) !== value) throw new Error("Storage verification failed");
+  } catch {
+    throw new Error("sync.accountStorage");
   }
 }
 

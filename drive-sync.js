@@ -17,6 +17,7 @@ const SESSION_KEY = "scattered-drive-session-v1";
 const DEVICE_KEY = "scattered-drive-device-v1";
 const STATE_KEY = "scattered-drive-sync-v1";
 const DRIVE_MARK = "workspace-v1";
+const SYNC_LOCK_PREFIX = "scattered-drive-sync-v1:";
 const SYNC_DELAY = 1_500;
 const POLL_INTERVAL = 45_000;
 const MAX_CLOUD_BYTES = MAX_WORKSPACE_IMPORT_BYTES + 2 * 1024 * 1024;
@@ -26,11 +27,13 @@ export function createDriveSync(options) {
   const storage = options.storage;
   const fetcher = options.fetch || globalThis.fetch.bind(globalThis);
   const clock = options.now || Date.now;
+  const locks = options.locks || globalThis.navigator?.locks;
   const deviceId = apiUrl ? readOrCreateDeviceId(storage) : "";
   const storedSession = read(storage, SESSION_KEY);
   let session = validSession(storedSession) ? storedSession : "";
   let accessToken = null;
   let accessTokenExpiresAt = 0;
+  let authenticatedAccountKey = null;
   let timer = null;
   let pollTimer = null;
   let running = false;
@@ -58,8 +61,10 @@ export function createDriveSync(options) {
     const authResult = consumeAuthFragment();
     if (validSession(authResult.session)) {
       session = authResult.session;
+      accessToken = null;
+      accessTokenExpiresAt = 0;
+      authenticatedAccountKey = null;
       write(storage, SESSION_KEY, session);
-      remove(storage, STATE_KEY);
     }
     setStatus(session ? (authResult.error ? "error" : "connected") : (authResult.error ? "error" : "disconnected"));
     globalThis.addEventListener?.("online", onWake);
@@ -89,8 +94,8 @@ export function createDriveSync(options) {
     session = null;
     accessToken = null;
     accessTokenExpiresAt = 0;
+    authenticatedAccountKey = null;
     remove(storage, SESSION_KEY);
-    remove(storage, STATE_KEY);
     setStatus("disconnected");
   }
 
@@ -116,7 +121,7 @@ export function createDriveSync(options) {
     running = true;
     setStatus("syncing");
     try {
-      const result = await performSync();
+      const result = await withSyncLock(performSync);
       setStatus("synced");
       if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
@@ -130,10 +135,18 @@ export function createDriveSync(options) {
       if (error?.code === "auth") {
         session = null;
         accessToken = null;
+        authenticatedAccountKey = null;
         remove(storage, SESSION_KEY);
       }
-      setStatus("error");
+      if (error?.code === "account") {
+        session = null;
+        accessToken = null;
+        accessTokenExpiresAt = 0;
+        authenticatedAccountKey = null;
+        remove(storage, SESSION_KEY);
+      }
       options.onError?.(error);
+      setStatus("error");
       return false;
     } finally {
       syncStage = "idle";
@@ -146,6 +159,19 @@ export function createDriveSync(options) {
   }
 
   async function performSync() {
+    syncStage = "account";
+    const driveAccountKey = await getDriveAccountKey();
+    const boundAccountKey = options.getBoundAccount?.() || null;
+    if (boundAccountKey && boundAccountKey !== driveAccountKey) {
+      if (!options.switchAccount) throw accountMismatchError();
+      syncStage = "switch";
+      await options.switchAccount(driveAccountKey);
+    } else if (!boundAccountKey) {
+      if (!options.bindAccount) throw accountMismatchError();
+      await options.bindAccount(driveAccountKey);
+    }
+    if (options.getBoundAccount?.() !== driveAccountKey) throw syncError("account-switch");
+
     syncStage = "local";
     const local = await options.getWorkspace();
     syncStage = "prepare";
@@ -154,12 +180,15 @@ export function createDriveSync(options) {
       fingerprintSyncWorkspace(local),
       listDeviceFiles(),
     ]);
-    const snapshots = (await Promise.all(files.map(readSnapshot))).filter(Boolean);
+    syncStage = "download";
+    const snapshots = await Promise.all(files.map(readSnapshot));
     const heads = cloudSnapshotHeads(snapshots);
+    if (files.length > 0 && heads.length === 0) throw syncError("snapshot-heads");
     const ownFile = files
       .filter((file) => file.appProperties?.deviceId === deviceId)
       .sort((left, right) => String(right.modifiedTime).localeCompare(String(left.modifiedTime)))[0] || null;
-    const state = readState(storage);
+    const migrateLegacyState = !boundAccountKey;
+    const state = readState(storage, driveAccountKey, migrateLegacyState);
 
     if (heads.length === 0) {
       syncStage = "snapshot";
@@ -169,8 +198,8 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
-      const uploaded = await uploadSnapshot(snapshot, ownFile?.id || state.fileId);
-      saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id));
+      const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+      saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
       return { conflicts: 0 };
     }
 
@@ -217,12 +246,20 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
-      const uploaded = await uploadSnapshot(snapshot, ownFile?.id || state.fileId);
-      saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id));
+      const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+      saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
     } else {
-      saveState(storage, stateFromSnapshot(heads[0], nextFingerprint, ownFile?.id || state.fileId));
+      saveState(storage, stateFromSnapshot(heads[0], nextFingerprint, ownFile?.id), driveAccountKey, migrateLegacyState);
     }
     return { conflicts };
+  }
+
+  async function withSyncLock(action) {
+    if (!locks?.request) return action();
+    return locks.request(`${SYNC_LOCK_PREFIX}${deviceId}`, { ifAvailable: true }, (lock) => {
+      if (!lock) throw busyError();
+      return action();
+    });
   }
 
   async function combineHeads(heads) {
@@ -275,32 +312,32 @@ export function createDriveSync(options) {
   }
 
   async function readSnapshot(file) {
-    try {
-      const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
-      const encoded = await response.text();
-      if (new TextEncoder().encode(encoded).byteLength > MAX_CLOUD_BYTES) return null;
-      const value = JSON.parse(encoded);
-      if (!value || value.format !== CLOUD_SNAPSHOT_FORMAT || value.version !== CLOUD_SNAPSHOT_VERSION) return null;
-      if (!validCloudToken(value.snapshotId) || !validCloudToken(value.deviceId)) return null;
-      const workspace = parseSyncWorkspace(value.workspace);
-      const index = await indexSyncWorkspace(workspace);
-      const history = mergeSnapshotHistory(
-        [{ snapshotId: value.snapshotId, index }],
-        Array.isArray(value.history) ? value.history.filter((item) => validCloudToken(item?.snapshotId)) : [],
-      );
-      return {
-        snapshotId: value.snapshotId,
-        deviceId: value.deviceId,
-        createdAt: Number(value.createdAt) || 0,
-        ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
-        history,
-        index,
-        workspace,
-        file,
-      };
-    } catch {
-      return null;
+    const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+    const encoded = await response.text();
+    if (new TextEncoder().encode(encoded).byteLength > MAX_CLOUD_BYTES) throw syncError("snapshot-too-large");
+    let value;
+    try { value = JSON.parse(encoded); } catch { throw syncError("snapshot-invalid"); }
+    if (!value || value.format !== CLOUD_SNAPSHOT_FORMAT || value.version !== CLOUD_SNAPSHOT_VERSION) {
+      throw syncError("snapshot-invalid");
     }
+    if (!validCloudToken(value.snapshotId) || !validCloudToken(value.deviceId)) throw syncError("snapshot-invalid");
+    let workspace;
+    try { workspace = parseSyncWorkspace(value.workspace); } catch { throw syncError("snapshot-invalid"); }
+    const index = await indexSyncWorkspace(workspace);
+    const history = mergeSnapshotHistory(
+      [{ snapshotId: value.snapshotId, index }],
+      Array.isArray(value.history) ? value.history.filter((item) => validCloudToken(item?.snapshotId)) : [],
+    );
+    return {
+      snapshotId: value.snapshotId,
+      deviceId: value.deviceId,
+      createdAt: Number(value.createdAt) || 0,
+      ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
+      history,
+      index,
+      workspace,
+      file,
+    };
   }
 
   async function uploadSnapshot(snapshot, fileId) {
@@ -367,6 +404,19 @@ export function createDriveSync(options) {
     return accessToken;
   }
 
+  async function getDriveAccountKey() {
+    if (authenticatedAccountKey) return authenticatedAccountKey;
+    const response = await driveRequest("https://www.googleapis.com/drive/v3/about?fields=user(permissionId)");
+    let payload;
+    try { payload = await response.json(); } catch { throw syncError("account-identity"); }
+    const permissionId = payload?.user?.permissionId;
+    if (typeof permissionId !== "string" || !permissionId || permissionId.length > 512) {
+      throw syncError("account-identity");
+    }
+    authenticatedAccountKey = await accountFingerprint(permissionId);
+    return authenticatedAccountKey;
+  }
+
   function consumeAuthFragment() {
     const hash = String(globalThis.location?.hash || "");
     if (!hash.startsWith("#")) return {};
@@ -391,9 +441,11 @@ export function createDriveSync(options) {
   }
 }
 
-function readState(storage) {
+function readState(storage, accountKey, allowLegacy = false) {
   try {
-    const value = JSON.parse(storage.getItem(STATE_KEY));
+    const scoped = storage.getItem(stateStorageKey(accountKey));
+    const encoded = scoped ?? (allowLegacy ? storage.getItem(STATE_KEY) : null);
+    const value = JSON.parse(encoded);
     if (!value || value.version !== 1) return emptyState();
     return {
       version: 1,
@@ -423,14 +475,24 @@ function stateFromSnapshot(snapshot, fingerprint, fileId) {
   };
 }
 
-function saveState(storage, state) {
+function saveState(storage, state, accountKey, removeLegacy = false) {
+  const key = stateStorageKey(accountKey);
+  let saved = false;
   try {
-    storage.setItem(STATE_KEY, JSON.stringify(state));
+    storage.setItem(key, JSON.stringify(state));
+    saved = true;
   } catch {
     try {
-      storage.setItem(STATE_KEY, JSON.stringify({ ...state, history: (state.history || []).slice(0, 2) }));
+      storage.setItem(key, JSON.stringify({ ...state, history: (state.history || []).slice(0, 2) }));
+      saved = true;
     } catch {}
   }
+  if (!saved) throw syncError("state-storage");
+  if (removeLegacy) remove(storage, STATE_KEY);
+}
+
+function stateStorageKey(accountKey) {
+  return `${STATE_KEY}:${accountKey}`;
 }
 
 function emptyState() {
@@ -443,6 +505,14 @@ function readOrCreateDeviceId(storage) {
   const id = globalThis.crypto.randomUUID();
   write(storage, DEVICE_KEY, id);
   return id;
+}
+
+async function accountFingerprint(value) {
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`scattered-drive-account-v1:${value}`),
+  ));
+  return `gdrive-${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function read(storage, key) {
@@ -481,6 +551,12 @@ function syncError(reason) {
 function authError() {
   const error = new Error("Drive authorization expired");
   error.code = "auth";
+  return error;
+}
+
+function accountMismatchError() {
+  const error = new Error("Drive account does not match this workspace");
+  error.code = "account";
   return error;
 }
 

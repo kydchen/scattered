@@ -1,12 +1,12 @@
 # Scattered
 
-[Open Scattered](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
+[Open Scattered](https://scattered.pages.dev/) · [简体中文](README.zh-CN.md)
 
 Scattered is a minimalist, local-first canvas for freely arranging and connecting notes—built for Pencil, touch, and mouse. Write a note, move it anywhere, connect it only when useful, and keep thinking.
 
 ![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. If the cloud icon is available, connecting Google Drive once on each device can keep the workspace in sync; this is entirely optional.
+There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. If the cloud icon is available, connecting Google Drive once on each device can keep the workspace in sync; each Google account has its own isolated workspace, and sync remains entirely optional.
 
 ## Install it like an app
 
@@ -45,7 +45,7 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
 
-When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The small authorization broker exchanges an encrypted session for short-lived Drive access but has no content database and does not receive note text or board structure. Disconnecting removes the credential from that device; the Google grant can be revoked for all devices from the user's Google Account permissions.
+When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The first connected account claims any previously unsynced local workspace. Connecting a different account switches the browser to that account's separate local workspace instead of merging or copying the previous account's boards. Disconnecting removes the credential but keeps that account's local workspace available offline. The small authorization broker has no content database and does not receive note text or board structure.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
