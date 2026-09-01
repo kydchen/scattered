@@ -35,6 +35,7 @@ export function createDriveSync(options) {
   let pollTimer = null;
   let running = false;
   let queued = false;
+  let syncStage = "idle";
 
   const controller = {
     available: Boolean(apiUrl),
@@ -120,6 +121,7 @@ export function createDriveSync(options) {
       if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
     } catch (error) {
+      if (error && typeof error === "object" && !error.syncStage) error.syncStage = syncStage;
       if (error?.code === "busy") {
         setStatus("connected");
         schedule(900);
@@ -134,6 +136,7 @@ export function createDriveSync(options) {
       options.onError?.(error);
       return false;
     } finally {
+      syncStage = "idle";
       running = false;
       if (queued) {
         queued = false;
@@ -143,7 +146,9 @@ export function createDriveSync(options) {
   }
 
   async function performSync() {
+    syncStage = "local";
     const local = await options.getWorkspace();
+    syncStage = "prepare";
     const [localIndex, localFingerprint, files] = await Promise.all([
       indexSyncWorkspace(local),
       fingerprintSyncWorkspace(local),
@@ -157,16 +162,19 @@ export function createDriveSync(options) {
     const state = readState(storage);
 
     if (heads.length === 0) {
+      syncStage = "snapshot";
       const snapshot = await createCloudSnapshot(local, {
         deviceId,
         history: state.history,
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
+      syncStage = "upload";
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id || state.fileId);
       saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id));
       return { conflicts: 0 };
     }
 
+    syncStage = "merge";
     const combined = await combineHeads(heads);
     const remote = combined.snapshot;
     const remoteLineage = new Set(heads.flatMap((item) => [item.snapshotId, ...(item.ancestors || [])]));
@@ -196,16 +204,19 @@ export function createDriveSync(options) {
     const nextFingerprint = await fingerprintSyncWorkspace(nextWorkspace);
     if (nextFingerprint !== localFingerprint) {
       if (options.canApply && !options.canApply()) throw busyError();
+      syncStage = "apply";
       await options.applyWorkspace(nextWorkspace, localFingerprint);
     }
 
     if (shouldUpload || !ownFile) {
+      syncStage = "snapshot";
       const snapshot = await createCloudSnapshot(nextWorkspace, {
         deviceId,
         parents: heads,
         history: mergeSnapshotHistory(state.history || [], remote.history || []),
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
+      syncStage = "upload";
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id || state.fileId);
       saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id));
     } else {

@@ -809,10 +809,17 @@ function updateDriveSyncControl(status) {
 }
 
 function driveSyncErrorCode(error) {
-  if (error?.code === "auth") return "auth";
+  const stage = typeof error?.syncStage === "string" && /^[a-z]+$/.test(error.syncStage)
+    ? `${error.syncStage}-`
+    : "";
+  if (error?.code === "auth") return `${stage}auth`;
   const matched = /^Drive sync failed: ([a-z0-9-]+)$/.exec(String(error?.message || ""));
-  if (matched) return matched[1];
-  return error?.name === "TypeError" ? "network" : "unknown";
+  if (matched) return `${stage}${matched[1]}`;
+  if (error?.name === "TypeError") return `${stage}network`;
+  const internal = /^([a-z]+)\.([A-Za-z0-9.]+)$/.exec(String(error?.message || ""));
+  if (internal) return `${stage}${internal.slice(1).join("-").toLowerCase()}`;
+  const name = String(error?.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return `${stage}${!name || name === "error" ? "unknown" : name}`;
 }
 
 function canApplyDriveWorkspace() {

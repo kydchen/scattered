@@ -69,4 +69,18 @@ assert.match(storage.getItem("scattered-drive-sync-v1"), /drive-file-1/);
 sync.disconnect();
 assert.equal(storage.getItem("scattered-drive-session-v1"), null);
 
+let stagedError = null;
+const failingSync = createDriveSync({
+  apiUrl: "https://broker.example",
+  storage: new MemoryStorage([
+    ["scattered-drive-session-v1", "v1.c2VhbGVk"],
+    ["scattered-drive-device-v1", "device-2"],
+  ]),
+  getWorkspace: () => { throw new Error("sync.invalidWorkspace"); },
+  onError: (error) => { stagedError = error; },
+});
+assert.equal(await failingSync.syncNow(), false);
+assert.equal(stagedError?.syncStage, "local");
+assert.equal(stagedError?.message, "sync.invalidWorkspace");
+
 console.log("drive sync checks passed");
