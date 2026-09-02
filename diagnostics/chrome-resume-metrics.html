@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Chrome Resume Probe R2</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        background: #eef2f7;
+        color: #172033;
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      }
+
+      .probe {
+        height: 48px;
+        display: grid;
+        place-items: center;
+        padding: 0 8px;
+        border: 2px solid #172033;
+        border-radius: 10px;
+        color: #172033;
+        font-weight: 700;
+        text-align: center;
+        z-index: 10;
+      }
+
+      #probe-a {
+        position: fixed;
+        top: max(12px, env(safe-area-inset-top));
+        left: 12px;
+        width: calc(50vw - 18px);
+        background: #ff9f8f;
+      }
+
+      #probe-b {
+        position: absolute;
+        top: max(12px, env(safe-area-inset-top));
+        right: 12px;
+        width: calc(50vw - 18px);
+        background: #8fddb1;
+      }
+
+      #probe-c {
+        position: fixed;
+        top: calc(max(12px, env(safe-area-inset-top)) + 60px);
+        right: 12px;
+        left: 12px;
+        background: rgba(111, 171, 255, 0.62);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      #probe-d {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 190px;
+        background: #c7a6f5;
+        transform: translate(-50%, -50%);
+      }
+
+      #probe-e {
+        position: fixed;
+        right: 12px;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        left: 12px;
+        background: #ffd878;
+      }
+
+      main {
+        max-width: 520px;
+        margin: 0 auto;
+        padding: calc(max(12px, env(safe-area-inset-top)) + 132px) 24px 92px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 8px 0;
+      }
+
+      .build {
+        color: #5f6b7d;
+        font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      #metrics {
+        position: fixed;
+        z-index: 20;
+        top: 58%;
+        right: 12px;
+        left: 12px;
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(20, 24, 32, 0.9);
+        color: #fff;
+        font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="probe-a" class="probe">A · fixed top</div>
+    <div id="probe-b" class="probe">B · absolute top</div>
+    <div id="probe-c" class="probe">C · fixed top + blur</div>
+
+    <main>
+      <h1>Chrome Resume Probe</h1>
+      <p class="build">R2 · read-only viewport metrics</p>
+      <p>Force-close Chrome, reopen without touching, screenshot, then pull down once and screenshot again.</p>
+    </main>
+
+    <div id="probe-d" class="probe">D · fixed middle</div>
+    <pre id="metrics" aria-live="off">waiting</pre>
+    <div id="probe-e" class="probe">E · fixed bottom</div>
+
+    <script>
+      (() => {
+        const metrics = document.querySelector("#metrics");
+        const root = document.scrollingElement;
+        const eventLog = [];
+
+        function number(value) {
+          return Number.isFinite(value) ? Math.round(value * 10) / 10 : "-";
+        }
+
+        function rect(id) {
+          const bounds = document.querySelector(id).getBoundingClientRect();
+          return `${number(bounds.top)}..${number(bounds.bottom)}`;
+        }
+
+        function record(label) {
+          eventLog.push(label);
+          if (eventLog.length > 5) eventLog.shift();
+
+          const visual = window.visualViewport;
+          const hit = document.elementFromPoint(16, 16);
+          metrics.textContent = [
+            `R2 ${label} · ${document.visibilityState}`,
+            `events ${eventLog.join(">")}`,
+            `scroll win ${number(scrollX)},${number(scrollY)} root ${number(root?.scrollTop)}`,
+            `window ${innerWidth}x${innerHeight} doc ${document.documentElement.clientHeight}/${document.documentElement.scrollHeight}`,
+            `visual o${number(visual?.offsetTop)} p${number(visual?.pageTop)} h${number(visual?.height)} s${number(visual?.scale)}`,
+            `rect A ${rect("#probe-a")} B ${rect("#probe-b")} C ${rect("#probe-c")}`,
+            `rect D ${rect("#probe-d")} E ${rect("#probe-e")} hit ${hit?.id || hit?.tagName || "none"}`,
+          ].join("\n");
+        }
+
+        window.addEventListener("pageshow", (event) => {
+          record(`pageshow${event.persisted ? "P" : ""}`);
+          requestAnimationFrame(() => record("raf"));
+          setTimeout(() => record("100"), 100);
+          setTimeout(() => record("800"), 800);
+        });
+        window.addEventListener("scroll", () => record("scroll"), { passive: true });
+        window.addEventListener("resize", () => record("resize"), { passive: true });
+        window.visualViewport?.addEventListener("scroll", () => record("vscroll"), { passive: true });
+        window.visualViewport?.addEventListener("resize", () => record("vresize"), { passive: true });
+        document.addEventListener("visibilitychange", () => record(`visible:${document.visibilityState}`));
+        record("boot");
+      })();
+    </script>
+  </body>
+</html>
