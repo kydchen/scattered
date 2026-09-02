@@ -1350,7 +1350,8 @@ assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
 assert.match(css, /\.drive-sync-button\[data-status="connected"\],[\s\S]*?data-status="syncing"[\s\S]*?data-status="synced"[\s\S]*?color:\s*var\(--thread\)/);
 assert.doesNotMatch(css, /\.drive-sync-button\s*\{[^}]*color:\s*var\(--thread\)/s);
-assert.match(css, /\.app-mark,[\s\S]*?\.toast[\s\S]*?translate:\s*0 var\(--visual-offset-top/);
+assert.doesNotMatch(css, /translate:\s*0 var\(--visual-offset-top/);
+assert.equal((css.match(/top:\s*calc\([^;\n]*--visual-offset-top/g) || []).length, 8);
 assert.match(css, /#viewport\.overview #connections \.edge-line[\s\S]*?stroke-width:/);
 assert.match(css, /#viewport\.overview \.node::before[\s\S]*?min-width:/);
 assert.match(css, /#viewport\.overview \.node::after[\s\S]*?data-overview-label[\s\S]*?font-size:/);
@@ -1359,7 +1360,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v47/);
+assert.match(serviceWorker, /scattered-v48/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
