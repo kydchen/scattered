@@ -17,14 +17,15 @@ await assert.rejects(() => verifyState(tamper(state), secret, 1_000));
 await assert.rejects(() => verifyState(state, secret, 3_000));
 
 const oauthStart = await worker.fetch(new Request(
-  "https://worker.example/oauth/start?return_to=https%3A%2F%2Fscattered.pages.dev%2F",
+  "https://worker.example/oauth/start?return_to=https%3A%2F%2Fscatterednote.space%2F",
 ), {
-  APP_URLS: "https://scattered.pages.dev/",
+  APP_URLS: "https://scatterednote.space/",
   GOOGLE_CLIENT_ID: "client-id",
   GOOGLE_CLIENT_SECRET: "client-secret",
   SESSION_SECRET: secret,
 });
 const authorizationUrl = new URL(oauthStart.headers.get("Location"));
 assert.equal(authorizationUrl.searchParams.get("prompt"), "consent select_account");
+assert.equal(authorizationUrl.searchParams.get("redirect_uri"), "https://worker.example/oauth/callback");
 
 console.log("worker checks passed");

@@ -4,6 +4,6 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "vars": {
-    "APP_URLS": "https://scattered.pages.dev/,http://localhost:4173/"
+    "APP_URLS": "https://scatterednote.space/,https://www.scatterednote.space/,https://scattered.pages.dev/,http://localhost:4173/"
   }
 }

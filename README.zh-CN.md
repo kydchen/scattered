@@ -1,12 +1,12 @@
 # Scattered / 散点
 
-[在线使用](https://scattered.pages.dev/) · [English](README.md)
+[在线使用（推荐）](https://scatterednote.space/) · [纯本地版](https://kydchen.github.io/scattered/) · [English](README.md)
 
 Scattered 是一个极简、本地优先的自由思考画布，适配 Pencil、触控和键鼠。写下一张卡片，把它放到任何位置，只在需要时连接，然后继续思考。
 
 ![自由放置并连接卡片的 Scattered 画布](docs/scattered-canvas.png)
 
-它不要求注册账户，也没有模板或强制层级。默认情况下，画布保存在当前浏览器中，首次加载后也可以离线使用。如果界面出现云朵图标，也可以在每台设备上授权一次 Google Drive，让整个工作区自动同步；每个 Google 账号拥有彼此隔离的工作区，而且同步完全可选。
+它不要求注册账户，也没有模板或强制层级。默认情况下，画布保存在当前浏览器中，首次加载后也可以离线使用。推荐的在线版本可以在每台设备上授权一次 Google Drive，让整个工作区选择性地自动同步；每个 Google 账号拥有彼此隔离的工作区。如果希望完全不启用云端功能，可以使用 [GitHub Pages 纯本地版](https://kydchen.github.io/scattered/)。
 
 ## 像普通 App 一样安装
 
@@ -48,6 +48,8 @@ Scattered 可以直接在浏览器中使用，也可以安装成网页 App，获
 启用可选的 Google Drive 同步并由用户主动连接后，工作区快照会从浏览器直接写入该用户 Drive 的隐藏应用数据目录。首次连接的账号会认领此前从未同步过的本地工作区；改用另一个账号时，浏览器会切换到该账号独立的本地工作区，不会合并或复制前一个账号的画布。断开连接只删除凭据，该账号的本地工作区仍可离线使用。极小的授权中转没有内容数据库，也不会接收卡片文字或画布结构。
 
 网站启用了 Cloudflare Web Analytics 来了解基本访问量。Scattered 的应用代码不会把卡片文字、画布结构或导出文件发送给分析服务。
+
+在线服务的公开说明见 [关于 Scattered](https://scatterednote.space/about.html) 与 [隐私说明](https://scatterednote.space/privacy.html)。
 
 ## 导入与导出
 

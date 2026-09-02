@@ -1,12 +1,12 @@
 # Scattered
 
-[Open Scattered](https://scattered.pages.dev/) · [简体中文](README.zh-CN.md)
+[Open Scattered](https://scatterednote.space/) · [Local-only version](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
 
 Scattered is a minimalist, local-first canvas for freely arranging and connecting notes—built for Pencil, touch, and mouse. Write a note, move it anywhere, connect it only when useful, and keep thinking.
 
 ![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. If the cloud icon is available, connecting Google Drive once on each device can keep the workspace in sync; each Google account has its own isolated workspace, and sync remains entirely optional.
+There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. On the recommended hosted version, connecting Google Drive once on each device can optionally keep the workspace in sync; each Google account has its own isolated workspace. The [GitHub Pages version](https://kydchen.github.io/scattered/) keeps cloud integration disabled for a strictly local-only experience.
 
 ## Install it like an app
 
@@ -48,6 +48,8 @@ Boards, recovery copies, and preferences are stored locally in the browser. Scat
 When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The first connected account claims any previously unsynced local workspace. Connecting a different account switches the browser to that account's separate local workspace instead of merging or copying the previous account's boards. Disconnecting removes the credential but keeps that account's local workspace available offline. The small authorization broker has no content database and does not receive note text or board structure.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
+
+See the public [About](https://scatterednote.space/about.html) and [Privacy](https://scatterednote.space/privacy.html) pages for the hosted service.
 
 ## Import and export
 

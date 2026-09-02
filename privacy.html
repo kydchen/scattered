@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f2f4f7" />
+    <meta name="description" content="Scattered privacy policy and data handling details." />
+    <link rel="canonical" href="https://scatterednote.space/privacy.html" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <title>Scattered Privacy</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f2f4f7; color: #182033; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background-color: #f2f4f7; background-image: radial-gradient(#dce3ed 1.3px, transparent 1.3px); background-size: 24px 24px; }
+      main { width: min(800px, calc(100% - 32px)); margin: 64px auto; padding: clamp(28px, 6vw, 56px); background: rgba(255,255,255,.92); border: 1px solid #d5dbe5; border-radius: 24px; box-shadow: 0 18px 60px rgba(41,53,75,.1); }
+      h1 { margin-top: 0; font-size: clamp(2rem, 7vw, 3.2rem); letter-spacing: -.04em; }
+      h2 { margin-top: 2rem; }
+      p, li { line-height: 1.7; }
+      a { color: #315f9c; }
+      .updated { color: #637087; }
+      nav { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 32px; }
+      @media (prefers-color-scheme: dark) { :root, body { background-color: #161b24; color: #edf1f7; } body { background-image: radial-gradient(#2a3342 1.3px, transparent 1.3px); } main { background: rgba(31,38,50,.94); border-color: #3d4656; } a { color: #9ec5ff; } .updated { color: #aab5c7; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy / 隐私</h1>
+      <p class="updated">Last updated: September 3, 2026 / 最后更新：2026 年 9 月 3 日</p>
+      <h2>Local data / 本地数据</h2>
+      <p>Boards, recovery copies, preferences, and account-specific local workspaces are stored in your browser. Scattered does not require an account. Clearing browser or site data may remove this local data, so export important boards as JSON.</p>
+      <p lang="zh-Hans">画布、恢复副本、偏好设置及按账号隔离的本地工作区保存在浏览器中。Scattered 无需账户。清除浏览器或网站数据可能删除这些内容，请将重要画布导出为 JSON。</p>
+      <h2>Optional Google Drive sync / 可选的 Google Drive 同步</h2>
+      <p>If you explicitly connect Google Drive, Scattered requests only the <code>drive.appdata</code> scope and writes versioned workspace snapshots to the hidden app-data folder in your own Drive. The browser sends canvas content directly to Google Drive. A stateless Cloudflare Worker performs OAuth token exchange but has no content database and does not receive note text, board structure, or exported files.</p>
+      <p lang="zh-Hans">只有在你主动连接 Google Drive 后，Scattered 才会申请 <code>drive.appdata</code> 权限，并把版本化工作区快照写入你自己 Drive 的隐藏应用数据目录。画布内容由浏览器直接发送给 Google Drive。无状态的 Cloudflare Worker 只负责 OAuth 凭据交换，没有内容数据库，也不会收到卡片文字、画布结构或导出文件。</p>
+      <p>Disconnecting removes the credential from this browser but does not delete local boards or existing Drive app data. You can revoke access and remove app data through your Google Account and Google Drive settings.</p>
+      <p lang="zh-Hans">断开连接会从当前浏览器删除凭据，但不会删除本地画布或 Drive 中已有的应用数据。你可以在 Google 账号及 Google Drive 设置中撤销授权并删除应用数据。</p>
+      <h2>Traffic analytics / 访问统计</h2>
+      <p>The hosted site uses Cloudflare Web Analytics for basic aggregate traffic measurement. Scattered's application code does not send note text, board structure, or exported files to analytics.</p>
+      <p lang="zh-Hans">在线站点使用 Cloudflare Web Analytics 进行基本的汇总访问统计。Scattered 的应用代码不会把卡片文字、画布结构或导出文件发送给统计服务。</p>
+      <h2>Open source / 开源</h2>
+      <p>The application source and its data-handling implementation are available in the public GitHub repository.</p>
+      <p lang="zh-Hans">应用源代码及数据处理实现可在公开 GitHub 仓库中查看。</p>
+      <nav aria-label="Related links">
+        <a href="/">Open Scattered / 打开应用</a>
+        <a href="about.html">About / 关于</a>
+        <a href="https://github.com/kydchen/scattered">Source code / 源代码</a>
+      </nav>
+    </main>
+  </body>
+</html>

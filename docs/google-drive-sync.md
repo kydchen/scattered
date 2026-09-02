@@ -13,7 +13,7 @@ Cloud snapshots are validated before merging. If any listed Drive snapshot canno
 ## Deploy
 
 1. In Google Cloud Console, enable the Google Drive API and configure an external OAuth consent screen.
-2. Create an OAuth 2.0 **Web application** client. Add the Worker's exact callback URL, for example `https://scattered-sync.example.workers.dev/oauth/callback`, as an authorized redirect URI.
+2. Create an OAuth 2.0 **Web application** client. Add the Worker's exact callback URL, for example `https://sync.scatterednote.space/oauth/callback`, as an authorized redirect URI.
 3. Set the exact application URLs in `worker/wrangler.jsonc` under `APP_URLS`. Keep the trailing slash.
 4. From `worker/`, deploy the Worker and enter its secrets:
 
@@ -29,7 +29,7 @@ Cloud snapshots are validated before merging. If any listed Drive snapshot canno
 5. Set the deployed Worker origin in `sync-config.js`, without a trailing slash:
 
    ```js
-   export const DRIVE_SYNC_API = "https://scattered-sync.example.workers.dev";
+   export const DRIVE_SYNC_API = "https://sync.scatterednote.space";
    ```
 
 6. Bump the cache name in `sw.js`, deploy the static site, and connect the same Google account once on each device.
