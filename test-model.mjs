@@ -1418,7 +1418,7 @@ assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoard
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
 assert.match(html, /<script type="module" src="app\.js\?v=68"><\/script>/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
-assert.match(serviceWorker, /scattered-v68/);
+assert.match(serviceWorker, /scattered-v69/);
 assert.match(serviceWorker, /\.\/app\.js\?v=68/);
 assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
 assert.match(serviceWorker, /\.\/workspace\.js/);

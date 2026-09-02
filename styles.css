@@ -220,6 +220,7 @@ button {
   stroke: var(--thread);
   stroke-width: 1.85;
   stroke-linecap: round;
+  shape-rendering: geometricPrecision;
   vector-effect: non-scaling-stroke;
 }
 
