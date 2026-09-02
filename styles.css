@@ -659,7 +659,7 @@ button {
 }
 
 .app-mark {
-  position: fixed;
+  position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--visual-offset-top, 0px));
   left: max(14px, env(safe-area-inset-left));
   display: flex;
@@ -777,7 +777,7 @@ button {
 }
 
 .board-picker {
-  position: fixed;
+  position: absolute;
   top: calc(max(56px, calc(env(safe-area-inset-top) + 44px)) + var(--visual-offset-top, 0px));
   left: max(14px, env(safe-area-inset-left));
   width: min(300px, calc(100vw - 28px));
@@ -1028,7 +1028,7 @@ button {
 }
 
 .menu-button {
-  position: fixed;
+  position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--visual-offset-top, 0px));
   right: max(14px, env(safe-area-inset-right));
   width: 44px;
@@ -1041,7 +1041,7 @@ button {
 }
 
 .history-tools {
-  position: fixed;
+  position: absolute;
   top: calc(max(56px, calc(env(safe-area-inset-top) + 44px)) + var(--visual-offset-top, 0px));
   left: max(14px, env(safe-area-inset-left));
   display: flex;
@@ -1074,7 +1074,7 @@ button {
 }
 
 .menu {
-  position: fixed;
+  position: absolute;
   top: calc(max(54px, calc(env(safe-area-inset-top) + 44px)) + var(--visual-offset-top, 0px));
   right: max(14px, env(safe-area-inset-right));
   display: flex;
@@ -1159,7 +1159,7 @@ button {
 }
 
 .search-panel {
-  position: fixed;
+  position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--visual-offset-top, 0px));
   left: 50%;
   width: min(440px, calc(100vw - 108px));
@@ -1459,7 +1459,7 @@ html[data-theme="dark"] .theme-sun {
 }
 
 .toast {
-  position: fixed;
+  position: absolute;
   top: calc(max(18px, env(safe-area-inset-top)) + var(--visual-offset-top, 0px));
   left: 50%;
   padding: 8px 13px;

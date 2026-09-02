@@ -1309,6 +1309,9 @@ assert.match(html, /src="https:\/\/static\.cloudflareinsights\.com\/beacon\.min\
 assert.match(html, /data-cf-beacon='\{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"\}'/);
 assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
+for (const selector of ["app-mark", "board-picker", "menu-button", "history-tools", "menu", "search-panel", "toast"]) {
+  assert.match(css, new RegExp(`\\.${selector}\\s*\\{[^}]*position:\\s*absolute;`, "s"));
+}
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[^>]*?orient="auto-start-reverse"[\s\S]*?class="arrowhead"/);
 assert.match(html, /id="color-selection"[\s\S]*?id="duplicate-selection"[\s\S]*?id="arrow-selection"[\s\S]*?id="disconnect-selection"/);
@@ -1368,7 +1371,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v49/);
+assert.match(serviceWorker, /scattered-v50/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
