@@ -15,7 +15,7 @@ const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "probe-a1";
+const VIEWPORT_DEBUG_BUILD = "probe-d1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -247,40 +247,30 @@ function setupViewportDebug() {
   document.body.append(viewportDebugPanel);
   const probes = document.createElement("div");
   probes.style.cssText = "position:fixed;left:8px;bottom:18px;z-index:2147483647;display:flex;gap:6px";
-  ["A", "B", "C"].forEach((name) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = name;
-    button.setAttribute("aria-label", `Viewport probe ${name}`);
-    button.style.cssText = "width:36px;height:36px;padding:0;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(20,24,32,.84);color:#fff;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-tap-highlight-color:transparent;touch-action:manipulation";
-    button.addEventListener("click", () => runViewportProbe(name));
-    probes.append(button);
-  });
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "D";
+  button.setAttribute("aria-label", "Viewport probe D");
+  button.style.cssText = "width:36px;height:36px;padding:0;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(20,24,32,.84);color:#fff;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-tap-highlight-color:transparent;touch-action:manipulation";
+  button.addEventListener("click", runViewportProbe);
+  probes.append(button);
   document.body.append(probes);
   window.addEventListener("focus", () => scheduleViewportDebug("focus"));
   recordViewportDebug("boot");
 }
 
-function runViewportProbe(name) {
-  if (name === "A") {
-    [document.querySelector(".app-mark"), menuButton, historyTools].forEach((element) => {
-      element?.animate([{ opacity: 0.98 }, { opacity: 1 }], { duration: 80 });
-    });
-  } else if (name === "B" && chromeLayer?.parentNode) {
-    const parent = chromeLayer.parentNode;
-    const next = chromeLayer.nextSibling;
-    chromeLayer.remove();
-    void document.body.offsetHeight;
-    parent.insertBefore(chromeLayer, next);
-  } else if (name === "C") {
-    document.body.style.display = "none";
-    void document.documentElement.offsetHeight;
-    requestAnimationFrame(() => {
-      document.body.style.display = "";
-      recordViewportDebug("probe:C");
-    });
-  }
-  recordViewportDebug(`probe:${name}`);
+function runViewportProbe() {
+  const controls = [document.querySelector(".app-mark"), menuButton, historyTools].filter(Boolean);
+  const previousTops = controls.map((element) => element.style.top);
+  controls.forEach((element) => {
+    const top = Number.parseFloat(getComputedStyle(element).top);
+    if (Number.isFinite(top)) element.style.top = `${top + 1}px`;
+  });
+  recordViewportDebug("probe:D+");
+  setTimeout(() => {
+    controls.forEach((element, index) => { element.style.top = previousTops[index]; });
+    recordViewportDebug("probe:D");
+  }, 0);
 }
 
 function scheduleViewportDebug(reason) {

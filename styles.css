@@ -292,6 +292,7 @@ button {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   transform: translate3d(var(--node-x), var(--node-y), 0);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
   will-change: transform;
 }
 
@@ -316,6 +317,7 @@ button {
   opacity: var(--overview-progress, 1);
   pointer-events: none;
   transform: translate(-50%, -50%);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
   z-index: -1;
 }
 
@@ -343,6 +345,11 @@ button {
 #viewport.overview .node.selected::before,
 #viewport.overview .node:focus-visible::before {
   border-color: var(--thread);
+}
+
+#viewport.overview .node:active::before {
+  border-color: var(--thread);
+  box-shadow: 0 0 0 calc(var(--overview-border-width) * 2) var(--thread-soft), 0 var(--overview-shadow-y) var(--overview-shadow-blur) var(--overview-node-shadow);
 }
 
 #viewport.overview-compact .node-actions,
@@ -398,6 +405,11 @@ button {
 
 .node:active {
   cursor: grabbing;
+}
+
+#viewport:not(.overview) .node:active {
+  border-color: var(--thread);
+  box-shadow: var(--selected-shadow);
 }
 
 .node.selected,
