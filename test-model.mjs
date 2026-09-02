@@ -1352,6 +1352,10 @@ assert.doesNotMatch(css, /#chrome-layer\s*\{[^}]*position:\s*fixed|#chrome-layer
 assert.doesNotMatch(app, /compositor-test|compositor-stack-test/);
 assert.doesNotMatch(css, /compositor-stack-test/);
 assert.match(app, /recordViewportDebug\(`\$\{reason\}:800`\)/);
+const viewportWakeSource = app.match(/function scheduleViewportWake\(\)[\s\S]*?\n}\n\nfunction handleVisualViewportChange/)?.[0] || "";
+assert.match(app, /function restoreVisibleViewport[\s\S]*?scheduleViewportWake\(\)/);
+assert.match(viewportWakeSource, /setTimeout[\s\S]*?x \+ 0\.25[\s\S]*?wake:0[\s\S]*?requestAnimationFrame[\s\S]*?applyView\(\)[\s\S]*?wake:raf[\s\S]*?120/);
+assert.doesNotMatch(viewportWakeSource, /board\.view\s*=|board\.view\.(?:x|y|scale)\s*=/);
 assert.match(app, /function runDragAutoPan[\s\S]*?edgeAutoPanVelocity[\s\S]*?requestAnimationFrame\(runDragAutoPan\)/);
 assert.match(app, /function moveDraggedNodes[\s\S]*?positionNode/);
 const fitOpenedBoardSource = app.match(/function fitOpenedBoardIfOffscreen\([^)]*\)[\s\S]*?\n}/)?.[0] || "";
@@ -1389,7 +1393,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v55/);
+assert.match(serviceWorker, /scattered-v56/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

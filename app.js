@@ -14,7 +14,7 @@ const DEFAULT_NODE_HEIGHT = 48;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "paint-c1";
+const VIEWPORT_DEBUG_BUILD = "paint-d1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -112,6 +112,7 @@ let announcementFrame = 0;
 let driveErrorNotified = false;
 let viewportDebugPanel = null;
 let viewportDebugPageShowPersisted = null;
+let viewportWakeTimer = 0;
 const viewportDebugEvents = [];
 const pointers = new Map();
 const nodeElements = new Map();
@@ -218,11 +219,30 @@ function restoreVisibleViewport(reason = "resume") {
   if (document.visibilityState === "hidden") return;
   syncVisualViewportChrome();
   scheduleViewportDebug(reason);
+  scheduleViewportWake();
   requestAnimationFrame(() => {
     syncVisualViewportChrome();
     renderEdges();
     updateHistoryControls();
   });
+}
+
+function scheduleViewportWake() {
+  clearTimeout(viewportWakeTimer);
+  viewportWakeTimer = setTimeout(() => {
+    viewportWakeTimer = 0;
+    if (document.visibilityState === "hidden") return;
+    requestAnimationFrame(() => {
+      const { x, y, scale } = board.view;
+      world.style.transform = `translate3d(${x + 0.25}px, ${y}px, 0) scale(${scale})`;
+      viewport.style.setProperty("--grid-x", `${x + 0.25}px`);
+      recordViewportDebug("wake:0");
+      requestAnimationFrame(() => {
+        applyView();
+        recordViewportDebug("wake:raf");
+      });
+    });
+  }, 120);
 }
 
 function handleVisualViewportChange(event) {
