@@ -14,7 +14,7 @@ const DEFAULT_NODE_HEIGHT = 48;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "paint-b1";
+const VIEWPORT_DEBUG_BUILD = "paint-c1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -274,7 +274,7 @@ function recordViewportDebug(eventName) {
     const y = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
     const hit = document.elementFromPoint(x, y);
     const hittable = hit === element || element.contains(hit);
-    return `${name} y${metric(rect.top)}..${metric(rect.bottom)} d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
+    return `${name} y${metric(rect.top)}..${metric(rect.bottom)} p${style.position[0]}d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
   };
   viewportDebugPanel.textContent = [
     `${VIEWPORT_DEBUG_BUILD} · ${eventName} · ${document.visibilityState}`,

@@ -1316,7 +1316,7 @@ assert.match(html, /data-cf-beacon='\{"token": "41d9c0c044944ad6b1bd274d2f27d9b7
 assert.doesNotMatch(html, /\[https:\/\/static\.cloudflareinsights\.com/);
 assert.match(css, /\.app-logo\s*\{[^}]*width:\s*31px;[^}]*height:\s*24px;/s);
 for (const selector of ["app-mark", "board-picker", "menu-button", "history-tools", "menu", "search-panel", "toast"]) {
-  assert.match(css, new RegExp(`\\.${selector}\\s*\\{[^}]*position:\\s*absolute;`, "s"));
+  assert.match(css, new RegExp(`\\.${selector}\\s*\\{[^}]*position:\\s*fixed;`, "s"));
 }
 assert.match(css, /\.theme-button\s*\{[^}]*position:\s*fixed;[^}]*right:[^}]*bottom:/s);
 assert.match(html, /id="edge-arrowhead"[^>]*?orient="auto-start-reverse"[\s\S]*?class="arrowhead"/);
@@ -1347,8 +1347,8 @@ const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n
 assert.match(viewportDebugSource, /visualViewport[\s\S]*?--visual-offset-top[\s\S]*?getBoundingClientRect[\s\S]*?elementFromPoint/);
 assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?wasDiscarded[\s\S]*?serviceWorker[\s\S]*?chromeLayer/);
 assert.match(html, /<\/main>\s*<div id="chrome-layer">[\s\S]*?class="app-mark"[\s\S]*?id="history-tools"[\s\S]*?id="menu-button"[\s\S]*?id="announcer"[\s\S]*?<\/div>\s*<template id="node-template">/);
-assert.match(css, /#chrome-layer\s*\{[^}]*position:\s*fixed;[^}]*pointer-events:\s*none;[^}]*}\s*#chrome-layer > \*\s*\{[^}]*pointer-events:\s*auto;/s);
-assert.match(css, /#chrome-layer > \.empty-state\s*\{[^}]*pointer-events:\s*none;/s);
+assert.match(css, /#chrome-layer\s*\{[^}]*display:\s*contents;/s);
+assert.doesNotMatch(css, /#chrome-layer\s*\{[^}]*position:\s*fixed|#chrome-layer > \*/s);
 assert.doesNotMatch(app, /compositor-test|compositor-stack-test/);
 assert.doesNotMatch(css, /compositor-stack-test/);
 assert.match(app, /recordViewportDebug\(`\$\{reason\}:800`\)/);
@@ -1389,7 +1389,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v54/);
+assert.match(serviceWorker, /scattered-v55/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
