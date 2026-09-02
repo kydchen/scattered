@@ -1595,5 +1595,6 @@ assert.match(chromeResumeRecovery, /overscroll-behavior-y:\s*auto[\s\S]*?#recove
 assert.match(chromeResumeRecovery, /#gesture-lock[\s\S]*?touch-action:\s*none/);
 assert.match(chromeResumeRecovery, /min-height:\s*calc\(100% \+ 96px\)/);
 assert.match(chromeResumeRecovery, /sessionStorage[\s\S]*?performance\.getEntriesByType\("navigation"\)/);
+assert.match(chromeResumeRecovery, /function maybePulse[\s\S]*?root\.scrollTop = 1[\s\S]*?root\.scrollTop = 0/);
 
 console.log("model checks passed");
