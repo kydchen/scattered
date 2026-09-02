@@ -224,6 +224,17 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
+#connections .edge-underlay {
+  fill: none;
+  stroke: var(--thread);
+  stroke-width: 2.65;
+  stroke-linecap: round;
+  stroke-opacity: 0.24;
+  pointer-events: none;
+  shape-rendering: geometricPrecision;
+  vector-effect: non-scaling-stroke;
+}
+
 #connections .edge-hit {
   fill: none;
   stroke: transparent;

@@ -1,5 +1,5 @@
-const CACHE = "scattered-v69";
-const ASSETS = ["./", "./index.html", "./about.html", "./privacy.html", "./styles.css?v=69", "./model.js", "./workspace.js", "./sync-model.js", "./drive-sync.js", "./sync-config.js?v=68", "./svg-export.js", "./i18n.js", "./app.js?v=68", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+const CACHE = "scattered-v70";
+const ASSETS = ["./", "./index.html", "./about.html", "./privacy.html", "./styles.css?v=70", "./model.js", "./workspace.js", "./sync-model.js", "./drive-sync.js", "./sync-config.js?v=68", "./svg-export.js", "./i18n.js", "./app.js?v=70", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

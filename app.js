@@ -2243,12 +2243,15 @@ function renderEdges() {
     const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     hitPath.classList.add("edge-hit");
     hitPath.setAttribute("d", pathData);
+    const underlayPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    underlayPath.classList.add("edge-underlay");
+    underlayPath.setAttribute("d", pathData);
     const linePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     linePath.classList.add("edge-line");
     linePath.setAttribute("d", pathData);
     if (edge.arrow === "forward") linePath.setAttribute("marker-end", "url(#edge-arrowhead)");
     if (edge.arrow === "reverse") linePath.setAttribute("marker-start", "url(#edge-arrowhead)");
-    group.append(hitPath, linePath);
+    group.append(hitPath, underlayPath, linePath);
 
     if (edge.label) {
       const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
