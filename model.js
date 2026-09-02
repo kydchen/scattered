@@ -19,6 +19,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const MAX_IMPORT_COORDINATE = 1_000_000;
 
 export function overviewLevel(scale) {
+  const renderScale = Math.max(scale, OVERVIEW_COMPACT_SCALE);
   const progress = clamp(
     (OVERVIEW_START_SCALE - scale) / (OVERVIEW_START_SCALE - OVERVIEW_COMPACT_SCALE),
     0,
@@ -28,6 +29,8 @@ export function overviewLevel(scale) {
     active: scale < OVERVIEW_START_SCALE,
     compact: scale < OVERVIEW_COMPACT_SCALE,
     progress,
+    renderScale,
+    markerScale: renderScale / scale,
   };
 }
 
