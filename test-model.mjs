@@ -1577,6 +1577,7 @@ const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
 const readmeZh = readFileSync(new URL("./README.zh-CN.md", import.meta.url), "utf8");
 const contributing = readFileSync(new URL("./CONTRIBUTING.md", import.meta.url), "utf8");
 const license = readFileSync(new URL("./LICENSE", import.meta.url), "utf8");
+const chromeResumeRecovery = readFileSync(new URL("./diagnostics/chrome-resume-recovery.html", import.meta.url), "utf8");
 assert.match(readme, /\[简体中文\]\(README\.zh-CN\.md\)/);
 assert.match(readmeZh, /\[English\]\(README\.md\)/);
 assert.match(readme, /docs\/scattered-canvas\.png/);
@@ -1590,5 +1591,8 @@ assert.match(contributing, /Pencil \+ touch[\s\S]*touch only[\s\S]*keyboard \+ m
 assert.match(contributing, /npm test[\s\S]*sw\.js/);
 assert.match(license, /^MIT License[\s\S]*Copyright \(c\) 2026 kydchen/);
 assert.equal(existsSync(new URL("./docs/scattered-canvas.png", import.meta.url)), true);
+assert.match(chromeResumeRecovery, /overscroll-behavior-y:\s*auto[\s\S]*?#recovery-strip[\s\S]*?touch-action:\s*pan-y/);
+assert.match(chromeResumeRecovery, /#gesture-lock[\s\S]*?touch-action:\s*none/);
+assert.match(chromeResumeRecovery, /sessionStorage[\s\S]*?performance\.getEntriesByType\("navigation"\)/);
 
 console.log("model checks passed");
