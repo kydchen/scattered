@@ -16,6 +16,8 @@ const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
 const VIEWPORT_DEBUG_BUILD = "probe-f1";
+const chromeIOSResumeEnabled = /\bCriOS\//.test(navigator.userAgent);
+if (chromeIOSResumeEnabled) document.documentElement.classList.add("chrome-ios-native-recovery");
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -39,6 +41,7 @@ const themeButton = document.querySelector("#theme-button");
 const themeColor = document.querySelector('meta[name="theme-color"]');
 const toast = document.querySelector("#toast");
 const announcer = document.querySelector("#announcer");
+const chromeResumePrompt = createChromeResumePrompt();
 const historyTools = document.querySelector("#history-tools");
 const fitButton = document.querySelector("#fit-button");
 const undoButton = document.querySelector("#undo-button");
@@ -113,6 +116,8 @@ let announcementFrame = 0;
 let driveErrorNotified = false;
 let viewportDebugPanel = null;
 let viewportDebugPageShowPersisted = null;
+let chromeResumeGapSince = 0;
+let chromeResumeRecoveryHandled = false;
 const viewportDebugEvents = [];
 const pointers = new Map();
 const nodeElements = new Map();
@@ -145,6 +150,7 @@ if (!driveSync.connected && workspaceSlots.accountKey) {
 }
 
 syncVisualViewportChrome();
+updateChromeResumeRecovery();
 applyTranslations();
 renderAll();
 applyView();
@@ -179,6 +185,7 @@ document.addEventListener("keyup", (event) => {
 window.addEventListener("resize", () => {
   hideColorPalette();
   syncVisualViewportChrome();
+  updateChromeResumeRecovery();
   recordViewportDebug("resize");
   renderEdges();
   updateHistoryControls();
@@ -190,6 +197,7 @@ window.addEventListener("pageshow", (event) => {
 });
 window.visualViewport?.addEventListener("resize", handleVisualViewportChange);
 window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
+if (chromeIOSResumeEnabled) window.setInterval(updateChromeResumeRecovery, 500);
 window.addEventListener("blur", () => {
   recordViewportDebug("blur");
   spacePressed = false;
@@ -205,6 +213,8 @@ window.addEventListener("pagehide", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
+    chromeResumeRecoveryHandled = false;
+    updateChromeResumeRecovery();
     recordViewportDebug("hidden");
     disarmClear();
     disarmDeleteBoard();
@@ -218,9 +228,11 @@ document.addEventListener("visibilitychange", () => {
 function restoreVisibleViewport(reason = "resume") {
   if (document.visibilityState === "hidden") return;
   syncVisualViewportChrome();
+  updateChromeResumeRecovery();
   scheduleViewportDebug(reason);
   requestAnimationFrame(() => {
     syncVisualViewportChrome();
+    updateChromeResumeRecovery();
     renderEdges();
     updateHistoryControls();
   });
@@ -228,6 +240,7 @@ function restoreVisibleViewport(reason = "resume") {
 
 function handleVisualViewportChange(event) {
   syncVisualViewportChrome();
+  updateChromeResumeRecovery();
   recordViewportDebug(`visual-${event.type}`);
   revealEditingNode();
 }
@@ -236,6 +249,42 @@ function syncVisualViewportChrome() {
   const visual = window.visualViewport;
   const offsetTop = Number.isFinite(visual?.offsetTop) ? Math.max(0, visual.offsetTop) : 0;
   document.documentElement.style.setProperty("--visual-offset-top", `${offsetTop}px`);
+}
+
+function createChromeResumePrompt() {
+  if (!chromeIOSResumeEnabled) return null;
+  const prompt = document.createElement("div");
+  prompt.id = "chrome-resume-prompt";
+  prompt.className = "chrome-resume-prompt";
+  prompt.setAttribute("role", "status");
+  prompt.setAttribute("aria-live", "polite");
+  prompt.textContent = "↓ 下拉恢复 · Pull to restore";
+  prompt.addEventListener("pointercancel", finishChromeResumeRecovery, { passive: true });
+  prompt.hidden = true;
+  document.body.append(prompt);
+  return prompt;
+}
+
+function updateChromeResumeRecovery() {
+  if (!chromeResumePrompt) return;
+  const gap = innerHeight - document.documentElement.clientHeight;
+  const needsRecovery = document.visibilityState !== "hidden" && gap >= 80 && !chromeResumeRecoveryHandled;
+  if (!needsRecovery) {
+    chromeResumeGapSince = 0;
+    chromeResumePrompt.hidden = true;
+    return;
+  }
+  const now = performance.now();
+  if (!chromeResumeGapSince) chromeResumeGapSince = now;
+  if (now - chromeResumeGapSince < 400 || !chromeResumePrompt.hidden) return;
+  chromeResumePrompt.hidden = false;
+  announce(chromeResumePrompt.textContent);
+}
+
+function finishChromeResumeRecovery() {
+  chromeResumeRecoveryHandled = true;
+  chromeResumeGapSince = 0;
+  chromeResumePrompt.hidden = true;
 }
 
 function setupViewportDebug() {

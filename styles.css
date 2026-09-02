@@ -126,6 +126,18 @@ body {
   color: var(--ink);
 }
 
+html.chrome-ios-native-recovery {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+}
+
+html.chrome-ios-native-recovery body {
+  min-height: calc(100% + 120px);
+  overflow: visible;
+  overscroll-behavior-y: auto;
+}
+
 button,
 textarea,
 input {
@@ -1507,6 +1519,32 @@ html[data-theme="dark"] .theme-sun {
   transform: translateX(-50%);
   box-shadow: var(--floating-shadow);
   z-index: 4;
+}
+
+.chrome-resume-prompt {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(76px, calc(env(safe-area-inset-bottom) + 76px));
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--toast-ink) 24%, transparent);
+  border-radius: 18px;
+  background: var(--toast-bg);
+  color: var(--toast-ink);
+  box-shadow: var(--floating-shadow);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 8;
+}
+
+.chrome-resume-prompt[hidden] {
+  display: none;
 }
 
 @media (hover: hover) {

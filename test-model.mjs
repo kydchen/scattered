@@ -1342,6 +1342,16 @@ assert.match(app, /addEventListener\("pageshow", \(event\) => \{[\s\S]*?viewport
 assert.match(app, /onConflict:[^\n]*showToast\([^\n]*4_800\)/);
 assert.match(app, /visualViewport\?\.addEventListener\("scroll", handleVisualViewportChange\)/);
 assert.match(app, /function syncVisualViewportChrome\(\)[\s\S]*?--visual-offset-top[\s\S]*?visual\?\.offsetTop/);
+assert.match(app, /chromeIOSResumeEnabled = \/\\bCriOS\\\//);
+assert.match(app, /classList\.add\("chrome-ios-native-recovery"\)/);
+assert.match(app, /function updateChromeResumeRecovery\(\)[\s\S]*?innerHeight - document\.documentElement\.clientHeight[\s\S]*?gap >= 80[\s\S]*?400/);
+assert.match(app, /setInterval\(updateChromeResumeRecovery, 500\)/);
+assert.match(app, /\u2193 \u4e0b\u62c9\u6062\u590d \u00b7 Pull to restore/);
+assert.match(app, /pointercancel", finishChromeResumeRecovery/);
+assert.match(css, /html\.chrome-ios-native-recovery\s*\{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior-y:\s*auto;/s);
+assert.match(css, /html\.chrome-ios-native-recovery body\s*\{[^}]*min-height:\s*calc\(100% \+ 120px\);[^}]*overflow:\s*visible;/s);
+assert.match(css, /\.chrome-resume-prompt\s*\{[^}]*position:\s*fixed;[^}]*bottom:[^}]*touch-action:\s*pan-y;/s);
+assert.match(css, /\.chrome-resume-prompt\[hidden\]\s*\{[^}]*display:\s*none;/s);
 assert.match(app, /viewportParams\.get\("viewport-debug"\) === "1"/);
 const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n\nboardsButton/)?.[0] || "";
 assert.match(viewportDebugSource, /getBoundingClientRect[\s\S]*?elementFromPoint/);
@@ -1400,7 +1410,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v63/);
+assert.match(serviceWorker, /scattered-v64/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
