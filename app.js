@@ -15,7 +15,7 @@ const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "probe-d1";
+const VIEWPORT_DEBUG_BUILD = "probe-e1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -249,8 +249,8 @@ function setupViewportDebug() {
   probes.style.cssText = "position:fixed;left:8px;bottom:18px;z-index:2147483647;display:flex;gap:6px";
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "D";
-  button.setAttribute("aria-label", "Viewport probe D");
+  button.textContent = "E";
+  button.setAttribute("aria-label", "Viewport probe E");
   button.style.cssText = "width:36px;height:36px;padding:0;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(20,24,32,.84);color:#fff;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-tap-highlight-color:transparent;touch-action:manipulation";
   button.addEventListener("click", runViewportProbe);
   probes.append(button);
@@ -260,17 +260,18 @@ function setupViewportDebug() {
 }
 
 function runViewportProbe() {
-  const controls = [document.querySelector(".app-mark"), menuButton, historyTools].filter(Boolean);
-  const previousTops = controls.map((element) => element.style.top);
-  controls.forEach((element) => {
-    const top = Number.parseFloat(getComputedStyle(element).top);
-    if (Number.isFinite(top)) element.style.top = `${top + 1}px`;
+  const previousView = { ...board.view };
+  const center = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, previousView);
+  board.view.scale = EDIT_VIEW_SCALE;
+  board.view.x = viewport.clientWidth / 2 - center.x * EDIT_VIEW_SCALE;
+  board.view.y = viewport.clientHeight / 2 - center.y * EDIT_VIEW_SCALE;
+  applyView();
+  recordViewportDebug("probe:E+");
+  requestAnimationFrame(() => {
+    Object.assign(board.view, previousView);
+    applyView();
+    recordViewportDebug("probe:E");
   });
-  recordViewportDebug("probe:D+");
-  setTimeout(() => {
-    controls.forEach((element, index) => { element.style.top = previousTops[index]; });
-    recordViewportDebug("probe:D");
-  }, 0);
 }
 
 function scheduleViewportDebug(reason) {
