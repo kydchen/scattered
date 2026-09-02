@@ -3,7 +3,7 @@ import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { createDriveSync } from "./drive-sync.js";
-import { DRIVE_SYNC_API } from "./sync-config.js";
+import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js";
 
 const THEME_KEY = "scattered-theme";
