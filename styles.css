@@ -350,9 +350,16 @@ button {
   display: none !important;
 }
 
+#viewport.overview-compact .node,
 #viewport.overview-distant .node {
   transform: translate(var(--node-x), var(--node-y));
   will-change: auto;
+}
+
+#viewport.overview-compact .node {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 #viewport.overview-distant .node::before {

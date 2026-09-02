@@ -11,10 +11,11 @@ const CONNECTION_STYLE_KEY = "scattered-connection-style";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const DEFAULT_NODE_WIDTH = 218;
 const DEFAULT_NODE_HEIGHT = 48;
+const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "paint-d1";
+const VIEWPORT_DEBUG_BUILD = "layers-a1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -112,7 +113,6 @@ let announcementFrame = 0;
 let driveErrorNotified = false;
 let viewportDebugPanel = null;
 let viewportDebugPageShowPersisted = null;
-let viewportWakeTimer = 0;
 const viewportDebugEvents = [];
 const pointers = new Map();
 const nodeElements = new Map();
@@ -219,30 +219,11 @@ function restoreVisibleViewport(reason = "resume") {
   if (document.visibilityState === "hidden") return;
   syncVisualViewportChrome();
   scheduleViewportDebug(reason);
-  scheduleViewportWake();
   requestAnimationFrame(() => {
     syncVisualViewportChrome();
     renderEdges();
     updateHistoryControls();
   });
-}
-
-function scheduleViewportWake() {
-  clearTimeout(viewportWakeTimer);
-  viewportWakeTimer = setTimeout(() => {
-    viewportWakeTimer = 0;
-    if (document.visibilityState === "hidden") return;
-    requestAnimationFrame(() => {
-      const { x, y, scale } = board.view;
-      world.style.transform = `translate3d(${x + 0.25}px, ${y}px, 0) scale(${scale})`;
-      viewport.style.setProperty("--grid-x", `${x + 0.25}px`);
-      recordViewportDebug("wake:0");
-      requestAnimationFrame(() => {
-        applyView();
-        recordViewportDebug("wake:raf");
-      });
-    });
-  }, 120);
 }
 
 function handleVisualViewportChange(event) {
@@ -262,7 +243,7 @@ function setupViewportDebug() {
   viewportDebugPanel = document.createElement("output");
   viewportDebugPanel.id = "viewport-debug";
   viewportDebugPanel.setAttribute("aria-hidden", "true");
-  viewportDebugPanel.style.cssText = "position:fixed;left:8px;bottom:76px;z-index:2147483647;max-width:calc(100vw - 76px);padding:6px 8px;border-radius:8px;background:rgba(20,24,32,.88);color:#fff;font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;text-align:left";
+  viewportDebugPanel.style.cssText = "position:fixed;left:8px;bottom:76px;z-index:2147483647;max-width:calc(100vw - 96px);padding:5px 7px;border-radius:7px;background:rgba(20,24,32,.84);color:#fff;font:9px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;text-align:left";
   document.body.append(viewportDebugPanel);
   window.addEventListener("focus", () => scheduleViewportDebug("focus"));
   recordViewportDebug("boot");
@@ -281,8 +262,6 @@ function recordViewportDebug(eventName) {
   if (!viewportDebugPanel) return;
   viewportDebugEvents.push(eventName);
   viewportDebugEvents.splice(0, Math.max(0, viewportDebugEvents.length - 6));
-  const visual = window.visualViewport;
-  const cssOffset = getComputedStyle(document.documentElement).getPropertyValue("--visual-offset-top").trim() || "0px";
   const navigationType = performance.getEntriesByType("navigation")[0]?.type || "-";
   const pageShow = viewportDebugPageShowPersisted === null ? "-" : viewportDebugPageShowPersisted ? "1" : "0";
   const metric = (value) => Number.isFinite(value) ? Math.round(value * 10) / 10 : "-";
@@ -294,16 +273,13 @@ function recordViewportDebug(eventName) {
     const y = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
     const hit = document.elementFromPoint(x, y);
     const hittable = hit === element || element.contains(hit);
-    return `${name} y${metric(rect.top)}..${metric(rect.bottom)} p${style.position[0]}d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
+    return `${name} p${style.position[0]}d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
   };
   viewportDebugPanel.textContent = [
     `${VIEWPORT_DEBUG_BUILD} · ${eventName} · ${document.visibilityState}`,
     `ev ${viewportDebugEvents.join(">")}`,
-    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} tree ${chromeLayer?.id || "-"}`,
-    `win ${innerWidth}x${innerHeight} y${metric(scrollY)} doc${document.documentElement.clientHeight}`,
-    `vv t${metric(visual?.offsetTop)} h${metric(visual?.height)} p${metric(visual?.pageTop)} s${metric(visual?.scale)} css ${cssOffset}`,
-    control("app", document.querySelector(".app-mark")),
-    control("menu", menuButton),
+    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} tree ${chromeLayer?.id || "-"} s${metric(board.view.scale)} c${viewport.classList.contains("overview-compact") ? 1 : 0}`,
+    `${control("app", document.querySelector(".app-mark"))} | ${control("menu", menuButton)}`,
     `${control("hist", historyTools)} | ${control("theme", themeButton)}`,
   ].join("\n");
 }
@@ -1812,6 +1788,23 @@ function editNode(id, isNew = false, fromPen = false) {
   finishEditing();
   const element = nodeElements.get(id);
   if (!element) return;
+  const node = findNode(id, false);
+  if (node && board.view.scale < EDIT_VIEW_SCALE) {
+    const previousScale = board.view.scale;
+    const centerX = node.x + element.offsetWidth / 2;
+    const centerY = node.y + element.offsetHeight / 2;
+    const screenX = board.view.x + centerX * previousScale;
+    const screenY = board.view.y + centerY * previousScale;
+    viewport.classList.add("revealing-note");
+    board.view.scale = EDIT_VIEW_SCALE;
+    board.view.x = screenX - centerX * EDIT_VIEW_SCALE;
+    board.view.y = screenY - centerY * EDIT_VIEW_SCALE;
+    applyView();
+    scheduleSave();
+    updateHistoryControls();
+    clearTimeout(revealMotionTimer);
+    revealMotionTimer = setTimeout(finishRevealMotion, 220);
+  }
   const editor = element.querySelector(".node-editor");
   element.classList.add("editing");
   element.dataset.new = String(isNew);
@@ -1822,6 +1815,7 @@ function editNode(id, isNew = false, fromPen = false) {
   resizeEditor(element);
   editor.focus();
   editor.setSelectionRange(editor.value.length, editor.value.length);
+  softlyRevealNode(id);
 }
 
 function finishEditing(onlyId = null, explicitCancel = false) {
@@ -2355,7 +2349,9 @@ function positionEdgeControls() {
 function applyView() {
   const { x, y, scale } = board.view;
   const overview = overviewLevel(scale);
-  world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  world.style.transform = overview.compact
+    ? `translate(${x}px, ${y}px) scale(${scale})`
+    : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
   world.style.setProperty("--overview-min-width", `${64 / overview.renderScale}px`);
   world.style.setProperty("--overview-min-height", `${20 / overview.renderScale}px`);
   world.style.setProperty("--overview-border-width", `${1.15 / scale}px`);
