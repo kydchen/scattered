@@ -15,7 +15,7 @@ const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "probe-e1";
+const VIEWPORT_DEBUG_BUILD = "probe-f1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -249,8 +249,8 @@ function setupViewportDebug() {
   probes.style.cssText = "position:fixed;left:8px;bottom:18px;z-index:2147483647;display:flex;gap:6px";
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "E";
-  button.setAttribute("aria-label", "Viewport probe E");
+  button.textContent = "F";
+  button.setAttribute("aria-label", "Viewport probe F");
   button.style.cssText = "width:36px;height:36px;padding:0;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(20,24,32,.84);color:#fff;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-tap-highlight-color:transparent;touch-action:manipulation";
   button.addEventListener("click", runViewportProbe);
   probes.append(button);
@@ -260,18 +260,16 @@ function setupViewportDebug() {
 }
 
 function runViewportProbe() {
-  const previousView = { ...board.view };
-  const center = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, previousView);
-  board.view.scale = EDIT_VIEW_SCALE;
-  board.view.x = viewport.clientWidth / 2 - center.x * EDIT_VIEW_SCALE;
-  board.view.y = viewport.clientHeight / 2 - center.y * EDIT_VIEW_SCALE;
-  applyView();
-  recordViewportDebug("probe:E+");
-  requestAnimationFrame(() => {
-    Object.assign(board.view, previousView);
+  const center = screenToWorld({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, board.view);
+  const x = viewport.clientWidth / 2 - center.x * EDIT_VIEW_SCALE;
+  const y = viewport.clientHeight / 2 - center.y * EDIT_VIEW_SCALE;
+  viewport.classList.remove("overview", "overview-compact", "overview-distant");
+  world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${EDIT_VIEW_SCALE})`;
+  recordViewportDebug("probe:F+");
+  setTimeout(() => {
     applyView();
-    recordViewportDebug("probe:E");
-  });
+    recordViewportDebug("probe:F");
+  }, 1_000);
 }
 
 function scheduleViewportDebug(reason) {
