@@ -1342,9 +1342,6 @@ assert.match(app, /addEventListener\("pageshow", \(event\) => \{[\s\S]*?viewport
 assert.match(app, /onConflict:[^\n]*showToast\([^\n]*4_800\)/);
 assert.match(app, /visualViewport\?\.addEventListener\("scroll", handleVisualViewportChange\)/);
 assert.match(app, /function syncVisualViewportChrome\(\)[\s\S]*?--visual-offset-top[\s\S]*?visual\?\.offsetTop/);
-assert.match(app, /function restoreVisibleViewport\([^)]*\)[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?resetRootViewportScroll\(\)/);
-assert.match(app, /function handleVisualViewportChange\([^)]*\)[\s\S]*?requestAnimationFrame\(resetRootViewportScroll\)/);
-assert.match(app, /function resetRootViewportScroll\(\)[\s\S]*?document\.documentElement\.scrollTop = 0;[\s\S]*?document\.body\.scrollTop = 0;/);
 assert.match(app, /viewportParams\.get\("viewport-debug"\) === "1"/);
 const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n\nboardsButton/)?.[0] || "";
 assert.match(viewportDebugSource, /getBoundingClientRect[\s\S]*?elementFromPoint/);
@@ -1403,7 +1400,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v62/);
+assert.match(serviceWorker, /scattered-v63/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

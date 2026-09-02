@@ -220,7 +220,6 @@ function restoreVisibleViewport(reason = "resume") {
   syncVisualViewportChrome();
   scheduleViewportDebug(reason);
   requestAnimationFrame(() => {
-    resetRootViewportScroll();
     syncVisualViewportChrome();
     renderEdges();
     updateHistoryControls();
@@ -230,14 +229,7 @@ function restoreVisibleViewport(reason = "resume") {
 function handleVisualViewportChange(event) {
   syncVisualViewportChrome();
   recordViewportDebug(`visual-${event.type}`);
-  requestAnimationFrame(resetRootViewportScroll);
   revealEditingNode();
-}
-
-function resetRootViewportScroll() {
-  // Reassign even when zero: iOS WebKit can paint a stale viewport offset while reporting scrollTop 0.
-  document.documentElement.scrollTop = 0;
-  document.body.scrollTop = 0;
 }
 
 function syncVisualViewportChrome() {
