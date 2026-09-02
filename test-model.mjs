@@ -1336,12 +1336,16 @@ assert.match(app, /if \(!driveSync\.connected && workspaceSlots\.accountKey\)[\s
 assert.match(app, /async function disconnectDriveAccount[\s\S]*?driveSync\.disconnect\(\)[\s\S]*?switchToGuest\(\)[\s\S]*?loadWorkspace\(workspaceStorage\)[\s\S]*?setBoardPickerOpen\(false\)/);
 assert.match(app, /async function switchDriveAccount[\s\S]*?previousWasGuest[\s\S]*?mergeSyncWorkspaces\(guest, accountSnapshot, \[\]\)[\s\S]*?resetGuest\(\)/);
 assert.match(app, /applyDriveWorkspace[\s\S]*?fitIncoming[\s\S]*?replaceBoard\(applied\.nextBoard, applied\.fitIncoming\)/);
-assert.match(app, /addEventListener\("pageshow", \(event\) => restoreVisibleViewport/);
+assert.match(app, /addEventListener\("pageshow", \(event\) => \{[\s\S]*?viewportDebugPageShowPersisted = event\.persisted;[\s\S]*?restoreVisibleViewport/);
 assert.match(app, /onConflict:[^\n]*showToast\([^\n]*4_800\)/);
 assert.match(app, /visualViewport\?\.addEventListener\("scroll", handleVisualViewportChange\)/);
 assert.match(app, /function syncVisualViewportChrome\(\)[\s\S]*?--visual-offset-top[\s\S]*?visual\?\.offsetTop/);
-assert.match(app, /new URLSearchParams\(location\.search\)\.get\("viewport-debug"\) === "1"/);
-assert.match(app, /function recordViewportDebug[\s\S]*?visualViewport[\s\S]*?--visual-offset-top[\s\S]*?getBoundingClientRect[\s\S]*?elementFromPoint/);
+assert.match(app, /viewportParams\.get\("viewport-debug"\) === "1"/);
+assert.match(app, /viewportParams\.get\("compositor-test"\) === "stack"[\s\S]*?classList\.toggle\("compositor-stack-test"/);
+const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n\nboardsButton/)?.[0] || "";
+assert.match(viewportDebugSource, /visualViewport[\s\S]*?--visual-offset-top[\s\S]*?getBoundingClientRect[\s\S]*?elementFromPoint/);
+assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?wasDiscarded[\s\S]*?serviceWorker[\s\S]*?willChange/);
+assert.match(css, /#viewport\.compositor-stack-test\s*\{[^}]*will-change:\s*z-index;/s);
 assert.match(app, /recordViewportDebug\(`\$\{reason\}:800`\)/);
 assert.match(app, /function runDragAutoPan[\s\S]*?edgeAutoPanVelocity[\s\S]*?requestAnimationFrame\(runDragAutoPan\)/);
 assert.match(app, /function moveDraggedNodes[\s\S]*?positionNode/);
@@ -1379,7 +1383,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v52/);
+assert.match(serviceWorker, /scattered-v53/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

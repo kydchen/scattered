@@ -12,8 +12,12 @@ const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const DEFAULT_NODE_WIDTH = 218;
 const DEFAULT_NODE_HEIGHT = 48;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
-const viewportDebugEnabled = new URLSearchParams(location.search).get("viewport-debug") === "1";
+const viewportParams = new URLSearchParams(location.search);
+const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
+const viewportCompositorTest = viewportParams.get("compositor-test") === "stack";
+const VIEWPORT_DEBUG_BUILD = "paint-a1";
 const viewport = document.querySelector("#viewport");
+viewport.classList.toggle("compositor-stack-test", viewportCompositorTest);
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
 const edgeLayer = document.querySelector("#edge-layer");
@@ -108,6 +112,7 @@ let searchReturnFocus = null;
 let announcementFrame = 0;
 let driveErrorNotified = false;
 let viewportDebugPanel = null;
+let viewportDebugPageShowPersisted = null;
 const viewportDebugEvents = [];
 const pointers = new Map();
 const nodeElements = new Map();
@@ -179,7 +184,10 @@ window.addEventListener("resize", () => {
   updateHistoryControls();
   revealEditingNode();
 });
-window.addEventListener("pageshow", (event) => restoreVisibleViewport(`pageshow${event.persisted ? "P" : ""}`));
+window.addEventListener("pageshow", (event) => {
+  viewportDebugPageShowPersisted = event.persisted;
+  restoreVisibleViewport(`pageshow${event.persisted ? "P" : ""}`);
+});
 window.visualViewport?.addEventListener("resize", handleVisualViewportChange);
 window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
 window.addEventListener("blur", () => {
@@ -255,7 +263,10 @@ function recordViewportDebug(eventName) {
   viewportDebugEvents.push(eventName);
   viewportDebugEvents.splice(0, Math.max(0, viewportDebugEvents.length - 6));
   const visual = window.visualViewport;
-  const cssOffset = getComputedStyle(viewport).getPropertyValue("--visual-offset-top").trim() || "0px";
+  const viewportStyle = getComputedStyle(viewport);
+  const cssOffset = viewportStyle.getPropertyValue("--visual-offset-top").trim() || "0px";
+  const navigationType = performance.getEntriesByType("navigation")[0]?.type || "-";
+  const pageShow = viewportDebugPageShowPersisted === null ? "-" : viewportDebugPageShowPersisted ? "1" : "0";
   const metric = (value) => Number.isFinite(value) ? Math.round(value * 10) / 10 : "-";
   const control = (name, element) => {
     if (!element) return `${name} missing`;
@@ -268,8 +279,9 @@ function recordViewportDebug(eventName) {
     return `${name} y${metric(rect.top)}..${metric(rect.bottom)} d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
   };
   viewportDebugPanel.textContent = [
-    `${eventName} · ${document.visibilityState}`,
+    `${VIEWPORT_DEBUG_BUILD} · ${viewportCompositorTest ? "stack" : "base"} · ${eventName} · ${document.visibilityState}`,
     `ev ${viewportDebugEvents.join(">")}`,
+    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} wc ${viewportStyle.willChange}`,
     `win ${innerWidth}x${innerHeight} y${metric(scrollY)} doc${document.documentElement.clientHeight}`,
     `vv t${metric(visual?.offsetTop)} h${metric(visual?.height)} p${metric(visual?.pageTop)} s${metric(visual?.scale)} css ${cssOffset}`,
     control("app", document.querySelector(".app-mark")),

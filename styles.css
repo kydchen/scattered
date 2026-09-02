@@ -148,6 +148,10 @@ button {
   background-size: var(--grid-size, 28px) var(--grid-size, 28px);
 }
 
+#viewport.compositor-stack-test {
+  will-change: z-index;
+}
+
 #viewport.overview {
   background-image: radial-gradient(circle, var(--overview-grid) 1px, transparent 1.2px);
 }
