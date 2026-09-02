@@ -88,6 +88,8 @@ let saveFailureMessage = "";
 let workspaceActionPending = false;
 let connectionStyle = readConnectionStyle();
 let edgeRenderFrame = 0;
+let dragAutoPanFrame = 0;
+let dragAutoPanAt = 0;
 let revealMotionTimer = null;
 let revealViewportFrame = 0;
 let palmGuardUntil = 0;
@@ -134,6 +136,7 @@ if (!driveSync.connected && workspaceSlots.accountKey) {
   storageReady = guestWorkspace.storageReady;
 }
 
+syncVisualViewportChrome();
 applyTranslations();
 renderAll();
 applyView();
@@ -166,13 +169,14 @@ document.addEventListener("keyup", (event) => {
 });
 window.addEventListener("resize", () => {
   hideColorPalette();
+  syncVisualViewportChrome();
   renderEdges();
   updateHistoryControls();
   revealEditingNode();
 });
 window.addEventListener("pageshow", restoreVisibleViewport);
-window.visualViewport?.addEventListener("resize", revealEditingNode);
-window.visualViewport?.addEventListener("scroll", revealEditingNode);
+window.visualViewport?.addEventListener("resize", handleVisualViewportChange);
+window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
 window.addEventListener("blur", () => {
   spacePressed = false;
   viewport.classList.remove("pan-ready", "panning");
@@ -197,11 +201,23 @@ document.addEventListener("visibilitychange", () => {
 
 function restoreVisibleViewport() {
   if (document.visibilityState === "hidden") return;
+  syncVisualViewportChrome();
   requestAnimationFrame(() => {
-    window.scrollTo(0, 0);
+    syncVisualViewportChrome();
     renderEdges();
     updateHistoryControls();
   });
+}
+
+function handleVisualViewportChange() {
+  syncVisualViewportChrome();
+  revealEditingNode();
+}
+
+function syncVisualViewportChrome() {
+  const visual = window.visualViewport;
+  const offsetTop = Number.isFinite(visual?.offsetTop) ? Math.max(0, visual.offsetTop) : 0;
+  viewport.style.setProperty("--visual-offset-top", `${offsetTop}px`);
 }
 
 boardsButton.addEventListener("click", (event) => {
@@ -607,21 +623,14 @@ function onPointerMove(event) {
   if (mode?.type === "node" && mode.pointerId === event.pointerId) {
     const screenDx = event.clientX - mode.startX;
     const screenDy = event.clientY - mode.startY;
-    const dx = screenDx / board.view.scale;
-    const dy = screenDy / board.view.scale;
     if (!mode.moved && hasDragIntent(mode.pointerType, screenDx, screenDy)) {
       clearLongPress(mode);
       checkpoint();
       mode.moved = true;
     }
     if (!mode.moved) return;
-    mode.positions.forEach((start) => {
-      const node = findNode(start.id);
-      node.x = start.x + dx;
-      node.y = start.y + dy;
-      positionNode(node);
-    });
-    queueEdgeRender();
+    moveDraggedNodes(mode, event.clientX, event.clientY);
+    requestDragAutoPan();
     return;
   }
 
@@ -633,7 +642,94 @@ function onPointerMove(event) {
     mode.y = event.clientY;
     updateLinkPreview(mode.sourceIds, event.clientX, event.clientY);
     updateLinkTarget(mode.sourceIds, event.clientX, event.clientY);
+    if (mode.moved) requestDragAutoPan();
   }
+}
+
+function moveDraggedNodes(target, screenX, screenY) {
+  const dx = (screenX - target.startX) / board.view.scale;
+  const dy = (screenY - target.startY) / board.view.scale;
+  target.positions.forEach((start) => {
+    const node = findNode(start.id);
+    node.x = start.x + dx;
+    node.y = start.y + dy;
+    positionNode(node);
+  });
+  queueEdgeRender();
+}
+
+function edgeAutoPanVelocity(point, bounds, inset = 56, maxSpeed = 640) {
+  const axis = (value, start, size) => {
+    const end = start + size;
+    const zone = Math.max(1, Math.min(inset, size / 2));
+    if (value < start + zone) {
+      const strength = 1 - Math.max(0, value - start) / zone;
+      return maxSpeed * strength * strength;
+    }
+    if (value > end - zone) {
+      const strength = 1 - Math.max(0, end - value) / zone;
+      return -maxSpeed * strength * strength;
+    }
+    return 0;
+  };
+  return {
+    x: axis(point.x, bounds.left, bounds.width),
+    y: axis(point.y, bounds.top, bounds.height),
+  };
+}
+
+function requestDragAutoPan() {
+  if (!dragAutoPanFrame) dragAutoPanFrame = requestAnimationFrame(runDragAutoPan);
+}
+
+function runDragAutoPan(timestamp) {
+  dragAutoPanFrame = 0;
+  if (!mode?.moved || !["node", "link"].includes(mode.type)) {
+    dragAutoPanAt = 0;
+    return;
+  }
+  const pointer = pointers.get(mode.pointerId);
+  if (!pointer) {
+    dragAutoPanAt = 0;
+    return;
+  }
+  const visual = window.visualViewport;
+  const velocity = edgeAutoPanVelocity(pointer, {
+    left: 0,
+    top: 0,
+    width: visual?.width || viewport.clientWidth,
+    height: visual?.height || viewport.clientHeight,
+  });
+  if (!velocity.x && !velocity.y) {
+    dragAutoPanAt = 0;
+    return;
+  }
+  const elapsed = dragAutoPanAt ? Math.min((timestamp - dragAutoPanAt) / 1000, 0.032) : 0;
+  dragAutoPanAt = timestamp;
+  if (elapsed > 0) {
+    const dx = velocity.x * elapsed;
+    const dy = velocity.y * elapsed;
+    board.view.x += dx;
+    board.view.y += dy;
+    mode.autoPanned = true;
+    if (mode.type === "node") {
+      mode.startX += dx;
+      mode.startY += dy;
+      moveDraggedNodes(mode, pointer.x, pointer.y);
+    }
+    applyView();
+    if (mode.type === "link") {
+      updateLinkPreview(mode.sourceIds, pointer.x, pointer.y);
+      updateLinkTarget(mode.sourceIds, pointer.x, pointer.y);
+    }
+  }
+  dragAutoPanFrame = requestAnimationFrame(runDragAutoPan);
+}
+
+function stopDragAutoPan() {
+  cancelAnimationFrame(dragAutoPanFrame);
+  dragAutoPanFrame = 0;
+  dragAutoPanAt = 0;
 }
 
 function onPointerUp(event) {
@@ -655,6 +751,7 @@ function onPointerUp(event) {
   }
 
   if (currentMode?.pointerId !== event.pointerId) return;
+  stopDragAutoPan();
 
   if (currentMode?.type === "lasso" || currentMode?.type === "marquee") {
     if (currentMode.moved) finishLasso(currentMode.points, currentMode.toggle);
@@ -697,12 +794,15 @@ function onPointerUp(event) {
     document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
   }
 
+  if (currentMode?.autoPanned) scheduleSave();
   mode = null;
   viewport.classList.remove("panning");
   updateHistoryControls();
 }
 
 function cancelGesture() {
+  const autoPanned = mode?.autoPanned;
+  stopDragAutoPan();
   clearLongPress();
   pointers.clear();
   mode = null;
@@ -711,6 +811,7 @@ function cancelGesture() {
   linkPreview.toggleAttribute("hidden", true);
   hideLasso();
   document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
+  if (autoPanned) scheduleSave();
 }
 
 function onWheel(event) {
@@ -1669,6 +1770,7 @@ function syncNodeContent(element, node) {
   const text = element.querySelector(".node-text");
   const editor = element.querySelector(".node-editor");
   text.textContent = empty ? prompt : node.text;
+  element.dataset.overviewLabel = (empty ? prompt : node.text).trim().replace(/\s+/g, " ").slice(0, 80);
   if (empty) text.lang = promptLanguage;
   else text.removeAttribute("lang");
   editor.placeholder = prompt;
@@ -2165,12 +2267,21 @@ function positionEdgeControls() {
 function applyView() {
   const { x, y, scale } = board.view;
   world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  world.style.setProperty("--overview-min-width", `${56 / scale}px`);
+  world.style.setProperty("--overview-min-height", `${18 / scale}px`);
+  world.style.setProperty("--overview-border-width", `${1 / scale}px`);
+  world.style.setProperty("--overview-radius", `${6 / scale}px`);
+  world.style.setProperty("--overview-shadow-y", `${2 / scale}px`);
+  world.style.setProperty("--overview-shadow-blur", `${8 / scale}px`);
+  world.style.setProperty("--overview-font-size", `${9 / scale}px`);
+  world.style.setProperty("--overview-label-padding", `${6 / scale}px`);
   world.style.setProperty("--control-scale", String(1 / scale));
   world.style.setProperty("--direct-control-offset", `${-(22 + 34 / scale)}px`);
   world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);
   viewport.style.setProperty("--grid-x", `${x}px`);
   viewport.style.setProperty("--grid-y", `${y}px`);
-  viewport.style.setProperty("--grid-size", `${Math.max(8, 28 * scale)}px`);
+  viewport.style.setProperty("--grid-size", `${Math.max(16, 28 * scale)}px`);
+  viewport.classList.toggle("overview", scale < 0.3);
   const markerSize = 12 / scale;
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);
