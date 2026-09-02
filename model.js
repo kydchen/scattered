@@ -3,6 +3,7 @@ export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 export const MAX_IMPORT_NODES = 500;
 export const MAX_IMPORT_EDGES = 1_000;
 export const MIN_VIEW_SCALE = 0.1;
+const MIN_IMPORT_VIEW_SCALE = 0.02;
 const OVERVIEW_START_SCALE = 9 / 17;
 const OVERVIEW_COMPACT_SCALE = 0.3;
 const OVERVIEW_DETAIL_FLOOR = 0.1;
@@ -119,7 +120,7 @@ function validateImportedBoard(value, maxNodes, maxEdges) {
     !validImportCoordinate(value.view.x)
     || !validImportCoordinate(value.view.y)
     || !Number.isFinite(value.view.scale)
-    || value.view.scale < MIN_VIEW_SCALE
+    || value.view.scale < MIN_IMPORT_VIEW_SCALE
     || value.view.scale > 2
   ) throw new Error("import.invalid");
 }

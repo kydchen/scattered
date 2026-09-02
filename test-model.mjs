@@ -254,6 +254,14 @@ const validImport = {
 };
 assert.deepEqual(parseImportedBoard(JSON.stringify(validImport)), validImport);
 assert.equal(parseImportedBoard(JSON.stringify({ ...validImport, version: 3, edges: [{ ...validImport.edges[0], arrow: true }] })).edges[0].arrow, "forward");
+assert.equal(parseImportedBoard(JSON.stringify({
+  ...validImport,
+  view: { x: 0, y: 0, scale: 0.02 },
+})).view.scale, MIN_VIEW_SCALE);
+assert.throws(() => parseImportedBoard(JSON.stringify({
+  ...validImport,
+  view: { x: 0, y: 0, scale: 0.019 },
+})), /import\.invalid/);
 const legacyDerivedEdgeId = "a\u0000b";
 assert.equal(parseImportedBoard(JSON.stringify({
   ...validImport,
@@ -1202,8 +1210,6 @@ const onKeyDownSource = app.match(/function onKeyDown[\s\S]*?\n}\n\nfunction ini
 const applyHistorySource = app.match(/function applyHistory[\s\S]*?\n}\n\nfunction updateHistoryControls/)?.[0] ?? "";
 const finishKeyboardLinkSource = app.match(/function finishKeyboardLink[\s\S]*?\n}\n\nfunction cancelKeyboardLink/)?.[0] ?? "";
 const menuMarkup = html.match(/<section id="menu"[\s\S]*?<\/section>/)?.[0] ?? "";
-const driveSyncErrorCodeSource = app.match(/function driveSyncErrorCode[\s\S]*?\n}/)?.[0] ?? "";
-const driveSyncErrorCode = Function(`"use strict"; ${driveSyncErrorCodeSource}; return driveSyncErrorCode;`)();
 const edgeAutoPanVelocitySource = app.match(/function edgeAutoPanVelocity[\s\S]*?\n}/)?.[0] ?? "";
 const edgeAutoPanVelocity = Function(`"use strict"; ${edgeAutoPanVelocitySource}; return edgeAutoPanVelocity;`)();
 const autoPanViewport = { left: 0, top: 0, width: 390, height: 844 };
@@ -1212,11 +1218,6 @@ assert.deepEqual(edgeAutoPanVelocity({ x: 0, y: 422 }, autoPanViewport), { x: 64
 assert.deepEqual(edgeAutoPanVelocity({ x: 390, y: 844 }, autoPanViewport), { x: -640, y: -640 });
 assert.ok(edgeAutoPanVelocity({ x: 28, y: 422 }, autoPanViewport).x > 0);
 assert.ok(edgeAutoPanVelocity({ x: 28, y: 422 }, autoPanViewport).x < 640);
-assert.equal(driveSyncErrorCode({ code: "auth" }), "auth");
-assert.equal(driveSyncErrorCode(new Error("Drive sync failed: drive-403")), "drive-403");
-assert.equal(driveSyncErrorCode(Object.assign(new TypeError("Load failed"), { syncStage: "prepare" })), "prepare-network");
-assert.equal(driveSyncErrorCode(Object.assign(new Error("sync.invalidWorkspace"), { syncStage: "local" })), "local-sync-invalidworkspace");
-assert.equal(driveSyncErrorCode(new Error("Unexpected")), "unknown");
 assert.match(html, /<meta name="format-detection" content="telephone=no" \/>/);
 const selectionArrowMarkup = html.match(/<button id="arrow-selection"[\s\S]*?<\/button>/)?.[0] ?? "";
 const editorFocusSources = ["editBoardTitle", "editNode", "openEdgeLabelEditor"].map((name) => (
@@ -1408,9 +1409,14 @@ const editNodeSource = app.match(/function editNode\(id, isNew = false, fromPen 
 assert.match(editNodeSource, /board\.view\.scale < EDIT_VIEW_SCALE[\s\S]*?screenX[\s\S]*?board\.view\.scale = EDIT_VIEW_SCALE[\s\S]*?applyView\(\)[\s\S]*?softlyRevealNode\(id\)/);
 assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy saved");
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
+[messages.en.driveSyncFailed, messages["zh-Hans"].driveSyncFailed].forEach((message) => {
+  assert.match(message, /Drive sync paused/);
+  assert.match(message, /云端同步暂停/);
+});
+assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v65/);
+assert.match(serviceWorker, /scattered-v66/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
