@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Chrome Resume Probe R1</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        background: #eef2f7;
+        color: #172033;
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      }
+
+      .probe {
+        height: 48px;
+        display: grid;
+        place-items: center;
+        padding: 0 8px;
+        border: 2px solid #172033;
+        border-radius: 10px;
+        color: #172033;
+        font-weight: 700;
+        text-align: center;
+        z-index: 10;
+      }
+
+      .fixed-top {
+        position: fixed;
+        top: max(12px, env(safe-area-inset-top));
+        left: 12px;
+        width: calc(50vw - 18px);
+        background: #ff9f8f;
+      }
+
+      .absolute-top {
+        position: absolute;
+        top: max(12px, env(safe-area-inset-top));
+        right: 12px;
+        width: calc(50vw - 18px);
+        background: #8fddb1;
+      }
+
+      .fixed-top-blur {
+        position: fixed;
+        top: calc(max(12px, env(safe-area-inset-top)) + 60px);
+        left: 12px;
+        right: 12px;
+        background: rgba(111, 171, 255, 0.62);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      .fixed-middle {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 190px;
+        background: #c7a6f5;
+        transform: translate(-50%, -50%);
+      }
+
+      .fixed-bottom {
+        position: fixed;
+        right: 12px;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        left: 12px;
+        background: #ffd878;
+      }
+
+      main {
+        max-width: 520px;
+        margin: 0 auto;
+        padding: calc(max(12px, env(safe-area-inset-top)) + 132px) 24px 92px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 8px 0;
+      }
+
+      .build {
+        color: #5f6b7d;
+        font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .legend {
+        margin-top: 22px;
+        padding: 14px 16px;
+        border: 1px solid #c9d2df;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.78);
+      }
+
+      .legend p {
+        margin: 4px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="probe fixed-top">A · fixed top</div>
+    <div class="probe absolute-top">B · absolute top</div>
+    <div class="probe fixed-top-blur">C · fixed top + blur</div>
+
+    <main>
+      <h1>Chrome Resume Probe</h1>
+      <p class="build">R1 · static HTML/CSS · no JavaScript</p>
+      <p>Confirm all five colored blocks, force-close Chrome, then reopen without touching the page.</p>
+
+      <section class="legend" aria-label="Probe legend">
+        <p><strong>A</strong> fixed at top, opaque</p>
+        <p><strong>B</strong> absolute at top, opaque</p>
+        <p><strong>C</strong> fixed at top, backdrop blur</p>
+        <p><strong>D</strong> fixed in the middle</p>
+        <p><strong>E</strong> fixed at bottom</p>
+      </section>
+    </main>
+
+    <div class="probe fixed-middle">D · fixed middle</div>
+    <div class="probe fixed-bottom">E · fixed bottom</div>
+  </body>
+</html>
