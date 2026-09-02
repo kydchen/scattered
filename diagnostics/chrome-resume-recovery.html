@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="robots" content="noindex,nofollow" />
-    <title>Chrome Resume Recovery Probe R3</title>
+    <title>Chrome Resume Recovery Probe R4</title>
     <style>
       * {
         box-sizing: border-box;
@@ -22,7 +22,7 @@
 
       body {
         width: 100%;
-        min-height: calc(100% + 2px);
+        min-height: calc(100% + 96px);
         margin: 0;
         background: #eef2f7;
         color: #172033;
@@ -163,7 +163,7 @@
 
     <main>
       <h1>Chrome Resume Recovery</h1>
-      <p class="build">R3 · 16px native pull strip + locked canvas</p>
+      <p class="build">R4 · 96px scroll range + 16px native pull strip</p>
       <p>冷恢复后若 A/B/C 消失：从网页最顶边向下短拉约 40px，在刷新圆圈出现前松手。</p>
       <p>请记录：按钮是否恢复、页面是否真的刷新，以及中部区域是否仍不能拖动网页。</p>
     </main>
@@ -178,7 +178,7 @@
         const strip = document.querySelector("#recovery-strip");
         const root = document.scrollingElement;
         const eventLog = [];
-        const bootKey = "scattered-chrome-resume-r3-boots";
+        const bootKey = "scattered-chrome-resume-r4-boots";
         const boots = Number(sessionStorage.getItem(bootKey) || 0) + 1;
         sessionStorage.setItem(bootKey, String(boots));
 
@@ -198,7 +198,7 @@
           const navigation = performance.getEntriesByType("navigation")[0]?.type || "unknown";
           const hit = document.elementFromPoint(8, 8);
           metrics.textContent = [
-            `R3 ${label} · boot ${boots} ${navigation}`,
+            `R4 ${label} · boot ${boots} ${navigation}`,
             `events ${eventLog.join(">")}`,
             `scroll ${number(scrollY)} root ${number(root?.scrollTop)}`,
             `window ${innerWidth}x${innerHeight} doc ${document.documentElement.clientHeight}/${document.documentElement.scrollHeight}`,

@@ -1593,6 +1593,7 @@ assert.match(license, /^MIT License[\s\S]*Copyright \(c\) 2026 kydchen/);
 assert.equal(existsSync(new URL("./docs/scattered-canvas.png", import.meta.url)), true);
 assert.match(chromeResumeRecovery, /overscroll-behavior-y:\s*auto[\s\S]*?#recovery-strip[\s\S]*?touch-action:\s*pan-y/);
 assert.match(chromeResumeRecovery, /#gesture-lock[\s\S]*?touch-action:\s*none/);
+assert.match(chromeResumeRecovery, /min-height:\s*calc\(100% \+ 96px\)/);
 assert.match(chromeResumeRecovery, /sessionStorage[\s\S]*?performance\.getEntriesByType\("navigation"\)/);
 
 console.log("model checks passed");
