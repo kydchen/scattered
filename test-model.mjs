@@ -61,7 +61,7 @@ assert.equal(readableOverview.active, true);
 assert.ok(readableOverview.progress > 0 && readableOverview.progress < 1);
 const compactOverview = overviewLevel(MIN_VIEW_SCALE);
 assert.equal(compactOverview.renderScale, 0.1);
-assert.equal(compactOverview.distant, true);
+assert.equal(compactOverview.distant, false);
 assert.equal(64 / compactOverview.renderScale, 640);
 
 const copiedGraph = copySelectedGraph({
@@ -150,9 +150,11 @@ const phoneOverview = fitBoundsToViewport(
   72,
 );
 assert.ok(phoneOverview.scale < 0.35);
-assert.ok(phoneOverview.scale >= MIN_VIEW_SCALE);
-assert.ok(-3000 * phoneOverview.scale + phoneOverview.x >= 71.9);
-assert.ok(3000 * phoneOverview.scale + phoneOverview.x <= 318.1);
+assert.equal(phoneOverview.scale, MIN_VIEW_SCALE);
+assert.equal(phoneOverview.x, 195);
+assert.equal(phoneOverview.y, 422);
+assert.ok(-3000 * phoneOverview.scale + phoneOverview.x < 0);
+assert.ok(3000 * phoneOverview.scale + phoneOverview.x > 390);
 assert.equal(normalizeBoard({ ...blankBoard(), view: phoneOverview }).view.scale, phoneOverview.scale);
 
 assert.equal(shouldPinch(["touch", "touch"]), true);
@@ -1341,11 +1343,14 @@ assert.match(app, /onConflict:[^\n]*showToast\([^\n]*4_800\)/);
 assert.match(app, /visualViewport\?\.addEventListener\("scroll", handleVisualViewportChange\)/);
 assert.match(app, /function syncVisualViewportChrome\(\)[\s\S]*?--visual-offset-top[\s\S]*?visual\?\.offsetTop/);
 assert.match(app, /viewportParams\.get\("viewport-debug"\) === "1"/);
-assert.match(app, /viewportParams\.get\("compositor-test"\) === "stack"[\s\S]*?classList\.toggle\("compositor-stack-test"/);
 const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n\nboardsButton/)?.[0] || "";
 assert.match(viewportDebugSource, /visualViewport[\s\S]*?--visual-offset-top[\s\S]*?getBoundingClientRect[\s\S]*?elementFromPoint/);
-assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?wasDiscarded[\s\S]*?serviceWorker[\s\S]*?willChange/);
-assert.match(css, /#viewport\.compositor-stack-test\s*\{[^}]*will-change:\s*z-index;/s);
+assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?wasDiscarded[\s\S]*?serviceWorker[\s\S]*?chromeLayer/);
+assert.match(html, /<\/main>\s*<div id="chrome-layer">[\s\S]*?class="app-mark"[\s\S]*?id="history-tools"[\s\S]*?id="menu-button"[\s\S]*?id="announcer"[\s\S]*?<\/div>\s*<template id="node-template">/);
+assert.match(css, /#chrome-layer\s*\{[^}]*position:\s*fixed;[^}]*pointer-events:\s*none;[^}]*}\s*#chrome-layer > \*\s*\{[^}]*pointer-events:\s*auto;/s);
+assert.match(css, /#chrome-layer > \.empty-state\s*\{[^}]*pointer-events:\s*none;/s);
+assert.doesNotMatch(app, /compositor-test|compositor-stack-test/);
+assert.doesNotMatch(css, /compositor-stack-test/);
 assert.match(app, /recordViewportDebug\(`\$\{reason\}:800`\)/);
 assert.match(app, /function runDragAutoPan[\s\S]*?edgeAutoPanVelocity[\s\S]*?requestAnimationFrame\(runDragAutoPan\)/);
 assert.match(app, /function moveDraggedNodes[\s\S]*?positionNode/);
@@ -1378,12 +1383,13 @@ assert.match(app, /overview\.renderScale[\s\S]*?1\.15 \/ scale[\s\S]*?1\.85 \+ 0
 assert.match(app, /const markerSize = 12 \/ overview\.renderScale/);
 assert.doesNotMatch(app, /--overview-marker-scale/);
 assert.match(css, /#viewport\.overview-distant \.node[\s\S]*?will-change:\s*auto[\s\S]*?#viewport\.overview-distant \.node::after[\s\S]*?display:\s*none/);
+assert.match(css, /@media \(max-width: 520px\)[\s\S]*?#connections \.edge-line,[\s\S]*?stroke-width:\s*1\.95;[\s\S]*?var\(--overview-edge-width, 2\.6\) \+ 0\.1/);
 assert.match(app, /function syncNodeContent[\s\S]*?dataset\.overviewLabel/);
 assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy saved");
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v53/);
+assert.match(serviceWorker, /scattered-v54/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

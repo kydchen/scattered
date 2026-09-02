@@ -14,10 +14,9 @@ const DEFAULT_NODE_HEIGHT = 48;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const viewportCompositorTest = viewportParams.get("compositor-test") === "stack";
-const VIEWPORT_DEBUG_BUILD = "paint-a1";
+const VIEWPORT_DEBUG_BUILD = "paint-b1";
 const viewport = document.querySelector("#viewport");
-viewport.classList.toggle("compositor-stack-test", viewportCompositorTest);
+const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
 const edgeLayer = document.querySelector("#edge-layer");
@@ -235,7 +234,7 @@ function handleVisualViewportChange(event) {
 function syncVisualViewportChrome() {
   const visual = window.visualViewport;
   const offsetTop = Number.isFinite(visual?.offsetTop) ? Math.max(0, visual.offsetTop) : 0;
-  viewport.style.setProperty("--visual-offset-top", `${offsetTop}px`);
+  document.documentElement.style.setProperty("--visual-offset-top", `${offsetTop}px`);
 }
 
 function setupViewportDebug() {
@@ -263,8 +262,7 @@ function recordViewportDebug(eventName) {
   viewportDebugEvents.push(eventName);
   viewportDebugEvents.splice(0, Math.max(0, viewportDebugEvents.length - 6));
   const visual = window.visualViewport;
-  const viewportStyle = getComputedStyle(viewport);
-  const cssOffset = viewportStyle.getPropertyValue("--visual-offset-top").trim() || "0px";
+  const cssOffset = getComputedStyle(document.documentElement).getPropertyValue("--visual-offset-top").trim() || "0px";
   const navigationType = performance.getEntriesByType("navigation")[0]?.type || "-";
   const pageShow = viewportDebugPageShowPersisted === null ? "-" : viewportDebugPageShowPersisted ? "1" : "0";
   const metric = (value) => Number.isFinite(value) ? Math.round(value * 10) / 10 : "-";
@@ -279,9 +277,9 @@ function recordViewportDebug(eventName) {
     return `${name} y${metric(rect.top)}..${metric(rect.bottom)} d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
   };
   viewportDebugPanel.textContent = [
-    `${VIEWPORT_DEBUG_BUILD} · ${viewportCompositorTest ? "stack" : "base"} · ${eventName} · ${document.visibilityState}`,
+    `${VIEWPORT_DEBUG_BUILD} · ${eventName} · ${document.visibilityState}`,
     `ev ${viewportDebugEvents.join(">")}`,
-    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} wc ${viewportStyle.willChange}`,
+    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} tree ${chromeLayer?.id || "-"}`,
     `win ${innerWidth}x${innerHeight} y${metric(scrollY)} doc${document.documentElement.clientHeight}`,
     `vv t${metric(visual?.offsetTop)} h${metric(visual?.height)} p${metric(visual?.pageTop)} s${metric(visual?.scale)} css ${cssOffset}`,
     control("app", document.querySelector(".app-mark")),

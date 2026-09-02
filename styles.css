@@ -148,8 +148,21 @@ button {
   background-size: var(--grid-size, 28px) var(--grid-size, 28px);
 }
 
-#viewport.compositor-stack-test {
-  will-change: z-index;
+#chrome-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#chrome-layer > * {
+  pointer-events: auto;
+}
+
+#chrome-layer > .empty-state {
+  pointer-events: none;
 }
 
 #viewport.overview {
@@ -1514,6 +1527,16 @@ html[data-theme="dark"] .theme-sun {
 }
 
 @media (max-width: 520px) {
+  #connections .edge-line,
+  #link-preview {
+    stroke-width: 1.95;
+  }
+
+  #viewport.overview #connections .edge-line,
+  #viewport.overview #link-preview {
+    stroke-width: calc(var(--overview-edge-width, 2.6) + 0.1);
+  }
+
   .search-panel {
     top: calc(max(62px, calc(env(safe-area-inset-top) + 50px)) + var(--visual-offset-top, 0px));
     width: calc(100vw - 28px);
