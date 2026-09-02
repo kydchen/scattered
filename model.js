@@ -5,6 +5,7 @@ export const MAX_IMPORT_EDGES = 1_000;
 export const MIN_VIEW_SCALE = 0.02;
 const OVERVIEW_START_SCALE = 9 / 17;
 const OVERVIEW_COMPACT_SCALE = 0.3;
+const OVERVIEW_DETAIL_FLOOR = 0.1;
 export const EMPTY_NOTE_PROMPTS = [
   "遇有所得，即书投囊中",
   "Catch the thought.",
@@ -19,7 +20,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const MAX_IMPORT_COORDINATE = 1_000_000;
 
 export function overviewLevel(scale) {
-  const renderScale = Math.max(scale, OVERVIEW_COMPACT_SCALE);
+  const renderScale = Math.max(scale, OVERVIEW_DETAIL_FLOOR);
   const progress = clamp(
     (OVERVIEW_START_SCALE - scale) / (OVERVIEW_START_SCALE - OVERVIEW_COMPACT_SCALE),
     0,
@@ -28,9 +29,9 @@ export function overviewLevel(scale) {
   return {
     active: scale < OVERVIEW_START_SCALE,
     compact: scale < OVERVIEW_COMPACT_SCALE,
+    distant: scale < OVERVIEW_DETAIL_FLOOR,
     progress,
     renderScale,
-    markerScale: renderScale / scale,
   };
 }
 

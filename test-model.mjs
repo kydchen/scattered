@@ -53,15 +53,16 @@ assert.deepEqual(toggleArrowsForNodes(hierarchyEdges, ["root", "a", "b", "c", "d
 assert.equal(nextArrowState(false), "forward");
 assert.equal(nextArrowState("forward"), "reverse");
 assert.equal(nextArrowState("reverse"), false);
-assert.deepEqual(overviewLevel(0.6), { active: false, compact: false, progress: 0, renderScale: 0.6, markerScale: 1 });
-assert.deepEqual(overviewLevel(0.3), { active: true, compact: false, progress: 1, renderScale: 0.3, markerScale: 1 });
-assert.deepEqual(overviewLevel(0.29), { active: true, compact: true, progress: 1, renderScale: 0.3, markerScale: 0.3 / 0.29 });
+assert.deepEqual(overviewLevel(0.6), { active: false, compact: false, distant: false, progress: 0, renderScale: 0.6 });
+assert.deepEqual(overviewLevel(0.3), { active: true, compact: false, distant: false, progress: 1, renderScale: 0.3 });
+assert.deepEqual(overviewLevel(0.29), { active: true, compact: true, distant: false, progress: 1, renderScale: 0.29 });
 const readableOverview = overviewLevel(0.45);
 assert.equal(readableOverview.active, true);
 assert.ok(readableOverview.progress > 0 && readableOverview.progress < 1);
 const compactOverview = overviewLevel(MIN_VIEW_SCALE);
-assert.equal(compactOverview.renderScale, 0.3);
-assert.equal(compactOverview.markerScale, 15);
+assert.equal(compactOverview.renderScale, 0.1);
+assert.equal(compactOverview.distant, true);
+assert.equal(64 / compactOverview.renderScale, 640);
 
 const copiedGraph = copySelectedGraph({
   nodes: [
@@ -1369,13 +1370,16 @@ assert.match(css, /#viewport\.overview \.node::before[\s\S]*?min-width:/);
 assert.match(css, /#viewport\.overview \.node::after[\s\S]*?data-overview-label[\s\S]*?font-size:/);
 assert.match(css, /#viewport\.overview-compact \.node-actions/);
 assert.match(app, /const overview = overviewLevel\(scale\)[\s\S]*?--overview-progress[\s\S]*?--overview-edge-width[\s\S]*?overview-compact/);
-assert.match(app, /overview\.renderScale[\s\S]*?--overview-marker-scale[\s\S]*?\(1 \+ 0\.6 \* overview\.progress\) \/ scale/);
+assert.match(app, /overview\.renderScale[\s\S]*?1\.15 \/ scale[\s\S]*?1\.85 \+ 0\.2 \* overview\.progress[\s\S]*?overview-distant/);
+assert.match(app, /const markerSize = 12 \/ overview\.renderScale/);
+assert.doesNotMatch(app, /--overview-marker-scale/);
+assert.match(css, /#viewport\.overview-distant \.node[\s\S]*?will-change:\s*auto[\s\S]*?#viewport\.overview-distant \.node::after[\s\S]*?display:\s*none/);
 assert.match(app, /function syncNodeContent[\s\S]*?dataset\.overviewLabel/);
 assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy saved");
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v51/);
+assert.match(serviceWorker, /scattered-v52/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

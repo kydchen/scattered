@@ -2328,15 +2328,14 @@ function applyView() {
   world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
   world.style.setProperty("--overview-min-width", `${64 / overview.renderScale}px`);
   world.style.setProperty("--overview-min-height", `${20 / overview.renderScale}px`);
-  world.style.setProperty("--overview-border-width", `${1 / overview.renderScale}px`);
+  world.style.setProperty("--overview-border-width", `${1.15 / scale}px`);
   world.style.setProperty("--overview-radius", `${6 / overview.renderScale}px`);
   world.style.setProperty("--overview-shadow-y", `${2 / overview.renderScale}px`);
   world.style.setProperty("--overview-shadow-blur", `${8 / overview.renderScale}px`);
   world.style.setProperty("--overview-font-size", `${9 / overview.renderScale}px`);
   world.style.setProperty("--overview-label-padding", `${8 / overview.renderScale}px`);
-  world.style.setProperty("--overview-marker-scale", String(overview.markerScale));
   world.style.setProperty("--overview-progress", String(overview.progress));
-  world.style.setProperty("--overview-edge-width", `${(1 + 0.6 * overview.progress) / scale}`);
+  world.style.setProperty("--overview-edge-width", `${1.85 + 0.2 * overview.progress}`);
   world.style.setProperty("--control-scale", String(1 / scale));
   world.style.setProperty("--direct-control-offset", `${-(22 + 34 / scale)}px`);
   world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);
@@ -2345,7 +2344,8 @@ function applyView() {
   viewport.style.setProperty("--grid-size", `${Math.max(16, 28 * scale)}px`);
   viewport.classList.toggle("overview", overview.active);
   viewport.classList.toggle("overview-compact", overview.compact);
-  const markerSize = 12 / scale;
+  viewport.classList.toggle("overview-distant", overview.distant);
+  const markerSize = 12 / overview.renderScale;
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);
   positionEdgeControls();
