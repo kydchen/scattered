@@ -1,4 +1,4 @@
-import { applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
@@ -119,7 +119,7 @@ const driveSync = createDriveSync({
   applyWorkspace: applyDriveWorkspace,
   canApply: canApplyDriveWorkspace,
   onStatus: updateDriveSyncControl,
-  onConflict: (count) => showToast(t("driveConflict", { count })),
+  onConflict: (count) => showToast(t("driveConflict", { count }), false, 4_800),
   onError: (error) => {
     driveErrorNotified = true;
     showToast(`${t("driveSyncFailed")} · ${driveSyncErrorCode(error)}`);
@@ -170,6 +170,7 @@ window.addEventListener("resize", () => {
   updateHistoryControls();
   revealEditingNode();
 });
+window.addEventListener("pageshow", restoreVisibleViewport);
 window.visualViewport?.addEventListener("resize", revealEditingNode);
 window.visualViewport?.addEventListener("scroll", revealEditingNode);
 window.addEventListener("blur", () => {
@@ -189,8 +190,20 @@ document.addEventListener("visibilitychange", () => {
     disarmDeleteBoard();
     stagePendingSave();
     void saveBoardNow();
+  } else {
+    restoreVisibleViewport();
   }
 });
+
+function restoreVisibleViewport() {
+  if (document.visibilityState === "hidden") return;
+  requestAnimationFrame(() => {
+    window.scrollTo(0, 0);
+    renderEdges();
+    updateHistoryControls();
+  });
+}
+
 boardsButton.addEventListener("click", (event) => {
   event.stopPropagation();
   if (boardPicker.hidden) {
@@ -545,7 +558,7 @@ function onPointerMove(event) {
   if (mode?.type === "pinch" && shouldPinch(touches.map((pointer) => pointer.type))) {
     const [a, b] = touches;
     const center = midpoint(a, b);
-    const scale = clamp(mode.startScale * (distance(a, b) / Math.max(mode.startDistance, 1)), 0.35, 2);
+    const scale = clamp(mode.startScale * (distance(a, b) / Math.max(mode.startDistance, 1)), MIN_VIEW_SCALE, 2);
     board.view.scale = scale;
     board.view.x = center.x - mode.worldAtCenter.x * scale;
     board.view.y = center.y - mode.worldAtCenter.y * scale;
@@ -705,7 +718,7 @@ function onWheel(event) {
   finishRevealMotion();
   if (event.ctrlKey || event.metaKey) {
     const before = screenToWorld({ x: event.clientX, y: event.clientY }, board.view);
-    board.view.scale = clamp(board.view.scale * Math.exp(-event.deltaY * 0.008), 0.35, 2);
+    board.view.scale = clamp(board.view.scale * Math.exp(-event.deltaY * 0.008), MIN_VIEW_SCALE, 2);
     board.view.x = event.clientX - before.x * board.view.scale;
     board.view.y = event.clientY - before.y * board.view.scale;
   } else {
@@ -872,12 +885,14 @@ async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
   try {
     const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
     const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
-    const nextBoard = await withWorkspaceLock(async () => {
+    const applied = await withWorkspaceLock(async () => {
       const latest = createSyncWorkspace(workspaceStorage, workspace);
       if (await fingerprintSyncWorkspace(latest) !== expectedFingerprint) throw driveBusyError();
-      return applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
+      const localIds = new Set(latest.boards.map((item) => item.id));
+      const nextBoard = applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
+      return { nextBoard, fitIncoming: !localIds.has(workspace.activeId) };
     });
-    if (activeWouldChange) replaceBoard(nextBoard);
+    if (activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming);
     else renderBoardList();
     clearSaveFailure();
     updateRecoveryControl();
@@ -1073,7 +1088,7 @@ async function openBoard(id) {
   }
 }
 
-function replaceBoard(nextBoard) {
+function replaceBoard(nextBoard, fitIncoming = false) {
   cancelGesture();
   board = normalizeBoard(nextBoard);
   boardDirty = false;
@@ -1085,12 +1100,12 @@ function replaceBoard(nextBoard) {
   closeSearch();
   renderAll();
   applyView();
-  fitOpenedBoardIfOffscreen();
+  fitOpenedBoardIfOffscreen(fitIncoming);
   renderBoardList();
   updateHistoryControls();
 }
 
-function fitOpenedBoardIfOffscreen() {
+function fitOpenedBoardIfOffscreen(force = false) {
   const visual = { left: 0, top: 0, width: viewport.clientWidth, height: viewport.clientHeight };
   if (!visual.width || !visual.height || board.nodes.length === 0) return;
   const hasVisibleNode = board.nodes.some((node) => {
@@ -1105,7 +1120,7 @@ function fitOpenedBoardIfOffscreen() {
       bottom: top + element.offsetHeight * board.view.scale,
     }, visual);
   });
-  if (hasVisibleNode) return;
+  if (!force && hasVisibleNode) return;
   const nextView = fittedView();
   if (!nextView) return;
   board.view = nextView;
@@ -2155,7 +2170,7 @@ function applyView() {
   world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);
   viewport.style.setProperty("--grid-x", `${x}px`);
   viewport.style.setProperty("--grid-y", `${y}px`);
-  viewport.style.setProperty("--grid-size", `${28 * scale}px`);
+  viewport.style.setProperty("--grid-size", `${Math.max(8, 28 * scale)}px`);
   const markerSize = 12 / scale;
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);
@@ -2656,7 +2671,7 @@ function clearSaveFailure() {
   }
 }
 
-function showToast(message, persistent = false) {
+function showToast(message, persistent = false, duration = 1_800) {
   if (!toast) return;
   clearTimeout(toastTimer);
   toast.textContent = message;
@@ -2671,7 +2686,7 @@ function showToast(message, persistent = false) {
       } else {
         toast.hidden = true;
       }
-    }, 1800);
+    }, duration);
   }
 }
 

@@ -2,6 +2,7 @@ export const BOARD_VERSION = 4;
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 export const MAX_IMPORT_NODES = 500;
 export const MAX_IMPORT_EDGES = 1_000;
+export const MIN_VIEW_SCALE = 0.02;
 export const EMPTY_NOTE_PROMPTS = [
   "遇有所得，即书投囊中",
   "Catch the thought.",
@@ -99,7 +100,7 @@ function validateImportedBoard(value, maxNodes, maxEdges) {
     !validImportCoordinate(value.view.x)
     || !validImportCoordinate(value.view.y)
     || !Number.isFinite(value.view.scale)
-    || value.view.scale < 0.35
+    || value.view.scale < MIN_VIEW_SCALE
     || value.view.scale > 2
   ) throw new Error("import.invalid");
 }
@@ -154,7 +155,7 @@ export function normalizeBoard(value) {
     view: {
       x: finiteNumber(sourceView.x, 0),
       y: finiteNumber(sourceView.y, 0),
-      scale: clamp(finiteNumber(sourceView.scale, 1), 0.35, 2),
+      scale: clamp(finiteNumber(sourceView.scale, 1), MIN_VIEW_SCALE, 2),
     },
   };
 }
@@ -339,7 +340,7 @@ export function fitBoundsToViewport(bounds, viewport, padding = 64) {
   const height = Math.max(1, bounds.bottom - bounds.top);
   const availableWidth = Math.max(1, viewport.width - padding * 2);
   const availableHeight = Math.max(1, viewport.height - padding * 2);
-  const scale = clamp(Math.min(availableWidth / width, availableHeight / height), 0.35, 1);
+  const scale = clamp(Math.min(availableWidth / width, availableHeight / height), MIN_VIEW_SCALE, 1);
   return {
     x: (viewport.width - width * scale) / 2 - bounds.left * scale,
     y: (viewport.height - height * scale) / 2 - bounds.top * scale,

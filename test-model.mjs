@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
@@ -134,6 +134,16 @@ assert.deepEqual(fitBoundsToViewport(
   { width: 1000, height: 600 },
   50,
 ), { x: 50, y: 75, scale: 0.45 });
+const phoneOverview = fitBoundsToViewport(
+  { left: -3000, top: -1500, right: 3000, bottom: 1500 },
+  { width: 390, height: 844 },
+  72,
+);
+assert.ok(phoneOverview.scale < 0.35);
+assert.ok(phoneOverview.scale >= MIN_VIEW_SCALE);
+assert.ok(-3000 * phoneOverview.scale + phoneOverview.x >= 71.9);
+assert.ok(3000 * phoneOverview.scale + phoneOverview.x <= 318.1);
+assert.equal(normalizeBoard({ ...blankBoard(), view: phoneOverview }).view.scale, phoneOverview.scale);
 
 assert.equal(shouldPinch(["touch", "touch"]), true);
 assert.equal(shouldPinch(["pen", "touch"]), false);
@@ -1304,9 +1314,12 @@ assert.match(app, /bindAccount:\s*bindDriveAccount/);
 assert.match(app, /if \(!driveSync\.connected && workspaceSlots\.accountKey\)[\s\S]*?switchToGuest\(\)[\s\S]*?initializeWorkspace\(\)/);
 assert.match(app, /async function disconnectDriveAccount[\s\S]*?driveSync\.disconnect\(\)[\s\S]*?switchToGuest\(\)[\s\S]*?loadWorkspace\(workspaceStorage\)[\s\S]*?setBoardPickerOpen\(false\)/);
 assert.match(app, /async function switchDriveAccount[\s\S]*?previousWasGuest[\s\S]*?mergeSyncWorkspaces\(guest, accountSnapshot, \[\]\)[\s\S]*?resetGuest\(\)/);
-const fitOpenedBoardSource = app.match(/function fitOpenedBoardIfOffscreen\(\)[\s\S]*?\n}/)?.[0] || "";
+assert.match(app, /applyDriveWorkspace[\s\S]*?fitIncoming[\s\S]*?replaceBoard\(applied\.nextBoard, applied\.fitIncoming\)/);
+assert.match(app, /addEventListener\("pageshow", restoreVisibleViewport\)/);
+assert.match(app, /onConflict:[^\n]*showToast\([^\n]*4_800\)/);
+const fitOpenedBoardSource = app.match(/function fitOpenedBoardIfOffscreen\([^)]*\)[\s\S]*?\n}/)?.[0] || "";
 assert.match(fitOpenedBoardSource, /rectIntersectsViewport[\s\S]*?fittedView\(\)[\s\S]*?scheduleSave\(\)/);
-assert.match(app, /function replaceBoard\(nextBoard\)[\s\S]*?applyView\(\)[\s\S]*?fitOpenedBoardIfOffscreen\(\)/);
+assert.match(app, /function replaceBoard\(nextBoard, fitIncoming = false\)[\s\S]*?applyView\(\)[\s\S]*?fitOpenedBoardIfOffscreen\(fitIncoming\)/);
 assert.match(css, /#viewport\.keyboard-linking \.node\.selected \.link-handle::after/);
 assert.doesNotMatch(css, /@media print|@page/);
 assert.match(app, /boardToMermaidMarkdown/);
@@ -1324,7 +1337,7 @@ assert.match(css, /\.drive-sync-button\[data-status="connected"\],[\s\S]*?data-s
 assert.doesNotMatch(css, /\.drive-sync-button\s*\{[^}]*color:\s*var\(--thread\)/s);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v44/);
+assert.match(serviceWorker, /scattered-v45/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
