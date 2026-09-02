@@ -12,6 +12,7 @@ const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const DEFAULT_NODE_WIDTH = 218;
 const DEFAULT_NODE_HEIGHT = 48;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
+const viewportDebugEnabled = new URLSearchParams(location.search).get("viewport-debug") === "1";
 const viewport = document.querySelector("#viewport");
 const world = document.querySelector("#world");
 const nodeLayer = document.querySelector("#node-layer");
@@ -106,6 +107,8 @@ let colorAnchor = null;
 let searchReturnFocus = null;
 let announcementFrame = 0;
 let driveErrorNotified = false;
+let viewportDebugPanel = null;
+const viewportDebugEvents = [];
 const pointers = new Map();
 const nodeElements = new Map();
 const selectedIds = new Set();
@@ -145,6 +148,7 @@ updateThemeControl();
 updateConnectionStyleControl();
 renderBoardList();
 updateRecoveryControl();
+setupViewportDebug();
 if (!storageReady) markSaveFailure(t("errorStorageUnavailable"));
 
 viewport.addEventListener("pointerdown", onPointerDown);
@@ -170,14 +174,16 @@ document.addEventListener("keyup", (event) => {
 window.addEventListener("resize", () => {
   hideColorPalette();
   syncVisualViewportChrome();
+  recordViewportDebug("resize");
   renderEdges();
   updateHistoryControls();
   revealEditingNode();
 });
-window.addEventListener("pageshow", restoreVisibleViewport);
+window.addEventListener("pageshow", (event) => restoreVisibleViewport(`pageshow${event.persisted ? "P" : ""}`));
 window.visualViewport?.addEventListener("resize", handleVisualViewportChange);
 window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
 window.addEventListener("blur", () => {
+  recordViewportDebug("blur");
   spacePressed = false;
   viewport.classList.remove("pan-ready", "panning");
   cancelGesture();
@@ -185,23 +191,26 @@ window.addEventListener("blur", () => {
   disarmDeleteBoard();
 });
 window.addEventListener("pagehide", () => {
+  recordViewportDebug("pagehide");
   stagePendingSave();
   void saveBoardNow();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
+    recordViewportDebug("hidden");
     disarmClear();
     disarmDeleteBoard();
     stagePendingSave();
     void saveBoardNow();
   } else {
-    restoreVisibleViewport();
+    restoreVisibleViewport("visible");
   }
 });
 
-function restoreVisibleViewport() {
+function restoreVisibleViewport(reason = "resume") {
   if (document.visibilityState === "hidden") return;
   syncVisualViewportChrome();
+  scheduleViewportDebug(reason);
   requestAnimationFrame(() => {
     syncVisualViewportChrome();
     renderEdges();
@@ -209,8 +218,9 @@ function restoreVisibleViewport() {
   });
 }
 
-function handleVisualViewportChange() {
+function handleVisualViewportChange(event) {
   syncVisualViewportChrome();
+  recordViewportDebug(`visual-${event.type}`);
   revealEditingNode();
 }
 
@@ -218,6 +228,54 @@ function syncVisualViewportChrome() {
   const visual = window.visualViewport;
   const offsetTop = Number.isFinite(visual?.offsetTop) ? Math.max(0, visual.offsetTop) : 0;
   viewport.style.setProperty("--visual-offset-top", `${offsetTop}px`);
+}
+
+function setupViewportDebug() {
+  if (!viewportDebugEnabled) return;
+  viewportDebugPanel = document.createElement("output");
+  viewportDebugPanel.id = "viewport-debug";
+  viewportDebugPanel.setAttribute("aria-hidden", "true");
+  viewportDebugPanel.style.cssText = "position:fixed;left:8px;bottom:76px;z-index:2147483647;max-width:calc(100vw - 76px);padding:6px 8px;border-radius:8px;background:rgba(20,24,32,.88);color:#fff;font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;text-align:left";
+  document.body.append(viewportDebugPanel);
+  window.addEventListener("focus", () => scheduleViewportDebug("focus"));
+  recordViewportDebug("boot");
+}
+
+function scheduleViewportDebug(reason) {
+  if (!viewportDebugPanel) return;
+  recordViewportDebug(`${reason}:0`);
+  requestAnimationFrame(() => recordViewportDebug(`${reason}:raf`));
+  setTimeout(() => recordViewportDebug(`${reason}:100`), 100);
+  setTimeout(() => recordViewportDebug(`${reason}:300`), 300);
+  setTimeout(() => recordViewportDebug(`${reason}:800`), 800);
+}
+
+function recordViewportDebug(eventName) {
+  if (!viewportDebugPanel) return;
+  viewportDebugEvents.push(eventName);
+  viewportDebugEvents.splice(0, Math.max(0, viewportDebugEvents.length - 6));
+  const visual = window.visualViewport;
+  const cssOffset = getComputedStyle(viewport).getPropertyValue("--visual-offset-top").trim() || "0px";
+  const metric = (value) => Number.isFinite(value) ? Math.round(value * 10) / 10 : "-";
+  const control = (name, element) => {
+    if (!element) return `${name} missing`;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const x = Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2));
+    const y = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
+    const hit = document.elementFromPoint(x, y);
+    const hittable = hit === element || element.contains(hit);
+    return `${name} y${metric(rect.top)}..${metric(rect.bottom)} d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
+  };
+  viewportDebugPanel.textContent = [
+    `${eventName} · ${document.visibilityState}`,
+    `ev ${viewportDebugEvents.join(">")}`,
+    `win ${innerWidth}x${innerHeight} y${metric(scrollY)} doc${document.documentElement.clientHeight}`,
+    `vv t${metric(visual?.offsetTop)} h${metric(visual?.height)} p${metric(visual?.pageTop)} s${metric(visual?.scale)} css ${cssOffset}`,
+    control("app", document.querySelector(".app-mark")),
+    control("menu", menuButton),
+    `${control("hist", historyTools)} | ${control("theme", themeButton)}`,
+  ].join("\n");
 }
 
 boardsButton.addEventListener("click", (event) => {
