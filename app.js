@@ -2325,14 +2325,14 @@ function positionEdgeControls() {
 function applyView() {
   const { x, y, scale } = board.view;
   world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
-  world.style.setProperty("--overview-min-width", `${56 / scale}px`);
-  world.style.setProperty("--overview-min-height", `${18 / scale}px`);
+  world.style.setProperty("--overview-min-width", `${64 / scale}px`);
+  world.style.setProperty("--overview-min-height", `${20 / scale}px`);
   world.style.setProperty("--overview-border-width", `${1 / scale}px`);
   world.style.setProperty("--overview-radius", `${6 / scale}px`);
   world.style.setProperty("--overview-shadow-y", `${2 / scale}px`);
   world.style.setProperty("--overview-shadow-blur", `${8 / scale}px`);
   world.style.setProperty("--overview-font-size", `${9 / scale}px`);
-  world.style.setProperty("--overview-label-padding", `${6 / scale}px`);
+  world.style.setProperty("--overview-label-padding", `${8 / scale}px`);
   world.style.setProperty("--control-scale", String(1 / scale));
   world.style.setProperty("--direct-control-offset", `${-(22 + 34 / scale)}px`);
   world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);

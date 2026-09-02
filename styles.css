@@ -300,6 +300,11 @@ button {
   will-change: transform;
 }
 
+#viewport.overview .node::before,
+#viewport.overview .node::after {
+  box-sizing: border-box;
+}
+
 #viewport.overview .node::before {
   content: "";
   position: absolute;
@@ -331,7 +336,7 @@ button {
   overflow: hidden;
   color: var(--ink);
   font-size: var(--overview-font-size);
-  font-weight: 560;
+  font-weight: 500;
   line-height: var(--overview-min-height);
   text-overflow: ellipsis;
   white-space: nowrap;
