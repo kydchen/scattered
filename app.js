@@ -1,4 +1,4 @@
-import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
+import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
@@ -2324,6 +2324,7 @@ function positionEdgeControls() {
 
 function applyView() {
   const { x, y, scale } = board.view;
+  const overview = overviewLevel(scale);
   world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
   world.style.setProperty("--overview-min-width", `${64 / scale}px`);
   world.style.setProperty("--overview-min-height", `${20 / scale}px`);
@@ -2333,13 +2334,16 @@ function applyView() {
   world.style.setProperty("--overview-shadow-blur", `${8 / scale}px`);
   world.style.setProperty("--overview-font-size", `${9 / scale}px`);
   world.style.setProperty("--overview-label-padding", `${8 / scale}px`);
+  world.style.setProperty("--overview-progress", String(overview.progress));
+  world.style.setProperty("--overview-edge-width", `${1.85 + 0.75 * overview.progress}`);
   world.style.setProperty("--control-scale", String(1 / scale));
   world.style.setProperty("--direct-control-offset", `${-(22 + 34 / scale)}px`);
   world.style.setProperty("--node-actions-top", `${-(27 + 39 / scale)}px`);
   viewport.style.setProperty("--grid-x", `${x}px`);
   viewport.style.setProperty("--grid-y", `${y}px`);
   viewport.style.setProperty("--grid-size", `${Math.max(16, 28 * scale)}px`);
-  viewport.classList.toggle("overview", scale < 0.3);
+  viewport.classList.toggle("overview", overview.active);
+  viewport.classList.toggle("overview-compact", overview.compact);
   const markerSize = 12 / scale;
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);

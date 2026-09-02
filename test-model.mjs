@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
+import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
@@ -53,6 +53,12 @@ assert.deepEqual(toggleArrowsForNodes(hierarchyEdges, ["root", "a", "b", "c", "d
 assert.equal(nextArrowState(false), "forward");
 assert.equal(nextArrowState("forward"), "reverse");
 assert.equal(nextArrowState("reverse"), false);
+assert.deepEqual(overviewLevel(0.6), { active: false, compact: false, progress: 0 });
+assert.deepEqual(overviewLevel(0.3), { active: true, compact: false, progress: 1 });
+assert.deepEqual(overviewLevel(0.29), { active: true, compact: true, progress: 1 });
+const readableOverview = overviewLevel(0.45);
+assert.equal(readableOverview.active, true);
+assert.ok(readableOverview.progress > 0 && readableOverview.progress < 1);
 
 const copiedGraph = copySelectedGraph({
   nodes: [
@@ -1352,15 +1358,17 @@ assert.match(css, /\.drive-sync-button\[data-status="connected"\],[\s\S]*?data-s
 assert.doesNotMatch(css, /\.drive-sync-button\s*\{[^}]*color:\s*var\(--thread\)/s);
 assert.doesNotMatch(css, /translate:\s*0 var\(--visual-offset-top/);
 assert.equal((css.match(/top:\s*calc\([^;\n]*--visual-offset-top/g) || []).length, 8);
-assert.match(css, /#viewport\.overview #connections \.edge-line[\s\S]*?stroke-width:/);
+assert.match(css, /#viewport\.overview #connections \.edge-line[\s\S]*?stroke-width:\s*var\(--overview-edge-width/);
 assert.match(css, /#viewport\.overview \.node::before[\s\S]*?min-width:/);
 assert.match(css, /#viewport\.overview \.node::after[\s\S]*?data-overview-label[\s\S]*?font-size:/);
+assert.match(css, /#viewport\.overview-compact \.node-actions/);
+assert.match(app, /const overview = overviewLevel\(scale\)[\s\S]*?--overview-progress[\s\S]*?--overview-edge-width[\s\S]*?overview-compact/);
 assert.match(app, /function syncNodeContent[\s\S]*?dataset\.overviewLabel/);
 assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy saved");
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v48/);
+assert.match(serviceWorker, /scattered-v49/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);

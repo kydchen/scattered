@@ -228,7 +228,7 @@ button {
 
 #viewport.overview #connections .edge-line,
 #viewport.overview #link-preview {
-  stroke-width: 2.6;
+  stroke-width: var(--overview-edge-width, 2.6);
 }
 
 #connections .arrowhead {
@@ -308,6 +308,7 @@ button {
   border-radius: var(--overview-radius);
   background: var(--note-bg, var(--paper));
   box-shadow: 0 var(--overview-shadow-y) var(--overview-shadow-blur) var(--overview-node-shadow);
+  opacity: var(--overview-progress, 1);
   pointer-events: none;
   transform: translate(-50%, -50%);
   z-index: -1;
@@ -339,10 +340,15 @@ button {
   border-color: var(--thread);
 }
 
-#viewport.overview .node-actions,
-#viewport.overview .resize-handle,
-#viewport.overview .link-handle {
+#viewport.overview-compact .node-actions,
+#viewport.overview-compact .resize-handle,
+#viewport.overview-compact .link-handle {
   display: none !important;
+}
+
+#viewport.overview .node.editing::before,
+#viewport.overview .node.editing::after {
+  display: none;
 }
 
 .node[data-color="yellow"] {

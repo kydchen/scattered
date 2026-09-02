@@ -3,6 +3,8 @@ export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 export const MAX_IMPORT_NODES = 500;
 export const MAX_IMPORT_EDGES = 1_000;
 export const MIN_VIEW_SCALE = 0.02;
+const OVERVIEW_START_SCALE = 9 / 17;
+const OVERVIEW_COMPACT_SCALE = 0.3;
 export const EMPTY_NOTE_PROMPTS = [
   "遇有所得，即书投囊中",
   "Catch the thought.",
@@ -15,6 +17,19 @@ const NOTE_COLORS = new Set(["plain", "yellow", "mint", "blue", "rose"]);
 const IMPORT_VERSIONS = new Set([3, 4]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const MAX_IMPORT_COORDINATE = 1_000_000;
+
+export function overviewLevel(scale) {
+  const progress = clamp(
+    (OVERVIEW_START_SCALE - scale) / (OVERVIEW_START_SCALE - OVERVIEW_COMPACT_SCALE),
+    0,
+    1,
+  );
+  return {
+    active: scale < OVERVIEW_START_SCALE,
+    compact: scale < OVERVIEW_COMPACT_SCALE,
+    progress,
+  };
+}
 
 export function blankBoard() {
   return {
