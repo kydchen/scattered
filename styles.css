@@ -290,6 +290,7 @@ button {
   cursor: grab;
   outline: none;
   touch-action: none;
+  -webkit-tap-highlight-color: transparent;
   transform: translate3d(var(--node-x), var(--node-y), 0);
   will-change: transform;
 }

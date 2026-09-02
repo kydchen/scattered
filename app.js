@@ -15,7 +15,7 @@ const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
-const VIEWPORT_DEBUG_BUILD = "layers-a1";
+const VIEWPORT_DEBUG_BUILD = "probe-a1";
 const viewport = document.querySelector("#viewport");
 const chromeLayer = document.querySelector("#chrome-layer");
 const world = document.querySelector("#world");
@@ -245,8 +245,42 @@ function setupViewportDebug() {
   viewportDebugPanel.setAttribute("aria-hidden", "true");
   viewportDebugPanel.style.cssText = "position:fixed;left:8px;bottom:76px;z-index:2147483647;max-width:calc(100vw - 96px);padding:5px 7px;border-radius:7px;background:rgba(20,24,32,.84);color:#fff;font:9px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;text-align:left";
   document.body.append(viewportDebugPanel);
+  const probes = document.createElement("div");
+  probes.style.cssText = "position:fixed;left:8px;bottom:18px;z-index:2147483647;display:flex;gap:6px";
+  ["A", "B", "C"].forEach((name) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = name;
+    button.setAttribute("aria-label", `Viewport probe ${name}`);
+    button.style.cssText = "width:36px;height:36px;padding:0;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(20,24,32,.84);color:#fff;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-tap-highlight-color:transparent;touch-action:manipulation";
+    button.addEventListener("click", () => runViewportProbe(name));
+    probes.append(button);
+  });
+  document.body.append(probes);
   window.addEventListener("focus", () => scheduleViewportDebug("focus"));
   recordViewportDebug("boot");
+}
+
+function runViewportProbe(name) {
+  if (name === "A") {
+    [document.querySelector(".app-mark"), menuButton, historyTools].forEach((element) => {
+      element?.animate([{ opacity: 0.98 }, { opacity: 1 }], { duration: 80 });
+    });
+  } else if (name === "B" && chromeLayer?.parentNode) {
+    const parent = chromeLayer.parentNode;
+    const next = chromeLayer.nextSibling;
+    chromeLayer.remove();
+    void document.body.offsetHeight;
+    parent.insertBefore(chromeLayer, next);
+  } else if (name === "C") {
+    document.body.style.display = "none";
+    void document.documentElement.offsetHeight;
+    requestAnimationFrame(() => {
+      document.body.style.display = "";
+      recordViewportDebug("probe:C");
+    });
+  }
+  recordViewportDebug(`probe:${name}`);
 }
 
 function scheduleViewportDebug(reason) {
@@ -276,11 +310,9 @@ function recordViewportDebug(eventName) {
     return `${name} p${style.position[0]}d${style.display === "none" ? 0 : 1}v${style.visibility === "hidden" ? 0 : 1}o${metric(Number(style.opacity))}h${hittable ? 1 : 0}`;
   };
   viewportDebugPanel.textContent = [
-    `${VIEWPORT_DEBUG_BUILD} · ${eventName} · ${document.visibilityState}`,
+    `${VIEWPORT_DEBUG_BUILD} · ${eventName}`,
     `ev ${viewportDebugEvents.join(">")}`,
-    `nav ${navigationType} ps${pageShow} wd${document.wasDiscarded ? 1 : 0} sw${navigator.serviceWorker?.controller ? 1 : 0} tree ${chromeLayer?.id || "-"} s${metric(board.view.scale)} c${viewport.classList.contains("overview-compact") ? 1 : 0}`,
-    `${control("app", document.querySelector(".app-mark"))} | ${control("menu", menuButton)}`,
-    `${control("hist", historyTools)} | ${control("theme", themeButton)}`,
+    `n${navigationType[0]} p${pageShow} s${metric(board.view.scale)} c${viewport.classList.contains("overview-compact") ? 1 : 0} · ${control("a", document.querySelector(".app-mark"))} ${control("m", menuButton)} ${control("h", historyTools)} ${control("t", themeButton)}`,
   ].join("\n");
 }
 

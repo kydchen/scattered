@@ -1345,7 +1345,10 @@ assert.match(app, /function syncVisualViewportChrome\(\)[\s\S]*?--visual-offset-
 assert.match(app, /viewportParams\.get\("viewport-debug"\) === "1"/);
 const viewportDebugSource = app.match(/function recordViewportDebug[\s\S]*?\n}\n\nboardsButton/)?.[0] || "";
 assert.match(viewportDebugSource, /getBoundingClientRect[\s\S]*?elementFromPoint/);
-assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?wasDiscarded[\s\S]*?serviceWorker[\s\S]*?chromeLayer[\s\S]*?overview-compact/);
+assert.match(viewportDebugSource, /VIEWPORT_DEBUG_BUILD[\s\S]*?navigationType[\s\S]*?overview-compact/);
+assert.match(app, /\["A", "B", "C"\][\s\S]*?runViewportProbe/);
+const viewportProbeSource = app.match(/function runViewportProbe\(name\)[\s\S]*?\n}/)?.[0] || "";
+assert.match(viewportProbeSource, /animate\([\s\S]*?chromeLayer\.remove\(\)[\s\S]*?body\.style\.display = "none"/);
 assert.match(html, /<\/main>\s*<div id="chrome-layer">[\s\S]*?class="app-mark"[\s\S]*?id="history-tools"[\s\S]*?id="menu-button"[\s\S]*?id="announcer"[\s\S]*?<\/div>\s*<template id="node-template">/);
 assert.match(css, /#chrome-layer\s*\{[^}]*display:\s*contents;/s);
 assert.doesNotMatch(css, /#chrome-layer\s*\{[^}]*position:\s*fixed|#chrome-layer > \*/s);
@@ -1381,6 +1384,7 @@ assert.match(css, /#viewport\.overview \.node::after[\s\S]*?data-overview-label[
 assert.match(css, /#viewport\.overview-compact \.node-actions/);
 assert.match(css, /#viewport\.overview-compact \.node,[\s\S]*?transform:\s*translate\(var\(--node-x\), var\(--node-y\)\);[\s\S]*?will-change:\s*auto/);
 assert.match(css, /#viewport\.overview-compact \.node\s*\{[^}]*border-color:\s*transparent;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
+assert.match(css, /\.node\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent;/s);
 assert.match(app, /const overview = overviewLevel\(scale\)[\s\S]*?--overview-progress[\s\S]*?--overview-edge-width[\s\S]*?overview-compact/);
 assert.match(app, /world\.style\.transform = overview\.compact[\s\S]*?translate\(\$\{x\}px, \$\{y\}px\)[\s\S]*?translate3d/);
 assert.match(app, /overview\.renderScale[\s\S]*?1\.15 \/ scale[\s\S]*?1\.85 \+ 0\.2 \* overview\.progress[\s\S]*?overview-distant/);
@@ -1395,7 +1399,7 @@ assert.equal(messages.en.driveConflict, "冲突副本已保留 · Conflict copy 
 assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(serviceWorker, /scattered-v57/);
+assert.match(serviceWorker, /scattered-v58/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);
 assert.match(serviceWorker, /\.\/drive-sync\.js/);
