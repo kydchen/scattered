@@ -1523,8 +1523,8 @@ html[data-theme="dark"] .theme-sun {
 
 .chrome-resume-prompt {
   position: fixed;
-  right: max(14px, env(safe-area-inset-right));
-  bottom: max(76px, calc(env(safe-area-inset-bottom) + 76px));
+  top: 50%;
+  left: 50%;
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -1540,6 +1540,7 @@ html[data-theme="dark"] .theme-sun {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+  transform: translate(-50%, -50%);
   z-index: 8;
 }
 
