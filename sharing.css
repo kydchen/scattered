@@ -42,10 +42,6 @@
 .share-live-mark { display: none; width: 18px; height: 18px; color: var(--thread); }
 .share-dialog[data-state="shareLive"] .share-live-mark, .share-dialog[data-state="shareCopied"] .share-live-mark { display: block; }
 #share-status:not(.sr-only) { margin: 12px 0 0; }
-.presentation-tools button {
-  min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 22px;
-  background: var(--paper); color: var(--ink); font: inherit; cursor: pointer;
-}
 #export-share-button[data-sharing="true"] { color: var(--thread); box-shadow: inset 0 0 0 1px var(--thread); }
 .share-viewer #presentation {
   position: fixed; inset: 0; overflow: hidden; touch-action: none; user-select: none;
@@ -54,17 +50,21 @@
 }
 .share-viewer #presentation:active { cursor: grabbing; }
 .share-viewer #presentation:focus-visible { outline: 2px solid var(--thread); outline-offset: -3px; }
-.presentation-heading { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); max-width: calc(100% - 40px); pointer-events: none; }
-.presentation-heading h1 { font-size: 21px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.presentation-heading p { font-size: 12px; color: var(--muted); margin: 6px 0; padding: 3px 0; background: var(--canvas); }
-.presentation-tools { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-wrap: wrap; gap: 8px; max-width: calc(100% - 32px); }
-.share-viewer svg > rect { fill: transparent; }
-.share-viewer svg .note-text { fill: var(--ink); }
-.share-viewer svg .edge { stroke: var(--thread); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
-.share-viewer svg .edge-label { fill: var(--ink); stroke: var(--canvas); }
-.share-viewer svg marker path { fill: var(--thread); }
-.share-viewer svg g rect { fill: var(--paper); stroke: var(--overview-node-outline); stroke-width: 1.15px; vector-effect: non-scaling-stroke; }
-.share-viewer svg rect[data-color="yellow"] { fill: var(--note-yellow); }
-.share-viewer svg rect[data-color="mint"] { fill: var(--note-mint); }
-.share-viewer svg rect[data-color="blue"] { fill: var(--note-blue); }
-.share-viewer svg rect[data-color="rose"] { fill: var(--note-rose); }
+.presentation-heading { max-width: calc(100% - 90px); height: 36px; }
+.presentation-heading .app-logo { margin-inline: 5.5px; }
+.presentation-heading h1 { min-width: 0; margin: 0; padding: 3px 6px; color: var(--ink); font-size: 21px; font-weight: 620; letter-spacing: -0.025em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presentation-tools button { cursor: pointer; }
+.presentation-tools .menu-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.fullscreen-exit, [aria-pressed="true"] .fullscreen-enter { display: none; }
+[aria-pressed="true"] .fullscreen-exit { display: inline; }
+#presentation-status:not(.sr-only) { position: fixed; z-index: 4; bottom: max(78px, calc(env(safe-area-inset-bottom) + 60px)); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(520px, calc(100% - 32px)); margin: 0; padding: 12px 16px; border-radius: 14px; background: var(--panel-strong); box-shadow: var(--floating-shadow); color: var(--muted); font-size: 13px; line-height: 1.5; }
+.share-viewer #presentation svg > rect { fill: transparent; }
+.share-viewer #presentation svg .note-text { fill: var(--ink); }
+.share-viewer #presentation svg .edge { stroke: var(--thread); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.share-viewer #presentation svg .edge-label { fill: var(--ink); stroke: var(--canvas); }
+.share-viewer #presentation svg marker path { fill: var(--thread); }
+.share-viewer #presentation svg g rect { fill: var(--paper); stroke: var(--overview-node-outline); stroke-width: 1.15px; vector-effect: non-scaling-stroke; }
+.share-viewer #presentation svg rect[data-color="yellow"] { fill: var(--note-yellow); }
+.share-viewer #presentation svg rect[data-color="mint"] { fill: var(--note-mint); }
+.share-viewer #presentation svg rect[data-color="blue"] { fill: var(--note-blue); }
+.share-viewer #presentation svg rect[data-color="rose"] { fill: var(--note-rose); }

@@ -100,6 +100,27 @@ try {
   assert.equal(localBefore, "{}", "Viewer must not initialize a local workspace");
   assert.equal(await viewer.locator("textarea, [contenteditable], #menu-button, #drive-sync-button, img").count(), 0);
   assert.equal(await viewer.locator(".note-text").count(), 2);
+  assert.equal(await viewer.locator(".app-mark .app-logo circle").count(), 6);
+  assert.equal(await viewer.locator("#presentation-status").getAttribute("class"), "sr-only", "Healthy update status stays out of the presentation");
+  for (const id of ["presentation-fit", "presentation-theme", "presentation-fullscreen"]) {
+    const button = viewer.locator(`#${id}`);
+    assert.equal((await button.textContent()).trim(), "", "Viewer controls must use icons, not visible text");
+    assert.match(await button.getAttribute("aria-label"), /[\u4e00-\u9fff].* \/ [A-Z]/);
+    const box = await button.boundingBox();
+    assert.equal(box.width, 44);
+    assert.equal(box.height, 44);
+  }
+  for (const appearance of ["light", "dark"]) {
+    await viewer.emulateMedia({ colorScheme: appearance });
+    if (await viewer.evaluate(() => document.documentElement.dataset.theme) !== appearance) await viewer.locator("#presentation-theme").click();
+    assert.equal(await viewer.locator("#presentation-theme").getAttribute("aria-pressed"), String(appearance === "dark"));
+    assert.equal(await viewer.locator(appearance === "dark" ? ".theme-sun" : ".theme-moon").isVisible(), true);
+    await viewer.screenshot({ path: `/tmp/scattered-viewer-chrome-${appearance}.png` });
+  }
+  await viewer.locator("#presentation-fullscreen").click();
+  await viewer.waitForFunction(() => document.querySelector("#presentation-fullscreen").getAttribute("aria-pressed") === "true");
+  await viewer.locator("#presentation-fullscreen").click();
+  await viewer.waitForFunction(() => document.querySelector("#presentation-fullscreen").getAttribute("aria-pressed") === "false");
   await viewer.mouse.move(700, 500);
   await viewer.mouse.down();
   await viewer.mouse.move(800, 560, { steps: 5 });
@@ -125,6 +146,8 @@ try {
   await author.screenshot({ path: "/tmp/scattered-sharing-dialog.png" });
   online = false;
   await viewer.waitForFunction(() => /interrupted|中断/.test(document.querySelector("#presentation-status").textContent), null, { timeout: 15_000 });
+  assert.equal(await viewer.locator("#presentation-status:not(.sr-only)").isVisible(), true, "Connection failures must remain visible");
+  assert.match(await viewer.locator("#presentation-status").textContent(), /中断.*interrupted/);
   assert.equal(await viewer.locator(".note-text").count(), 2);
   online = true;
   const mobileContext = await context({ viewport: { width: 402, height: 680 }, isMobile: true, hasTouch: true, locale: "zh-CN" });
@@ -132,16 +155,24 @@ try {
   await mobile.goto(url);
   await mobile.waitForFunction(() => document.querySelectorAll(".note-text").length === 2);
   await mobile.screenshot({ path: "/tmp/scattered-sharing-mobile.png" });
-  assert.ok(await mobile.locator(".presentation-tools").evaluate((element) => element.getBoundingClientRect().right <= innerWidth));
+  for (const button of await mobile.locator(".presentation-tools button:visible").all()) {
+    assert.ok(await button.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight && rect.width === 44 && rect.height === 44;
+    }), "Mobile icon controls stay inside the viewport with full touch targets");
+  }
+  assert.equal(await mobile.locator("#presentation-status").getAttribute("class"), "sr-only");
+  await viewer.waitForFunction(() => document.querySelector("#presentation-status").classList.contains("sr-only"), null, { timeout: 15_000 });
   await author.locator("#share-stop").click();
   await viewer.waitForFunction(() => document.querySelectorAll(".note-text").length === 0, null, { timeout: 15_000 });
+  assert.equal(await viewer.locator("#presentation-status:not(.sr-only)").isVisible(), true, "Revocation must explain the empty canvas");
   assert.equal(await viewer.evaluate(() => JSON.stringify(localStorage)), localBefore);
   env.SHARE_CREATES.limit = async () => ({ success: false });
   await author.locator("#share-enable").click();
   await author.waitForFunction(() => document.querySelector("#share-status:not(.sr-only)")?.textContent.includes("Too many"));
   assert.match(await author.locator("#share-status").textContent(), /分享请求/);
   assert.equal(errors.length, 0, errors.join("\n"));
-  console.log("browser sharing checks passed: bilingual icon dialog, collapsed details, copy feedback, opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline display, mobile layout, revocation");
+  console.log("browser sharing checks passed: shared viewer chrome, bilingual icons, themes, fullscreen, quiet healthy state, visible failures, compact dialog, opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline recovery, mobile layout, revocation");
 } finally {
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));

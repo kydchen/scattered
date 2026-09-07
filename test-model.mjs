@@ -1425,7 +1425,7 @@ const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
 assert.match(html, /<script type="module" src="app\.js\?v=73"><\/script>/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /scattered-v73/);
+assert.match(serviceWorker, /scattered-v74/);
 assert.match(serviceWorker, /\.\/app\.js\?v=73/);
 assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
 assert.match(serviceWorker, /\.\/workspace\.js/);

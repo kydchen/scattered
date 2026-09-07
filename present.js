@@ -24,6 +24,11 @@ let gesture = null;
 const pointers = new Map();
 
 applyTranslations();
+for (const button of document.querySelectorAll("[data-view-label]")) {
+  const key = button.dataset.viewLabel;
+  button.title = `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`;
+  button.setAttribute("aria-label", button.title);
+}
 document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 theme.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "dark"));
 fullscreen.hidden = !document.documentElement.requestFullscreen;
@@ -37,8 +42,9 @@ fullscreen.addEventListener("click", async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
-  } catch { status.textContent = t("shareFullscreenFailed"); }
+  } catch { setStatus("shareFullscreenFailed", true); }
 });
+document.addEventListener("fullscreenchange", () => fullscreen.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement))));
 fit.addEventListener("click", fitView);
 window.addEventListener("resize", paintView);
 window.addEventListener("online", poll);
@@ -51,6 +57,13 @@ function fitView() {
   if (!bounds) return;
   view = fitBoundsToViewport(bounds, { width: canvas.clientWidth, height: canvas.clientHeight }, 80);
   paintView();
+}
+
+function setStatus(key, visible = false, values = {}) {
+  const message = visible ? `${t(key, values, "zh-Hans")} / ${t(key, values, "en")}` : t(key, values);
+  if (status.textContent !== message) status.textContent = message;
+  status.classList.toggle("sr-only", !visible);
+  title.title = `${title.textContent}\n${message}`;
 }
 
 function paintView() {
@@ -84,7 +97,7 @@ async function poll() {
   clearTimeout(timer);
   if (busy || stopped || document.hidden) return;
   if (!SHARE_API || !SHARE_ID.test(id)) {
-    status.textContent = t("shareMissing");
+    setStatus("shareMissing", true);
     stopped = true;
     return;
   }
@@ -100,7 +113,7 @@ async function poll() {
       fit.disabled = true;
       title.textContent = "Scattered";
       document.title = "Scattered";
-      status.textContent = t("shareMissing");
+      setStatus("shareMissing", true);
       stopped = true;
       return;
     }
@@ -111,9 +124,9 @@ async function poll() {
       updatedAt = Number(value.updatedAt) || Date.now();
       etag = response.headers.get("ETag") || "";
     }
-    status.textContent = t("shareViewerLive", { time: new Date(updatedAt).toLocaleString() });
+    setStatus("shareViewerLive", false, { time: new Date(updatedAt).toLocaleString() });
   } catch {
-    status.textContent = t(svg ? "shareViewerOffline" : "shareViewerFailed");
+    setStatus(svg ? "shareViewerOffline" : "shareViewerFailed", true);
   } finally {
     busy = false;
     // ponytail: 3-second conditional polling is enough for presentations; no socket infrastructure.

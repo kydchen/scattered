@@ -8,20 +8,48 @@
     <meta name="theme-color" content="#f2f4f7" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css?v=72" />
-    <link rel="stylesheet" href="sharing.css?v=73" />
+    <link rel="stylesheet" href="sharing.css?v=74" />
     <title>Scattered · Read-only</title>
   </head>
   <body class="share-viewer">
     <main id="presentation" tabindex="0" aria-label="Read-only canvas" data-i18n-aria="shareCanvas"></main>
-    <header class="presentation-heading">
+    <header class="app-mark presentation-heading">
+      <svg class="app-logo" viewBox="0 0 30 24" aria-hidden="true">
+        <circle class="app-logo-dot dot-1" cx="5.2" cy="7" r="1.7"></circle>
+        <circle class="app-logo-dot dot-2" cx="12.2" cy="4.8" r="2.2"></circle>
+        <circle class="app-logo-dot dot-3" cx="14.7" cy="12.8" r="3.7"></circle>
+        <circle class="app-logo-dot dot-4" cx="24.2" cy="7" r="1.4"></circle>
+        <circle class="app-logo-dot dot-5" cx="24" cy="17" r="2.4"></circle>
+        <circle class="app-logo-dot dot-6" cx="8.2" cy="20" r="1.3"></circle>
+      </svg>
       <h1 id="presentation-title">Scattered</h1>
-      <p id="presentation-status" role="status" data-i18n-text="shareLoading"></p>
     </header>
+    <p id="presentation-status" class="sr-only" role="status" data-i18n-text="shareLoading"></p>
     <nav class="presentation-tools" aria-label="View controls" data-i18n-aria="shareViewControls">
-      <button id="presentation-fit" type="button" data-i18n-text="fitBoard"></button>
-      <button id="presentation-theme" type="button" data-i18n-text="darkMode" aria-pressed="false"></button>
-      <button id="presentation-fullscreen" type="button" data-i18n-text="shareFullscreen"></button>
+      <div class="history-tools">
+        <button id="presentation-fit" class="quiet-button" type="button" data-view-label="fitBoard">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
+            <circle cx="12" cy="12" r="2.5"></circle>
+          </svg>
+        </button>
+      </div>
+      <button id="presentation-fullscreen" class="quiet-button menu-button" type="button" data-view-label="shareFullscreen" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="fullscreen-enter" d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"></path>
+          <path class="fullscreen-exit" d="M3 8h5V3M16 3v5h5M8 21v-5H3M21 16h-5v5"></path>
+        </svg>
+      </button>
+      <button id="presentation-theme" class="quiet-button theme-button" type="button" data-view-label="darkMode" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="theme-moon" d="M20 15.5A8.2 8.2 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
+          <g class="theme-sun">
+            <circle cx="12" cy="12" r="3.5"></circle>
+            <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4"></path>
+          </g>
+        </svg>
+      </button>
     </nav>
-    <script type="module" src="present.js?v=73"></script>
+    <script type="module" src="present.js?v=74"></script>
   </body>
 </html>
