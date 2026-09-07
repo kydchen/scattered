@@ -45,7 +45,14 @@ try {
   const sample = { ...blankBoard(), title: "Seminar presentation", nodes: [
     { id: "one", text: "First idea", x: 80, y: 80, width: 218, color: "plain" },
     { id: "two", text: '第二个想法 <img src=x onerror="alert(1)">', x: 500, y: 220, width: 300, color: "mint" },
-  ], edges: [{ id: "edge", from: "one", to: "two", arrow: "forward", label: "Connection" }] };
+    { id: "three", text: "中文换行\nEnglish line", x: 80, y: 400, width: 240, color: "yellow" },
+    { id: "four", text: "Blue", x: 900, y: 150, width: 180, color: "blue" },
+    { id: "five", text: "Rose", x: 850, y: 500, width: 218, color: "rose" },
+  ], edges: [
+    { id: "edge", from: "one", to: "two", arrow: "forward", label: "Connection" },
+    { id: "reverse", from: "two", to: "three", arrow: "reverse", label: "反向" },
+    { id: "plain", from: "four", to: "five", arrow: false, label: "" },
+  ] };
   await author.locator("#import-input").setInputFiles({ name: "test.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sample)) });
   await author.waitForFunction(() => document.querySelector("#board-title").textContent === "Seminar presentation");
   const openSharing = async () => {
@@ -93,13 +100,28 @@ try {
   assert.equal(await author.locator("#share-copy").getAttribute("data-copied"), "true");
   await author.screenshot({ path: "/tmp/scattered-share-compact-active.png" });
   const viewerContext = await context();
+  // Before sharing existed, this cacheable module emitted fills but no color metadata.
+  const legacyRenderer = (await readFile(new URL("./svg-export.js", import.meta.url), "utf8"))
+    .replace(' data-color="${xml(node.color || "plain")}"', "");
+  await viewerContext.route("**/svg-export.js", (route) => route.fulfill({ contentType: "text/javascript", body: legacyRenderer }));
   const viewer = await viewerContext.newPage();
   await viewer.goto(url);
   await viewer.waitForFunction(() => document.querySelector("#presentation-title").textContent === "Seminar presentation");
   const localBefore = await viewer.evaluate(() => JSON.stringify(localStorage));
   assert.equal(localBefore, "{}", "Viewer must not initialize a local workspace");
   assert.equal(await viewer.locator("textarea, [contenteditable], #menu-button, #drive-sync-button, img").count(), 0);
-  assert.equal(await viewer.locator(".note-text").count(), 2);
+  assert.equal(await viewer.locator(".note-text").count(), sample.nodes.length);
+  assert.equal(await viewer.locator("#presentation rect[data-color]").count(), sample.nodes.length, "An old unversioned renderer cache must not erase shared note colors");
+  const published = JSON.parse(requests.findLast((request) => request.method === "PUT").body);
+  assert.deepEqual(published.board.nodes, sample.nodes, "Publishing preserves every note field, including color and position");
+  assert.deepEqual(published.board.edges, sample.edges, "Publishing preserves labels and arrow direction");
+  assert.deepEqual(await viewer.locator("#presentation rect[data-color]").evaluateAll((elements) => elements.map((element) => ({
+    color: element.dataset.color, x: +element.getAttribute("x"), y: +element.getAttribute("y"), width: +element.getAttribute("width"),
+  }))), sample.nodes.map(({ color, x, y, width }) => ({ color, x, y, width })));
+  assert.deepEqual(await viewer.locator("#presentation .edge").evaluateAll((elements) => elements.map((element) => ({
+    start: element.getAttribute("marker-start"), end: element.getAttribute("marker-end"),
+  }))), [{ start: null, end: "url(#arrowhead)" }, { start: "url(#arrowhead)", end: null }, { start: null, end: null }]);
+  assert.deepEqual(await viewer.locator("#presentation .note-text").nth(2).locator("tspan").allTextContents(), ["中文换行", "English line"]);
   assert.equal(await viewer.locator(".app-mark .app-logo circle").count(), 6);
   assert.equal(await viewer.locator("#presentation-status").getAttribute("class"), "sr-only", "Healthy update status stays out of the presentation");
   for (const id of ["presentation-fit", "presentation-theme", "presentation-fullscreen"]) {
@@ -115,6 +137,13 @@ try {
     if (await viewer.evaluate(() => document.documentElement.dataset.theme) !== appearance) await viewer.locator("#presentation-theme").click();
     assert.equal(await viewer.locator("#presentation-theme").getAttribute("aria-pressed"), String(appearance === "dark"));
     assert.equal(await viewer.locator(appearance === "dark" ? ".theme-sun" : ".theme-moon").isVisible(), true);
+    await author.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, appearance);
+    const expectedColors = await author.locator(".node").evaluateAll((elements) => elements.map((element) => ({
+      color: element.dataset.color, fill: getComputedStyle(element).backgroundColor,
+    })));
+    assert.deepEqual(await viewer.locator("#presentation rect[data-color]").evaluateAll((elements) => elements.map((element) => ({
+      color: element.dataset.color, fill: getComputedStyle(element).fill,
+    }))), expectedColors, `${appearance}: every shared note keeps the author's fill color`);
     await viewer.screenshot({ path: `/tmp/scattered-viewer-chrome-${appearance}.png` });
   }
   await viewer.locator("#presentation-fullscreen").click();
@@ -136,6 +165,15 @@ try {
   await author.locator(".node.editing .node-editor").press("Meta+Enter");
   await viewer.waitForFunction(() => document.querySelector("#presentation").textContent.replace(/\s+/g, " ").includes("Updated while presenting"), null, { timeout: 15_000 });
   assert.equal(await viewer.locator("#presentation svg").getAttribute("viewBox"), framing, "Updates should preserve viewer framing");
+  await author.locator('.node[data-id="one"]').hover();
+  await author.locator('.node[data-id="one"] .color-handle').press("Enter");
+  await author.locator('#color-palette [data-color="yellow"]').click();
+  await viewer.waitForFunction(() => document.querySelector("#presentation rect[data-color]")?.dataset.color === "yellow", null, { timeout: 15_000 });
+  assert.equal(await viewer.locator("#presentation svg").getAttribute("viewBox"), framing, "A live color update preserves framing");
+  await author.locator("#menu-button").click();
+  await author.locator("#connection-style-button").click();
+  await viewer.waitForFunction(() => [...document.querySelectorAll("#presentation .edge")].every((edge) => edge.getAttribute("d").includes(" C ")), null, { timeout: 15_000 });
+  assert.equal(await viewer.locator("#presentation svg").getAttribute("viewBox"), framing, "A live curve update preserves framing");
   assert.equal(await viewer.evaluate(() => JSON.stringify(localStorage)), localBefore);
   await viewer.screenshot({ path: "/tmp/scattered-sharing-viewer.png" });
   // A reload uses the same author capability, not a new link.
@@ -148,12 +186,12 @@ try {
   await viewer.waitForFunction(() => /interrupted|中断/.test(document.querySelector("#presentation-status").textContent), null, { timeout: 15_000 });
   assert.equal(await viewer.locator("#presentation-status:not(.sr-only)").isVisible(), true, "Connection failures must remain visible");
   assert.match(await viewer.locator("#presentation-status").textContent(), /中断.*interrupted/);
-  assert.equal(await viewer.locator(".note-text").count(), 2);
+  assert.equal(await viewer.locator(".note-text").count(), sample.nodes.length);
   online = true;
   const mobileContext = await context({ viewport: { width: 402, height: 680 }, isMobile: true, hasTouch: true, locale: "zh-CN" });
   const mobile = await mobileContext.newPage();
   await mobile.goto(url);
-  await mobile.waitForFunction(() => document.querySelectorAll(".note-text").length === 2);
+  await mobile.waitForFunction((count) => document.querySelectorAll(".note-text").length === count, sample.nodes.length);
   await mobile.screenshot({ path: "/tmp/scattered-sharing-mobile.png" });
   for (const button of await mobile.locator(".presentation-tools button:visible").all()) {
     assert.ok(await button.evaluate((element) => {

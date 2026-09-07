@@ -1,5 +1,5 @@
 import { clamp, fitBoundsToViewport, screenToWorld } from "./model.js";
-import { createBoardSvg } from "./svg-export.js";
+import { createBoardSvg } from "./svg-export.js?v=75";
 import { SHARE_ID, parseSharedBoard } from "./share-model.js";
 import { SHARE_API } from "./share-config.js";
 import { applyTranslations, t } from "./i18n.js?v=73";
