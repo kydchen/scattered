@@ -89,8 +89,8 @@ const sync = createDriveSync({
     if (href === "https://broker.example/token") {
       return Response.json({ accessToken: "drive-token", expiresIn: 3_600 });
     }
-    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
-      return Response.json({ user: { permissionId: "account-a" } });
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
+      return Response.json({ user: { permissionId: "account-a", displayName: "Account A", emailAddress: "a@example.test", photoLink: "https://lh3.googleusercontent.com/avatar-a" } });
     }
     if (href.startsWith("https://www.googleapis.com/drive/v3/files?")) {
       return Response.json({ files: [] });
@@ -111,6 +111,8 @@ assert.equal(lockCalls, 1);
 assert.ok(requests.some((item) => item.url === "https://broker.example/token"));
 const uploadA = requests.find((item) => item.url === "https://upload.example/session-a");
 const uploadedSnapshotA = JSON.parse(uploadA.init.body);
+assert.deepEqual(sync.profile, { name: "Account A", email: "a@example.test", photo: "https://lh3.googleusercontent.com/avatar-a" });
+assert.ok(!uploadA.init.body.includes("a@example.test") && !uploadA.init.body.includes("avatar-a"), "Profile data stays out of canvas snapshots");
 assert.equal(uploadedSnapshotA.format, "scattered-cloud-workspace");
 assert.equal(uploadedSnapshotA.workspace.boards[0].id, "board-a");
 assert.ok(uploadedSnapshotA.ancestors.includes("legacy-snapshot"));
@@ -122,6 +124,7 @@ assert.equal(storage.getItem("scattered-drive-sync-v1"), null);
 
 const stateBeforeDisconnect = storage.getItem(stateKeyA);
 sync.disconnect();
+assert.equal(sync.profile, null);
 assert.equal(storage.getItem("scattered-drive-session-v1"), null);
 assert.equal(storage.getItem(stateKeyA), stateBeforeDisconnect);
 
@@ -142,7 +145,7 @@ const reconnect = createDriveSync({
     if (href === "https://broker.example/token") {
       return Response.json({ accessToken: "drive-token", expiresIn: 3_600 });
     }
-    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
       return Response.json({ user: { permissionId: "account-a" } });
     }
     if (href.startsWith("https://www.googleapis.com/drive/v3/files?")) {
@@ -160,6 +163,7 @@ const reconnect = createDriveSync({
   },
 });
 assert.equal(await reconnect.syncNow(), true);
+assert.deepEqual(reconnect.profile, { name: "", email: "", photo: "" }, "Accounts without profile fields still sync");
 assert.equal(reconnectRequests.filter((url) => url.includes("/upload/")).length, 0);
 
 storage.setItem("scattered-drive-session-v1", "v1.c2VhbGVk");
@@ -188,7 +192,7 @@ const switchSync = createDriveSync({
     if (href === "https://broker.example/token") {
       return Response.json({ accessToken: "drive-token-b", expiresIn: 3_600 });
     }
-    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
       switchEvents.push("account");
       return Response.json({ user: { permissionId: "account-b" } });
     }
@@ -219,8 +223,13 @@ assert.match(storage.getItem(`scattered-drive-sync-v1:${accountBKey}`), /drive-f
 for (const [label, remoteResponse, expectedMessage] of [
   ["unreadable", () => new Response("offline", { status: 503 }), "Drive sync failed: drive-503"],
   ["invalid", () => new Response("not-json"), "Drive sync failed: snapshot-invalid"],
+  ["offline-during-download", () => {
+    Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: false });
+    throw new TypeError("Network disconnected");
+  }, null],
 ]) {
   let stagedError = null;
+  let lastStatus;
   let uploadAttempted = false;
   const failingRemote = createDriveSync({
     apiUrl: "https://broker.example",
@@ -230,13 +239,14 @@ for (const [label, remoteResponse, expectedMessage] of [
     bindAccount: () => assert.fail("A bound account must not be rebound"),
     switchAccount: () => assert.fail("The matching account must not switch"),
     onError: (error) => { stagedError = error; },
+    onStatus: (status) => { lastStatus = status; },
     fetch: async (url) => {
       const href = String(url);
       if (href === "https://broker.example/token") {
         return Response.json({ accessToken: "drive-token-b", expiresIn: 3_600 });
       }
-      if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
-        return Response.json({ user: { permissionId: "account-b" } });
+      if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
+        return Response.json({ user: { permissionId: "account-b", photoLink: "https://googleusercontent.com.attacker.invalid/avatar" } });
       }
       if (href.startsWith("https://www.googleapis.com/drive/v3/files?")) {
         return Response.json({ files: [{ id: "remote-file", appProperties: { deviceId: "other-device" } }] });
@@ -248,9 +258,20 @@ for (const [label, remoteResponse, expectedMessage] of [
       return new Response("unexpected", { status: 500 });
     },
   });
-  assert.equal(await failingRemote.syncNow(), false);
-  assert.equal(stagedError?.syncStage, "download");
-  assert.equal(stagedError?.message, expectedMessage);
+  const onlineDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, "onLine");
+  try { assert.equal(await failingRemote.syncNow(), false); }
+  finally {
+    if (onlineDescriptor) Object.defineProperty(globalThis.navigator, "onLine", onlineDescriptor);
+    else delete globalThis.navigator.onLine;
+  }
+  if (label === "offline-during-download") {
+    assert.equal(lastStatus, "offline");
+    assert.equal(stagedError, null, "Going offline does not issue a reconnect error");
+  } else {
+    assert.equal(stagedError?.syncStage, "download");
+    assert.equal(stagedError?.message, expectedMessage);
+  }
+  assert.equal(failingRemote.profile.photo, "", "An untrusted avatar host is never rendered");
   assert.equal(uploadAttempted, false);
 }
 
@@ -269,7 +290,7 @@ const failingLocal = createDriveSync({
     if (href === "https://broker.example/token") {
       return Response.json({ accessToken: "drive-token", expiresIn: 3_600 });
     }
-    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
       return Response.json({ user: { permissionId: "account-local-error" } });
     }
     return new Response("unexpected", { status: 500 });

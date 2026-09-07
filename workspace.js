@@ -569,8 +569,12 @@ export function captureRecovery(storage, boardId, board, reason, now = Date.now)
 }
 
 export function restoreLatest(storage, workspace, _currentBoard, now = Date.now) {
+  return restoreRecovery(storage, workspace, readRecovery(storage)[0]?.id, now);
+}
+
+export function restoreRecovery(storage, workspace, recoveryId, now = Date.now) {
   const entries = readRecovery(storage);
-  const entry = entries[0];
+  const entry = entries.find((candidate) => candidate.id === recoveryId);
   if (!entry) return null;
   const nextWorkspace = mergeWorkspace(storage, workspace);
   const id = createId();
@@ -943,7 +947,7 @@ function parseStoredBoard(value) {
   }
 }
 
-function readRecovery(storage) {
+export function readRecovery(storage) {
   return parseRecovery(storage.getItem(RECOVERY_KEY));
 }
 
@@ -955,7 +959,8 @@ function parseRecovery(encoded) {
       if (!isPlainObject(entry) || typeof entry.boardId !== "string") return [];
       const board = parseStoredBoard(entry.board);
       if (!board) return [];
-      const savedAt = Number(entry.savedAt) || 0;
+      const timestamp = Number(entry.savedAt);
+      const savedAt = Number.isFinite(timestamp) && Math.abs(timestamp) <= 8.64e15 ? timestamp : 0;
       const reason = String(entry.reason || "replace");
       return [{
         id: typeof entry.id === "string" && entry.id ? entry.id : `${entry.boardId}\u0000${savedAt}\u0000${reason}`,

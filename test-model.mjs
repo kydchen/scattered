@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPORT_EDGES, MAX_IMPORT_NODES, MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, connectionCurve, copySelectedGraph, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnection, toggleConnectionsToTarget } from "./model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, readRecovery, replaceDocument, restoreLatest, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
 import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { messages, t } from "./i18n.js";
 
@@ -381,7 +381,7 @@ const disconnectRace = createDriveSync({
     if (href === "https://broker.example/token") {
       return Response.json({ accessToken: "drive-token", expiresIn: 3_600 });
     }
-    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)") {
+    if (href === "https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)") {
       accountLookupStarted();
       return new Promise((resolve) => { releaseAccountLookup = resolve; });
     }
@@ -391,10 +391,11 @@ const disconnectRace = createDriveSync({
 const disconnectRaceRun = disconnectRace.syncNow();
 await accountLookupReady;
 disconnectRace.disconnect();
-releaseAccountLookup(Response.json({ user: { permissionId: "account-race" } }));
+releaseAccountLookup(Response.json({ user: { permissionId: "account-race", displayName: "Stale account", photoLink: "https://lh3.googleusercontent.com/stale" } }));
 assert.equal(await disconnectRaceRun, false);
 assert.equal(boundAfterDisconnect, false);
 assert.equal(disconnectRaceStatuses.at(-1), "disconnected");
+assert.equal(disconnectRace.profile, null, "A late lookup cannot restore the signed-out avatar");
 
 function storedWorkspace(storage) {
   return JSON.parse(storage.getItem("scattered-workspace-v2"));
@@ -693,6 +694,21 @@ assert.equal(recoveredCopy.title, "A-old");
 assert.equal(nondestructiveRestore.workspace.boards.length, 3);
 assert.notEqual(nondestructiveRestore.workspace.activeId, nondestructiveOriginalId);
 assert.equal(hasRecovery(nondestructiveRestoreStorage), false);
+
+captureRecovery(nondestructiveRestoreStorage, nondestructiveOriginalId, oldVersion, "clear", () => time++);
+const selectedRecoveryId = readRecovery(nondestructiveRestoreStorage)[0].id;
+captureRecovery(nondestructiveRestoreStorage, nondestructiveOriginalId, { ...oldVersion, title: "Newer backup" }, "delete", () => time++);
+const beforeSelectedRestore = nondestructiveRestore.workspace.boards.length;
+const chosenCopy = restoreRecovery(nondestructiveRestoreStorage, nondestructiveRestore.workspace, selectedRecoveryId, () => time++);
+assert.ok(chosenCopy.title.startsWith("A-old"), "Restore the selected copy, not the newest one");
+assert.equal(nondestructiveRestore.workspace.boards.length, beforeSelectedRestore + 1);
+assert.equal(readRecovery(nondestructiveRestoreStorage)[0].board.title, "Newer backup");
+assert.equal(storedBoard(nondestructiveRestoreStorage, nondestructiveOriginalId).title, "A-new");
+assert.equal(restoreRecovery(nondestructiveRestoreStorage, nondestructiveRestore.workspace, selectedRecoveryId), null, "An already consumed recovery cannot be restored twice");
+const damagedRecovery = JSON.parse(nondestructiveRestoreStorage.getItem("scattered-recovery-v2"));
+damagedRecovery[0].savedAt = 1e100;
+nondestructiveRestoreStorage.setItem("scattered-recovery-v2", JSON.stringify(damagedRecovery));
+assert.equal(readRecovery(nondestructiveRestoreStorage)[0].savedAt, 0, "An invalid timestamp must not break the recovery picker");
 
 const failedRestoreStorage = new FailingStorage();
 const failedRestore = loadWorkspace(failedRestoreStorage, () => time++);
@@ -1258,7 +1274,7 @@ assert.match(replacementSource, /workspace\.activeId !== previousId[\s\S]*?repla
   assert.match(source, /await commitCurrentBoard\(\)/);
   assert.match(source, /withWorkspaceLock\(/);
 });
-assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_WORKSPACE_IMPORT_BYTES[\s\S]*?parseImportedWorkspace\(encoded\)[\s\S]*?mergeImportedWorkspace[\s\S]*?replaceCurrentBoard\(parseImportedBoard\(encoded\), "import"\)/);
+assert.match(app, /async function importBoard[\s\S]*?file\.size > MAX_WORKSPACE_IMPORT_BYTES[\s\S]*?parseImportedWorkspace\(encoded\)[\s\S]*?mergeImportedWorkspace[\s\S]*?mergeImportedWorkspace\(\{ activeBoard: 0, boards: \[parseImportedBoard\(encoded\)\] \}\)/);
 assert.doesNotMatch(app, /function preserveForRecovery/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?workspaceActionPending[\s\S]*?aria-busy[\s\S]*?disabled = true/);
 assert.match(app, /type: "link"[\s\S]*?pointerType: event\.pointerType[\s\S]*?startX: event\.clientX[\s\S]*?moved: false/);
@@ -1296,15 +1312,18 @@ assert.equal((menuButtonMarkup.match(/<circle\b/g) || []).length, 3);
 assert.doesNotMatch(menuButtonMarkup, /[•⋯…]/, "Menu dots must not depend on font glyph widths");
 assert.match(css, /\.menu-button\s*\{[^}]*display:\s*grid;[^}]*place-items:\s*center;[^}]*padding:\s*0;/s);
 assert.match(css, /\.menu-button svg\s*\{[^}]*width:\s*24px;[^}]*height:\s*24px;[^}]*fill:\s*currentColor;/s);
-assert.match(html, /id="export-button"[\s\S]*?M12 3v12M8 11l4 4 4-4M5 19h14/);
-assert.match(menuMarkup, /id="cancel-export-button"[\s\S]*?id="export-json-button"[\s\S]*?id="export-svg-button"[\s\S]*?id="export-mermaid-button"/);
-assert.match(menuMarkup, /id="export-svg-button"[\s\S]*?<rect[\s\S]*?<circle[\s\S]*?m6\.5 16/);
-assert.match(menuMarkup, /id="export-mermaid-button"[\s\S]*?m9 7-5 5 5 5/);
+assert.match(html, /id="export-button"[^>]*>\s*<svg[^>]*>\s*<path d="M12 15V3M8 7l4-4 4 4M5 19h14"/);
+const pickerMarkup = html.match(/<section id="board-picker"[\s\S]*?<\/section>/)?.[0] ?? "";
+assert.match(pickerMarkup, /id="cancel-export-button"[\s\S]*?id="export-json-button"[\s\S]*?id="export-svg-button"[\s\S]*?id="export-mermaid-button"/);
+assert.match(pickerMarkup, /id="export-svg-button"[\s\S]*?<rect[\s\S]*?<circle[\s\S]*?m6\.5 16/);
+assert.match(pickerMarkup, /id="export-mermaid-button"[\s\S]*?m9 7-5 5 5 5/);
+assert.doesNotMatch(menuMarkup, /id="(?:export|import)-button"/);
 assert.match(html, /id="github-link"[\s\S]*?https:\/\/github\.com\/kydchen\/scattered/);
 assert.match(html, /id="github-link"[\s\S]*?viewBox="-1 -1 26 26"/);
-assert.match(html, /id="import-button"[\s\S]*?M12 15V3M8 7l4-4 4 4M5 19h14/);
+assert.match(html, /id="import-button"[^>]*>\s*<svg[^>]*>\s*<path d="M12 3v12M8 11l4 4 4-4M5 19h14"/);
 assert.match(html, /id="boards-button"[\s\S]*?aria-expanded="false"[\s\S]*?class="app-logo"[\s\S]*?class="boards-disclosure"/);
-assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="restore-button"[\s\S]*?id="cancel-delete-board-button"[\s\S]*?id="delete-board-button"/);
+assert.match(html, /id="board-picker"[\s\S]*?id="new-board-button"[\s\S]*?id="import-button"[\s\S]*?id="export-button"[\s\S]*?id="restore-button"[\s\S]*?id="board-row-actions"[\s\S]*?id="duplicate-board-button"[\s\S]*?id="cancel-delete-board-button"[\s\S]*?id="delete-board-button"/);
+assert.doesNotMatch(html, /board-picker-footer/);
 assert.doesNotMatch(menuMarkup, /id="restore-button"/);
 assert.match(html, /id="search-panel"[\s\S]*?id="search-input"[\s\S]*?id="search-previous"[\s\S]*?id="search-next"/);
 assert.match(menuMarkup, /id="connection-style-button"[^>]*aria-pressed="false"[^>]*data-style="straight"/);
@@ -1331,7 +1350,7 @@ assert.match(html, /id="color-selection"[\s\S]*?id="duplicate-selection"[\s\S]*?
 assert.match(selectionArrowMarkup, /M4 12h16[\s\S]*?M15 7l5 5-5 5/);
 assert.doesNotMatch(selectionArrowMarkup, /data-direction|aria-pressed|arrow-head-reverse/);
 assert.match(css, /#connections \.arrowhead\s*\{[^}]*fill:\s*var\(--thread\);[^}]*stroke:\s*none;/s);
-assert.match(css, /\.menu\.choosing-export > :not\(\.export-choice\)/);
+assert.match(css, /\.board-picker\.choosing-export #board-primary-tools\s*\{\s*display: none;/);
 assert.match(css, /#viewport\.revealing-note[\s\S]*?background-position 180ms[\s\S]*?#viewport\.revealing-note #world[\s\S]*?transform 180ms/);
 const revealNodeSource = app.match(/function softlyRevealNode\(id\)[\s\S]*?\n}\n\nfunction finishRevealMotion/)?.[0] || "";
 assert.match(revealNodeSource, /board\.view\.x \+ node\.x \* scale[\s\S]*?board\.view\.y \+ node\.y \* scale/);
@@ -1388,9 +1407,11 @@ assert.match(app, /pasteSelectedGraph\(payload, origin\)/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "f"/);
 assert.match(app, /event\.key\.toLowerCase\(\) === "d"/);
 assert.match(app, /loadWorkspace\(workspaceStorage\)/);
-assert.match(css, /\.board-picker\.confirming-delete[\s\S]*?#cancel-delete-board-button[\s\S]*?#delete-board-button/);
+assert.match(css, /\.board-picker\.confirming-delete #duplicate-board-button \{ display: none; \}/);
+assert.match(css, /\.board-picker\.confirming-delete #delete-board-button.*var\(--danger\)/);
 assert.match(css, /\.board-picker-tools button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
-assert.match(css, /\.drive-sync-button\[data-status="connected"\],[\s\S]*?data-status="syncing"[\s\S]*?data-status="synced"[\s\S]*?color:\s*var\(--thread\)/);
+assert.match(css, /\.drive-sync-button\[data-status="syncing"\]::after[\s\S]*?animation: drive-sync-spin/);
+assert.match(css, /\.drive-sync-button\[data-status="synced"\] \.drive-badge/);
 assert.doesNotMatch(css, /\.drive-sync-button\s*\{[^}]*color:\s*var\(--thread\)/s);
 assert.doesNotMatch(css, /translate:\s*0 var\(--visual-offset-top/);
 assert.equal((css.match(/top:\s*calc\([^;\n]*--visual-offset-top/g) || []).length, 8);
@@ -1422,12 +1443,12 @@ assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(html, /<script type="module" src="app\.js\?v=73"><\/script>/);
+assert.match(html, /<script type="module" src="app\.js\?v=78"><\/script>/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /scattered-v75/);
+assert.match(serviceWorker, /scattered-v78/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
-assert.match(serviceWorker, /\.\/app\.js\?v=73/);
+assert.match(serviceWorker, /\.\/app\.js\?v=78/);
 assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
 assert.match(serviceWorker, /\.\/sync-model\.js/);

@@ -2,7 +2,7 @@ import { clamp, fitBoundsToViewport, screenToWorld } from "./model.js";
 import { createBoardSvg } from "./svg-export.js?v=75";
 import { SHARE_ID, parseSharedBoard } from "./share-model.js";
 import { SHARE_API } from "./share-config.js";
-import { applyTranslations, t } from "./i18n.js?v=73";
+import { applyTranslations, t } from "./i18n.js?v=78";
 
 // This entry point never loads the editor, workspace, Google credentials, or browser storage.
 const canvas = document.querySelector("#presentation");
@@ -26,8 +26,7 @@ const pointers = new Map();
 applyTranslations();
 for (const button of document.querySelectorAll("[data-view-label]")) {
   const key = button.dataset.viewLabel;
-  button.title = `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`;
-  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-label", `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`);
 }
 document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 theme.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "dark"));
@@ -63,7 +62,6 @@ function setStatus(key, visible = false, values = {}) {
   const message = visible ? `${t(key, values, "zh-Hans")} / ${t(key, values, "en")}` : t(key, values);
   if (status.textContent !== message) status.textContent = message;
   status.classList.toggle("sr-only", !visible);
-  title.title = `${title.textContent}\n${message}`;
 }
 
 function paintView() {

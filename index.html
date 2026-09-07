@@ -39,8 +39,8 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=72" />
-    <link rel="stylesheet" href="sharing.css?v=74" />
+    <link rel="stylesheet" href="styles.css?v=78" />
+    <link rel="stylesheet" href="sharing.css?v=78" />
     <title>Scattered</title>
   </head>
   <body>
@@ -84,35 +84,85 @@
       </header>
 
       <section id="board-picker" class="board-picker" role="group" aria-label="画布列表" data-i18n-aria="boardList" hidden>
-        <div class="board-picker-tools">
+        <div id="board-primary-tools" class="board-picker-tools">
           <button id="new-board-button" type="button" aria-label="新建画布" data-i18n-aria="newBoard">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
           </button>
-          <button id="duplicate-board-button" type="button" aria-label="复制当前画布" data-i18n-aria="duplicateBoard">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+          <button id="import-button" type="button" aria-label="导入 JSON 为新画布" data-i18n-aria="importBackup">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12M8 11l4 4 4-4M5 19h14"></path>
+            </svg>
           </button>
-          <button id="restore-button" type="button" aria-label="恢复最近一次清空、覆盖或删除" data-i18n-aria="restoreRecent" hidden>
+          <button id="export-button" type="button" aria-label="导出当前画布" data-i18n-aria="exportBackup" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
+            </svg>
+          </button>
+          <button id="restore-button" type="button" aria-label="查看可恢复的画布副本" data-i18n-aria="restoreRecent">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 8V3m0 5h5M5.5 7A8 8 0 1 1 4 14"></path>
               <path d="M12 8v5l3 2"></path>
             </svg>
           </button>
+
           <button id="drive-sync-button" class="drive-sync-button" type="button" aria-label="连接 Google Drive" data-i18n-aria="connectDrive" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
+            <img class="drive-avatar" alt="" referrerpolicy="no-referrer" hidden />
+            <svg class="drive-base" viewBox="0 0 24 24" aria-hidden="true">
               <path class="drive-cloud" d="M7.3 18.2h9.4a3.8 3.8 0 0 0 .7-7.5A5.8 5.8 0 0 0 6.3 9.2a4.5 4.5 0 0 0 1 9Z"></path>
-              <circle class="drive-status-dot" cx="17.4" cy="17.2" r="2.2"></circle>
-              <circle class="drive-status-ring" cx="12" cy="12" r="8.3"></circle>
-              <path class="drive-status-alert" d="M17.4 14.8v2.1m0 2.2h.01"></path>
+              <g class="drive-person"><circle cx="12" cy="8" r="3"></circle><path d="M5 20v-2a7 7 0 0 1 14 0v2"></path></g>
             </svg>
-          </button>
-          <button id="cancel-drive-button" type="button" aria-label="取消云端设置" data-i18n-aria="cancelDriveControls" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
-          </button>
-          <button id="disconnect-drive-button" type="button" aria-label="断开 Google Drive" data-i18n-aria="disconnectDrive" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
+            <svg class="drive-badge" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M7.3 18.2h9.4a3.8 3.8 0 0 0 .7-7.5A5.8 5.8 0 0 0 6.3 9.2a4.5 4.5 0 0 0 1 9Z"></path>
-              <path d="m5 5 14 14"></path>
+              <path class="drive-offline-mark" d="m3 3 18 18"></path>
+              <path class="drive-alert-mark" d="M12 9v4m0 3v.2"></path>
             </svg>
+          </button>
+        </div>
+        <div id="export-choices" class="board-picker-tools" hidden>
+          <button id="cancel-export-button" class="export-choice" type="button" aria-label="取消导出" data-i18n-aria="cancelExport" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 7l10 10M17 7 7 17"></path>
+            </svg>
+          </button>
+          <button id="export-json-button" class="export-choice" type="button" aria-label="导出当前画布 JSON" data-i18n-aria="exportJson" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 4H8a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h1M15 4h1a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-1"></path>
+            </svg>
+          </button>
+          <button id="export-svg-button" class="export-choice" type="button" aria-label="导出 SVG 矢量图" data-i18n-aria="exportSvg" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="14" rx="3"></rect>
+              <circle cx="15.5" cy="9.2" r="1.4"></circle>
+              <path d="m6.5 16 4-4 3.2 3 2.1-2 2.2 3"></path>
+            </svg>
+          </button>
+          <button id="export-mermaid-button" class="export-choice" type="button" aria-label="导出 Mermaid Markdown" data-i18n-aria="exportMermaid" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m9 7-5 5 5 5M15 7l5 5-5 5M13.5 4.5l-3 15"></path>
+            </svg>
+          </button>
+          <button id="export-share-button" class="export-choice" type="button" aria-label="实时只读链接" data-i18n-aria="shareTitle" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 15l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m2 10a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-1 1" transform="translate(0 -1)"></path></svg>
+          </button>
+        </div>
+        <div id="drive-account" hidden>
+          <p id="drive-account-name"></p>
+          <p id="drive-account-email"></p>
+          <div class="board-picker-tools">
+            <button id="cancel-drive-button" type="button" aria-label="取消云端设置" data-i18n-aria="cancelDriveControls" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
+            </button>
+            <button id="disconnect-drive-button" type="button" aria-label="断开 Google Drive" data-i18n-aria="disconnectDrive" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.3 18.2h9.4a3.8 3.8 0 0 0 .7-7.5A5.8 5.8 0 0 0 6.3 9.2a4.5 4.5 0 0 0 1 9Z"></path>
+                <path d="m5 5 14 14"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="board-row-actions" class="board-row-actions">
+          <button id="duplicate-board-button" type="button" aria-label="复制当前画布" data-i18n-aria="duplicateBoard">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
           </button>
           <button id="cancel-delete-board-button" type="button" aria-label="取消删除画布" data-i18n-aria="cancelDeleteBoard" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
@@ -122,6 +172,7 @@
           </button>
         </div>
         <div id="board-list" class="board-list" role="group" aria-label="本地画布" data-i18n-aria="localBoards"></div>
+        <input id="import-input" type="file" accept="application/json,.json" hidden />
       </section>
 
       <section id="empty-state" class="empty-state" hidden>
@@ -172,42 +223,6 @@
         </svg>
       </button>
       <section id="menu" class="menu" role="group" hidden aria-label="画布菜单" data-i18n-aria="canvasMenu">
-        <button id="export-button" type="button" aria-label="导出当前画布" data-i18n-aria="exportBackup" aria-expanded="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 3v12M8 11l4 4 4-4M5 19h14"></path>
-          </svg>
-        </button>
-        <button id="cancel-export-button" class="export-choice" type="button" aria-label="取消导出" data-i18n-aria="cancelExport" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M7 7l10 10M17 7 7 17"></path>
-          </svg>
-        </button>
-        <button id="export-json-button" class="export-choice" type="button" aria-label="导出当前画布 JSON" data-i18n-aria="exportJson" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M9 4H8a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h1M15 4h1a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-1"></path>
-          </svg>
-        </button>
-        <button id="export-svg-button" class="export-choice" type="button" aria-label="导出 SVG 矢量图" data-i18n-aria="exportSvg" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="3.5" y="5" width="17" height="14" rx="3"></rect>
-            <circle cx="15.5" cy="9.2" r="1.4"></circle>
-            <path d="m6.5 16 4-4 3.2 3 2.1-2 2.2 3"></path>
-          </svg>
-        </button>
-        <button id="export-mermaid-button" class="export-choice" type="button" aria-label="导出 Mermaid Markdown" data-i18n-aria="exportMermaid" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m9 7-5 5 5 5M15 7l5 5-5 5M13.5 4.5l-3 15"></path>
-          </svg>
-        </button>
-        <button id="export-share-button" class="export-choice" type="button" aria-label="实时只读链接" data-i18n-aria="shareTitle" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 15l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m2 10a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-1 1" transform="translate(0 -1)"></path></svg>
-        </button>
-        <button id="import-button" type="button" aria-label="导入 JSON 到当前画布" data-i18n-aria="importBackup">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
-          </svg>
-        </button>
-        <input id="import-input" type="file" accept="application/json,.json" hidden />
         <button id="search-button" type="button" aria-label="搜索标签" data-i18n-aria="searchNotes" aria-controls="search-panel" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="10.5" cy="10.5" r="6.5"></circle>
@@ -363,7 +378,18 @@
       </article>
     </template>
 
-    <script type="module" src="app.js?v=73"></script>
+    <dialog id="recovery-dialog" class="recovery-dialog" aria-labelledby="recovery-heading">
+      <header>
+        <h2 id="recovery-heading" class="sr-only" data-i18n-text="restoreRecent"></h2>
+        <svg class="recovery-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V3m0 5h5M5.5 7A8 8 0 1 1 4 14M12 8v5l3 2"></path></svg>
+        <button id="recovery-close" class="quiet-button" data-i18n-aria="shareClose" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+        </button>
+      </header>
+      <div id="recovery-list"></div>
+    </dialog>
+
+    <script type="module" src="app.js?v=78"></script>
     <!-- Cloudflare Web Analytics -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"}'></script>
     <!-- End Cloudflare Web Analytics -->

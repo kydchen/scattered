@@ -1,4 +1,4 @@
-import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js?v=78";
 import {
   CLOUD_SNAPSHOT_FORMAT,
   CLOUD_SNAPSHOT_VERSION,
@@ -34,6 +34,7 @@ export function createDriveSync(options) {
   let accessToken = null;
   let accessTokenExpiresAt = 0;
   let authenticatedAccountKey = null;
+  let profile = null;
   let timer = null;
   let pollTimer = null;
   let running = false;
@@ -45,6 +46,7 @@ export function createDriveSync(options) {
   const controller = {
     available: Boolean(apiUrl),
     get connected() { return Boolean(session); },
+    get profile() { return profile; },
     start,
     connect,
     disconnect,
@@ -66,10 +68,12 @@ export function createDriveSync(options) {
       accessToken = null;
       accessTokenExpiresAt = 0;
       authenticatedAccountKey = null;
+      profile = null;
       write(storage, SESSION_KEY, session);
     }
     setStatus(session ? (authResult.error ? "error" : "connected") : (authResult.error ? "error" : "disconnected"));
     globalThis.addEventListener?.("online", onWake);
+    globalThis.addEventListener?.("offline", onOffline);
     globalThis.addEventListener?.("focus", onWake);
     globalThis.document?.addEventListener?.("visibilitychange", onVisibilityChange);
     pollTimer = globalThis.setInterval?.(() => {
@@ -85,6 +89,7 @@ export function createDriveSync(options) {
     clearTimeout(timer);
     clearInterval(pollTimer);
     globalThis.removeEventListener?.("online", onWake);
+    globalThis.removeEventListener?.("offline", onOffline);
     globalThis.removeEventListener?.("focus", onWake);
     globalThis.document?.removeEventListener?.("visibilitychange", onVisibilityChange);
   }
@@ -106,6 +111,7 @@ export function createDriveSync(options) {
     accessToken = null;
     accessTokenExpiresAt = 0;
     authenticatedAccountKey = null;
+    profile = null;
     remove(storage, SESSION_KEY);
     setStatus("disconnected");
   }
@@ -113,14 +119,15 @@ export function createDriveSync(options) {
   function schedule(delay = SYNC_DELAY) {
     if (!session || !controller.available) return;
     clearTimeout(timer);
-    if (!running) setStatus("connected");
+    if (!running) setStatus(globalThis.navigator?.onLine === false ? "offline" : "connected");
     timer = setTimeout(() => { void syncNow(); }, delay);
   }
 
   async function syncNow() {
     clearTimeout(timer);
     timer = null;
-    if (!session || !controller.available || globalThis.navigator?.onLine === false) return false;
+    if (!session || !controller.available) return false;
+    if (globalThis.navigator?.onLine === false) { setStatus("offline"); return false; }
     if (running) {
       queued = true;
       return false;
@@ -152,6 +159,7 @@ export function createDriveSync(options) {
         session = null;
         accessToken = null;
         authenticatedAccountKey = null;
+        profile = null;
         remove(storage, SESSION_KEY);
       }
       if (error?.code === "account") {
@@ -159,8 +167,10 @@ export function createDriveSync(options) {
         accessToken = null;
         accessTokenExpiresAt = 0;
         authenticatedAccountKey = null;
+        profile = null;
         remove(storage, SESSION_KEY);
       }
+      if (session && globalThis.navigator?.onLine === false) { setStatus("offline"); return false; }
       options.onError?.(error);
       setStatus("error");
       return false;
@@ -177,7 +187,7 @@ export function createDriveSync(options) {
 
   async function performSync(generation) {
     syncStage = "account";
-    const driveAccountKey = await getDriveAccountKey();
+    const driveAccountKey = await getDriveAccountKey(generation);
     ensureSyncActive(generation);
     const boundAccountKey = options.getBoundAccount?.() || null;
     if (boundAccountKey && boundAccountKey !== driveAccountKey) {
@@ -190,6 +200,7 @@ export function createDriveSync(options) {
     }
     ensureSyncActive(generation);
     if (options.getBoundAccount?.() !== driveAccountKey) throw syncError("account-switch");
+    setStatus("syncing");
 
     syncStage = "local";
     const local = await options.getWorkspace();
@@ -432,16 +443,26 @@ export function createDriveSync(options) {
     return accessToken;
   }
 
-  async function getDriveAccountKey() {
+  async function getDriveAccountKey(generation) {
     if (authenticatedAccountKey) return authenticatedAccountKey;
-    const response = await driveRequest("https://www.googleapis.com/drive/v3/about?fields=user(permissionId)");
+    const response = await driveRequest("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,displayName,emailAddress,photoLink)");
     let payload;
     try { payload = await response.json(); } catch { throw syncError("account-identity"); }
     const permissionId = payload?.user?.permissionId;
     if (typeof permissionId !== "string" || !permissionId || permissionId.length > 512) {
       throw syncError("account-identity");
     }
-    authenticatedAccountKey = await accountFingerprint(permissionId);
+    const accountKey = await accountFingerprint(permissionId);
+    ensureSyncActive(generation);
+    authenticatedAccountKey = accountKey;
+    const text = (value) => typeof value === "string" ? value.slice(0, 320) : "";
+    let photo = "";
+    try {
+      const url = new URL(payload.user.photoLink);
+      if (url.protocol === "https:" && !url.username && !url.password
+        && (url.hostname === "googleusercontent.com" || url.hostname.endsWith(".googleusercontent.com"))) photo = url.href;
+    } catch { /* Missing or invalid photos use the account icon. */ }
+    profile = Object.freeze({ name: text(payload.user.displayName), email: text(payload.user.emailAddress), photo });
     return authenticatedAccountKey;
   }
 
@@ -462,6 +483,10 @@ export function createDriveSync(options) {
 
   function onWake() {
     if (session) schedule(150);
+  }
+
+  function onOffline() {
+    if (session) setStatus("offline");
   }
 
   function onVisibilityChange() {

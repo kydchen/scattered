@@ -1,11 +1,11 @@
 import { createLiveShare } from "./live-share.js";
 import { SHARE_API } from "./share-config.js";
-import { hasMessage, t } from "./i18n.js?v=73";
+import { hasMessage, t } from "./i18n.js?v=78";
 
-const bilingual = (key) => `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`;
 const quietStates = new Set(["shareOff", "shareUploading", "shareLive", "shareStopping", "shareCopied"]);
+const bilingual = (key) => `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`;
 
-export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, save, canPublish }) {
+export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, save, canPublish, onOpen }) {
   const trigger = document.querySelector("#export-share-button");
   const dialog = document.createElement("dialog");
   dialog.id = "share-dialog";
@@ -20,26 +20,29 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
       </button>
     </header>
-    <p id="share-consent"><span lang="zh-Hans" data-share-text="shareConsent"></span><span lang="en" data-share-text="shareConsent"></span></p>
-    <div class="share-link-row" hidden>
-      <label for="share-url" class="sr-only"></label>
-      <input id="share-url" type="url" readonly hidden />
-      <button id="share-copy" class="share-icon" type="button" data-share-label="shareCopy" hidden>
-        <svg class="share-copy-glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path></svg>
-        <svg class="share-copied-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
-      </button>
-    </div>
+    <p id="share-consent" data-share-text="shareConsent"></p>
     <p id="share-status" role="status" aria-atomic="true" class="sr-only"></p>
     <footer class="share-footer">
       <details class="share-details">
         <summary class="share-icon" data-share-label="shareDetails">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6m0-10v.5"></path></svg>
         </summary>
-        <p class="share-notice" lang="zh-Hans" data-share-text="sharePublisherNotice"></p>
-        <p class="share-notice" lang="en" data-share-text="sharePublisherNotice"></p>
+        <div class="share-link-row" hidden>
+          <label for="share-url" class="sr-only"></label>
+          <input id="share-url" type="url" readonly hidden />
+        </div>
+        <p class="share-notice" data-share-text="shareNoticeUpdates"></p>
+        <p class="share-notice" data-share-text="shareNoticeControls"></p>
+        <p class="share-notice" data-share-text="shareNoticeStop"></p>
       </details>
       <div class="share-actions">
-        <svg class="share-live-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path></svg>
+        <button id="share-copy" class="share-icon" type="button" data-share-label="shareCopy" hidden>
+          <svg class="share-copy-glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path></svg>
+          <svg class="share-copied-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
+        </button>
+        <a id="share-preview" class="share-icon" target="_blank" rel="noopener noreferrer" data-share-label="sharePreview" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>
+        </a>
         <button id="share-enable" class="share-icon" type="button" data-share-label="shareEnable">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 .1l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7-.1l-3 3a5 5 0 0 0 7 7l2-2"></path></svg>
         </button>
@@ -53,15 +56,20 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
   dialog.querySelector('label[for="share-url"]').textContent = bilingual("shareLink");
   for (const element of dialog.querySelectorAll("[data-share-label]")) {
     element.setAttribute("aria-label", bilingual(element.dataset.shareLabel));
-    element.title = bilingual(element.dataset.shareLabel);
   }
   for (const element of dialog.querySelectorAll("[data-share-text]")) {
-    element.textContent = t(element.dataset.shareText, {}, element.lang);
+    for (const language of ["zh-Hans", "en"]) {
+      const text = document.createElement("span");
+      text.lang = language;
+      text.textContent = t(element.dataset.shareText, {}, language);
+      element.append(text);
+    }
   }
   const field = dialog.querySelector("#share-url");
   const message = dialog.querySelector("#share-status");
   const enable = dialog.querySelector("#share-enable");
   const copy = dialog.querySelector("#share-copy");
+  const preview = dialog.querySelector("#share-preview");
   const stop = dialog.querySelector("#share-stop");
   let boardId;
   let scope;
@@ -81,12 +89,11 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
   function refresh() {
     try {
       trigger.dataset.sharing = String(Boolean(service.current(getCurrentId())));
-      trigger.title = bilingual("shareTitle");
       if (!dialog.open) return;
       if (scope !== getScope() || boardId !== getCurrentId()) { dialog.close(); return; }
       const record = service.current(boardId);
       dialog.querySelector(".share-link-row").hidden = !record?.ready;
-      field.hidden = copy.hidden = !record?.ready;
+      field.hidden = copy.hidden = preview.hidden = !record?.ready;
       enable.hidden = Boolean(record?.ready);
       enable.disabled = busy || !service.available;
       stop.hidden = !record;
@@ -95,6 +102,8 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
       enable.setAttribute("aria-busy", String(busy));
       stop.setAttribute("aria-busy", String(busy));
       field.value = record?.ready ? new URL(`present.html#${record.id}`, location.href).href : "";
+      if (record?.ready) preview.href = field.value;
+      else preview.removeAttribute("href");
       showMessage(service.available ? (record?.blocked ? "shareConflict" : service.state(boardId)) : "shareUnavailable");
     } catch { showMessage("shareStorage"); }
   }
@@ -117,6 +126,7 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
     scope = getScope();
     dialog.querySelector(".share-details").open = false;
     dialog.querySelector("#share-board-title").textContent = getBoards().find((item) => item.id === boardId)?.board.title || "Scattered";
+    onOpen?.();
     if (!dialog.open) dialog.showModal();
     refresh();
   });
@@ -124,10 +134,13 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
   stop.addEventListener("click", () => action(() => service.stop(boardId)));
   copy.addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(field.value); showMessage("shareCopied"); }
-    catch { field.focus(); field.select(); showMessage("shareCopyManually"); }
+    catch {
+      dialog.querySelector(".share-details").open = true;
+      field.focus(); field.select(); showMessage("shareCopyManually");
+    }
   });
   dialog.querySelector("#share-close").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => trigger.focus());
+  dialog.addEventListener("close", () => document.querySelector("#boards-button").focus());
 
   async function update() {
     if (scheduled || !canPublish() || document.hidden) return;
@@ -146,7 +159,7 @@ export function mountLiveSharing({ storage, getScope, getBoards, getCurrentId, s
     },
     async stopCurrent() {
       try { await service.stop(getCurrentId()); return true; }
-      catch { alert(t("shareStopFailed")); return false; }
+      catch { alert(bilingual("shareStopFailed")); return false; }
     },
   };
 }

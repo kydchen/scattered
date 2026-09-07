@@ -26,7 +26,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Keep multiple local boards and switch between them from the Scattered mark
 - Optionally sync the whole workspace through the user's own Google Drive, without creating a Scattered account
 - Clear the current board without changing its title, or delete the board itself—both actions keep a local recovery copy
-- Undo a clear immediately or restore a recovery copy after clearing, importing over, or deleting
+- Undo a clear immediately, or preview and restore one of the last five recovery copies as a new canvas
 - Search note text and jump between matches
 - Undo, redo, fit the whole board into view, and switch between light and dark modes
 - Export the current canvas as editable JSON, SVG, or Mermaid Markdown
@@ -53,7 +53,7 @@ See the public [About](https://scatterednote.space/about.html) and [Privacy](htt
 
 ## Import and export
 
-- **JSON** preserves the current editable canvas. Importing it replaces the current canvas and keeps a local recovery copy; older workspace backup files remain supported and add their canvases to the local list.
+- **JSON** preserves the current editable canvas. Importing adds and opens a new canvas without replacing existing work; matching names get a suffix. Older workspace backups also add their canvases to the list. Import and export are in the left canvas menu; duplicate and delete sit beside the selected canvas.
 - **SVG** exports the complete board as a lightweight vector image, automatically fitted to its content.
 - **Mermaid Markdown** turns notes and connections into a diagram that can be used in Markdown documents and AI-assisted workflows.
 - **Live read-only link:** choose Export → Live read-only link → Enable sharing, then copy the link. Anyone with it can open the current canvas without signing in, pan, zoom, fit the view, and present it full screen. Only this canvas is published; the viewer cannot edit it or overwrite their own local workspace.

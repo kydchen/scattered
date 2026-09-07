@@ -1,11 +1,11 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, replaceDocument, restoreLatest, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseImportedWorkspace, readRecovery, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=78";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
-import { createDriveSync } from "./drive-sync.js";
+import { createDriveSync } from "./drive-sync.js?v=78";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=73";
-import { mountLiveSharing } from "./share-ui.js?v=73";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=78";
+import { mountLiveSharing } from "./share-ui.js?v=78";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
@@ -65,6 +65,12 @@ const emptyState = document.querySelector("#empty-state");
 const boardsButton = document.querySelector("#boards-button");
 const boardPicker = document.querySelector("#board-picker");
 const boardList = document.querySelector("#board-list");
+const boardRowActions = document.querySelector("#board-row-actions");
+const exportChoices = document.querySelector("#export-choices");
+const recoveryDialog = document.querySelector("#recovery-dialog");
+const recoveryList = document.querySelector("#recovery-list");
+const recoveryPreviewUrls = [];
+let recoveryScope;
 const newBoardButton = document.querySelector("#new-board-button");
 const duplicateBoardButton = document.querySelector("#duplicate-board-button");
 const deleteBoardButton = document.querySelector("#delete-board-button");
@@ -96,6 +102,7 @@ let toastTimer = null;
 let boardDirty = false;
 let saveFailureMessage = "";
 let workspaceActionPending = false;
+let deleteBoardTargetId = null;
 let connectionStyle = readConnectionStyle();
 let edgeRenderFrame = 0;
 let dragAutoPanFrame = 0;
@@ -159,6 +166,7 @@ const sharing = mountLiveSharing({
   getCurrentId: () => workspace.activeId,
   save: commitCurrentBoard,
   canPublish: () => storageReady && !workspaceActionPending && !boardDirty,
+  onOpen: () => setBoardPickerOpen(false),
 });
 
 syncVisualViewportChrome();
@@ -401,7 +409,13 @@ importButton.addEventListener("click", () => importInput.click());
 importInput.addEventListener("change", importBoard);
 searchButton.addEventListener("click", openSearch);
 connectionStyleButton.addEventListener("click", toggleConnectionStyle);
-restoreButton.addEventListener("click", restoreRecentBoard);
+restoreButton.addEventListener("click", openRecovery);
+document.querySelector("#recovery-close").addEventListener("click", () => recoveryDialog.close());
+recoveryDialog.addEventListener("close", () => {
+  recoveryPreviewUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  recoveryList.replaceChildren();
+  boardsButton.focus();
+});
 driveSyncButton.addEventListener("click", useDriveSync);
 cancelDriveButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -1013,7 +1027,7 @@ function setMenuOpen(open) {
   if (open) setBoardPickerOpen(false);
   menu.hidden = !open;
   menuButton.setAttribute("aria-expanded", String(open));
-  if (open) requestAnimationFrame(() => exportButton.focus());
+  if (open) requestAnimationFrame(() => searchButton.focus());
   if (!open) {
     disarmClear();
     disarmExport();
@@ -1031,6 +1045,7 @@ function setBoardPickerOpen(open) {
   } else {
     disarmDeleteBoard();
     disarmDriveControls();
+    disarmExport();
   }
 }
 
@@ -1039,7 +1054,9 @@ async function useDriveSync(event) {
   if (driveSync.connected) {
     driveSync.schedule(0);
     disarmDeleteBoard();
+    disarmExport();
     boardPicker.classList.add("managing-drive");
+    document.querySelector("#drive-account").hidden = false;
     cancelDriveButton.hidden = false;
     disconnectDriveButton.hidden = false;
     requestAnimationFrame(() => cancelDriveButton.focus());
@@ -1074,6 +1091,7 @@ async function disconnectDriveAccount(event) {
 
 function disarmDriveControls() {
   boardPicker.classList.remove("managing-drive");
+  document.querySelector("#drive-account").hidden = true;
   cancelDriveButton.hidden = true;
   disconnectDriveButton.hidden = true;
 }
@@ -1088,9 +1106,31 @@ function updateDriveSyncControl(status) {
     connected: "driveConnected",
     syncing: "driveSyncing",
     synced: "driveSynced",
+    offline: "driveOffline",
     error: "driveSyncError",
   }[status] || "connectDrive";
-  driveSyncButton.setAttribute("aria-label", t(label));
+  const profile = driveSync.profile;
+  const identity = profile?.email || profile?.name || "";
+  const description = identity ? `${identity} · ${t(label)}` : t(label);
+  driveSyncButton.setAttribute("aria-label", description);
+  driveSyncButton.dataset.account = String(driveSync.connected);
+  document.querySelector("#drive-account-name").textContent = profile?.name || "Google Drive";
+  document.querySelector("#drive-account-email").textContent = profile?.email || t("driveAccountPending");
+  const avatar = driveSyncButton.querySelector(".drive-avatar");
+  const photo = profile?.photo || "";
+  if (avatar.dataset.photo !== photo) {
+    avatar.dataset.photo = photo;
+    avatar.hidden = true;
+    driveSyncButton.classList.remove("has-avatar");
+    avatar.onload = () => {
+      if (avatar.dataset.photo !== photo || !driveSync.connected) return;
+      avatar.hidden = false;
+      driveSyncButton.classList.add("has-avatar");
+    };
+    avatar.onerror = () => { avatar.hidden = true; driveSyncButton.classList.remove("has-avatar"); };
+    if (photo) avatar.src = photo;
+    else avatar.removeAttribute("src");
+  }
   if (status === "synced") driveErrorNotified = false;
   if (status === "error" && !driveErrorNotified) {
     driveErrorNotified = true;
@@ -1107,7 +1147,8 @@ function canApplyDriveWorkspace() {
     && selectedIds.size === 0
     && !selectedEdgeId
     && menu.hidden
-    && !document.querySelector("#share-dialog[open]")
+    && !boardPicker.classList.contains("confirming-delete")
+    && !document.querySelector("dialog[open]")
     && searchPanel.hidden
     && !document.querySelector(".node.editing")
     && boardTitleEditor.hidden
@@ -1193,12 +1234,14 @@ function driveBusyError() {
 }
 
 function armDeleteBoard() {
+  deleteBoardTargetId = workspace.activeId;
   boardPicker.classList.add("confirming-delete");
   cancelDeleteBoardButton.hidden = false;
   deleteBoardButton.setAttribute("aria-label", t("confirmDeleteBoard"));
 }
 
 function disarmDeleteBoard() {
+  deleteBoardTargetId = null;
   boardPicker.classList.remove("confirming-delete");
   cancelDeleteBoardButton.hidden = true;
   deleteBoardButton.setAttribute("aria-label", t("deleteBoard"));
@@ -1237,12 +1280,18 @@ function renderBoardList() {
     option.type = "button";
     option.className = "board-list-option";
     option.dataset.id = item.id;
-    if (item.id === workspace.activeId) option.setAttribute("aria-current", "true");
+    const active = item.id === workspace.activeId;
+    if (active) option.setAttribute("aria-current", "true");
     const title = document.createElement("span");
     title.className = "board-list-title";
     title.textContent = item.title || "Untitled";
     option.append(title);
-    fragment.append(option);
+    const row = document.createElement("div");
+    row.className = "board-list-row";
+    row.classList.toggle("active", active);
+    row.append(option);
+    if (active) row.append(boardRowActions);
+    fragment.append(row);
   });
   boardList.replaceChildren(fragment);
   sharing.schedule();
@@ -1289,6 +1338,11 @@ async function removeCurrentBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
+    if (workspace.activeId !== deleteBoardTargetId) {
+      disarmDeleteBoard();
+      showToast(t("deleteTargetChanged"));
+      return;
+    }
     if (!await sharing.stopCurrent()) return;
     replaceBoard(await withWorkspaceLock(() => deleteDocument(workspaceStorage, workspace)));
     driveSync.schedule();
@@ -1364,29 +1418,87 @@ function fitOpenedBoardIfOffscreen(force = false) {
   scheduleSave();
 }
 
-async function restoreRecentBoard(event) {
-  event?.stopPropagation();
+function openRecovery(event) {
+  event.stopPropagation();
+  try {
+    const entries = readRecovery(workspaceStorage);
+    recoveryScope = workspaceSlots.accountKey || (workspaceSlots.isGuest ? "guest" : "local");
+    recoveryPreviewUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+    recoveryList.replaceChildren();
+    const theme = getComputedStyle(document.documentElement);
+    const color = (name) => theme.getPropertyValue(name).trim();
+    const twoDigits = (value) => String(value).padStart(2, "0");
+    for (const entry of entries) {
+      const item = document.createElement("article");
+      item.className = "recovery-item";
+      const image = document.createElement("img");
+      image.alt = "";
+      // Each image isolates SVG IDs and styles from the app and other previews.
+      const svg = new DOMParser().parseFromString(createBoardSvg(entry.board, connectionStyle), "image/svg+xml");
+      svg.querySelector("style").textContent += `\nsvg > rect { fill: ${color("--canvas")}; } .note-text { fill: ${color("--ink")}; } .edge { stroke: ${color("--thread")}; } .edge-label { fill: ${color("--ink")}; stroke: ${color("--canvas")}; }`;
+      svg.querySelectorAll("rect[data-color]").forEach((rect) => {
+        rect.setAttribute("fill", color(rect.dataset.color === "plain" ? "--paper" : `--note-${rect.dataset.color}`));
+      });
+      const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" }));
+      recoveryPreviewUrls.push(url);
+      image.src = url;
+      const title = document.createElement("strong");
+      title.textContent = entry.board.title || "Untitled";
+      const date = document.createElement("time");
+      const saved = new Date(entry.savedAt);
+      date.dateTime = saved.toISOString();
+      date.textContent = `${saved.getFullYear()}-${twoDigits(saved.getMonth() + 1)}-${twoDigits(saved.getDate())} ${twoDigits(saved.getHours())}:${twoDigits(saved.getMinutes())}`;
+      date.setAttribute("aria-label", `${date.textContent} · ${t(`recovery${entry.reason === "delete" ? "Deleted" : entry.reason === "clear" ? "Cleared" : "Replaced"}`)}`);
+      const details = document.createElement("div");
+      details.append(title, date);
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "quiet-button";
+      restore.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h9a6 6 0 0 1 6 6v3M9 5l-5 5 5 5"></path></svg>';
+      restore.setAttribute("aria-label", t("restoreCopy", { title: title.textContent }));
+      restore.addEventListener("click", () => { void restoreRecentBoard(entry.id); });
+      item.append(image, details, restore);
+      recoveryList.append(item);
+    }
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "recovery-empty";
+      empty.setAttribute("role", "status");
+      empty.setAttribute("aria-label", t("recoveryEmpty"));
+      empty.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 14 4-9h10l4 9v5H3Zm0 0h5l2 3h4l2-3h5"></path></svg>';
+      recoveryList.append(empty);
+    }
+    setBoardPickerOpen(false);
+    recoveryDialog.showModal();
+  } catch { showToast(t("errorRestoreBoard")); }
+}
+
+async function restoreRecentBoard(recoveryId) {
+  if (recoveryScope !== (workspaceSlots.accountKey || (workspaceSlots.isGuest ? "guest" : "local"))) { recoveryDialog.close(); return; }
   if (!beginWorkspaceAction()) return;
+  recoveryList.querySelectorAll("button").forEach((button) => { button.disabled = true; });
   try {
     if (!await commitCurrentBoard()) return;
-    const restored = await withWorkspaceLock(() => restoreLatest(workspaceStorage, workspace, board));
+    const restored = await withWorkspaceLock(() => restoreRecovery(workspaceStorage, workspace, recoveryId));
     if (restored) {
       replaceBoard(restored);
       driveSync.schedule();
     }
     updateRecoveryControl();
+    recoveryDialog.close();
     setBoardPickerOpen(false);
     setMenuOpen(false);
     boardsButton.focus();
   } catch {
     showToast(t("errorRestoreBoard"));
   } finally {
+    recoveryList.querySelectorAll("button").forEach((button) => { button.disabled = false; });
     endWorkspaceAction();
   }
 }
 
 function updateRecoveryControl() {
-  restoreButton.hidden = !storageReady || !hasRecovery(workspaceStorage);
+  restoreButton.hidden = !storageReady;
 }
 
 function finishCurrentInput() {
@@ -1575,7 +1687,10 @@ function disarmClear() {
 
 function showExportChoices(event) {
   event.stopPropagation();
-  menu.classList.add("choosing-export");
+  disarmDriveControls();
+  disarmDeleteBoard();
+  boardPicker.classList.add("choosing-export");
+  exportChoices.hidden = false;
   exportButton.setAttribute("aria-expanded", "true");
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = false;
@@ -1585,7 +1700,8 @@ function showExportChoices(event) {
 
 function disarmExport(event, restoreFocus = false) {
   event?.stopPropagation();
-  menu.classList.remove("choosing-export");
+  boardPicker.classList.remove("choosing-export");
+  exportChoices.hidden = true;
   exportButton.setAttribute("aria-expanded", "false");
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = true;
@@ -2485,7 +2601,7 @@ function boardBounds() {
 }
 
 function onKeyDown(event) {
-  if (document.querySelector("#share-dialog[open]")) return;
+  if (document.querySelector("dialog[open]")) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
     openSearch(event);
     return;
@@ -2528,6 +2644,11 @@ function onKeyDown(event) {
     deleteBoardButton.focus();
     return;
   }
+  if (event.key === "Escape" && boardPicker.classList.contains("choosing-export")) {
+    event.preventDefault();
+    disarmExport(null, true);
+    return;
+  }
   if (event.key === "Escape" && !boardPicker.hidden) {
     event.preventDefault();
     setBoardPickerOpen(false);
@@ -2537,11 +2658,6 @@ function onKeyDown(event) {
   if (event.key === "Escape" && !colorPalette.hidden) {
     event.preventDefault();
     hideColorPalette(true);
-    return;
-  }
-  if (event.key === "Escape" && menu.classList.contains("choosing-export")) {
-    event.preventDefault();
-    disarmExport(null, true);
     return;
   }
   if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
@@ -2800,7 +2916,7 @@ function prepareExport(closeMenu = true) {
   finishBoardTitle();
   finishEdgeLabel();
   finishEditing();
-  if (closeMenu) setMenuOpen(false);
+  if (closeMenu) setBoardPickerOpen(false);
 }
 
 async function exportBoard() {
@@ -2815,7 +2931,7 @@ async function exportBoard() {
   } catch {
     showToast(t("errorJsonExport"));
   } finally {
-    menuButton.focus();
+    boardsButton.focus();
   }
 }
 
@@ -2830,7 +2946,7 @@ async function exportMermaid() {
   } catch {
     showToast(t("errorMermaidExport"));
   } finally {
-    menuButton.focus();
+    boardsButton.focus();
   }
 }
 
@@ -2847,7 +2963,7 @@ async function exportSvg(event) {
   } catch {
     showToast(t("errorSvgExport"));
   } finally {
-    menuButton.focus();
+    boardsButton.focus();
   }
 }
 
@@ -2895,12 +3011,12 @@ async function importBoard(event) {
     const encoded = await file.text();
     const importedWorkspace = parseImportedWorkspace(encoded);
     if (importedWorkspace) await mergeImportedWorkspace(importedWorkspace);
-    else await replaceCurrentBoard(parseImportedBoard(encoded), "import");
+    else await mergeImportedWorkspace({ activeBoard: 0, boards: [parseImportedBoard(encoded)] });
   } catch (error) {
     showToast(error instanceof Error && hasMessage(error.message) ? t(error.message) : t("errorImport"));
   } finally {
-    setMenuOpen(false);
-    menuButton.focus();
+    setBoardPickerOpen(false);
+    boardsButton.focus();
   }
 }
 
@@ -2913,7 +3029,7 @@ async function mergeImportedWorkspace(imported) {
     driveSync.schedule();
     clearSaveFailure();
     announce(t("workspaceImported", { count: imported.boards.length }));
-    menuButton.focus();
+    boardsButton.focus();
     return true;
   } finally {
     endWorkspaceAction();
