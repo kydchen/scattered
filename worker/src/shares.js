@@ -38,7 +38,11 @@ export async function handleShares(request, env) {
       const row = await env.SHARES.prepare("SELECT payload, revision, updated_at FROM shares WHERE id = ?").bind(id).first();
       if (!row?.payload) return fail("shareMissing", 404);
       const etag = `"${row.revision}"`;
-      if (request.headers.get("If-None-Match") === etag) return reply(null, 304, { ETag: etag });
+      // CDN compression may weaken an ETag; GET validation uses weak comparison.
+      if (request.headers.get("If-None-Match")?.split(",").some((value) => {
+        const tag = value.trim();
+        return tag === "*" || tag.replace(/^W\//, "") === etag;
+      })) return reply(null, 304, { ETag: etag });
       return reply({ ...JSON.parse(row.payload), updatedAt: row.updated_at }, 200, { ETag: etag });
     }
     if (!["POST", "PUT", "DELETE"].includes(request.method)) return fail("shareInvalid", 405);

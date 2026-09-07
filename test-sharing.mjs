@@ -57,6 +57,9 @@ async function checks() {
   assert.equal(publicData.board.title, "Presentation");
   assert.equal(/token|write_hash/.test(JSON.stringify(publicData)), false);
   assert.equal((await request("GET", { headers: { "If-None-Match": '"1"' } })).status, 304);
+  assert.equal((await request("GET", { headers: { "If-None-Match": 'W/"1"' } })).status, 304);
+  assert.equal((await request("GET", { headers: { "If-None-Match": '"0", W/"1"' } })).status, 304);
+  assert.equal((await request("GET", { headers: { "If-None-Match": 'W/"0"' } })).status, 200);
   assert.equal((await request("PUT", { key: "c".repeat(64), revision: 1 })).status, 403);
   assert.equal((await request("DELETE", { key: "c".repeat(64) })).status, 403);
   assert.equal((await request("PUT")).status, 409);
