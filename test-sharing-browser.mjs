@@ -56,9 +56,42 @@ try {
   };
   await openSharing();
   assert.equal(requests.length, 0, "Opening share options must not upload");
+  assert.equal(await author.locator("#share-consent [lang]").count(), 2);
+  assert.match(await author.locator('#share-consent [lang="zh-Hans"]').textContent(), /只读/);
+  assert.match(await author.locator('#share-consent [lang="en"]').textContent(), /view, not edit/);
+  assert.equal(await author.locator(".share-details").getAttribute("open"), null);
+  assert.equal(await author.locator(".share-notice").first().isVisible(), false);
+  for (const id of ["share-enable", "share-copy", "share-stop", "share-close"]) {
+    assert.equal((await author.locator(`#${id}`).textContent()).trim(), "", "Actions use icons, not visible labels");
+    assert.match(await author.locator(`#${id}`).getAttribute("aria-label"), /[\u4e00-\u9fff].* \/ [A-Z]/);
+  }
+  await author.locator(".share-details summary").click();
+  assert.equal(await author.locator(".share-notice").first().isVisible(), true);
+  assert.equal(await author.locator(".share-notice").last().isVisible(), true);
+  await author.locator(".share-details summary").click();
+  assert.equal(requests.length, 0, "Reading details must not publish a canvas");
+  for (const theme of ["light", "dark"]) {
+    await author.setViewportSize({ width: 360, height: 680 });
+    await author.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+    const box = await author.locator("#share-dialog").boundingBox();
+    assert.ok(box.height < 320 && box.x >= 0 && box.x + box.width <= 360, "Compact dialog fits a phone");
+    assert.equal(await author.locator("#share-enable").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest("button") === element;
+    }), true, "The disclosure must not cover the action");
+    await author.screenshot({ path: `/tmp/scattered-share-compact-${theme}.png` });
+  }
+  await author.setViewportSize({ width: 1280, height: 800 });
   await author.locator("#share-enable").click();
   await author.waitForFunction(() => document.querySelector("#share-url").value.includes("present.html#"));
   const url = await author.locator("#share-url").inputValue();
+  await author.evaluate(() => Object.defineProperty(navigator, "clipboard", {
+    configurable: true, value: { writeText: async (value) => { window.testCopiedShare = value; } },
+  }));
+  await author.locator("#share-copy").click();
+  assert.equal(await author.evaluate(() => window.testCopiedShare), url);
+  assert.equal(await author.locator("#share-copy").getAttribute("data-copied"), "true");
+  await author.screenshot({ path: "/tmp/scattered-share-compact-active.png" });
   const viewerContext = await context();
   const viewer = await viewerContext.newPage();
   await viewer.goto(url);
@@ -103,8 +136,12 @@ try {
   await author.locator("#share-stop").click();
   await viewer.waitForFunction(() => document.querySelectorAll(".note-text").length === 0, null, { timeout: 15_000 });
   assert.equal(await viewer.evaluate(() => JSON.stringify(localStorage)), localBefore);
+  env.SHARE_CREATES.limit = async () => ({ success: false });
+  await author.locator("#share-enable").click();
+  await author.waitForFunction(() => document.querySelector("#share-status:not(.sr-only)")?.textContent.includes("Too many"));
+  assert.match(await author.locator("#share-status").textContent(), /分享请求/);
   assert.equal(errors.length, 0, errors.join("\n"));
-  console.log("browser sharing checks passed: opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline display, mobile layout, revocation");
+  console.log("browser sharing checks passed: bilingual icon dialog, collapsed details, copy feedback, opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline display, mobile layout, revocation");
 } finally {
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));

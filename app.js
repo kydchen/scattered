@@ -4,8 +4,8 @@ import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, c
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=71";
-import { mountLiveSharing } from "./share-ui.js";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=73";
+import { mountLiveSharing } from "./share-ui.js?v=73";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
