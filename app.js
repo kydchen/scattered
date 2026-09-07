@@ -4,7 +4,8 @@ import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, c
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
 import { createDriveSync } from "./drive-sync.js";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=71";
+import { mountLiveSharing } from "./share-ui.js";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
@@ -34,6 +35,7 @@ const cancelExportButton = document.querySelector("#cancel-export-button");
 const exportJsonButton = document.querySelector("#export-json-button");
 const exportSvgButton = document.querySelector("#export-svg-button");
 const exportMermaidButton = document.querySelector("#export-mermaid-button");
+const exportShareButton = document.querySelector("#export-share-button");
 const importButton = document.querySelector("#import-button");
 const clearButton = document.querySelector("#clear-button");
 const cancelClearButton = document.querySelector("#cancel-clear-button");
@@ -149,6 +151,15 @@ if (!driveSync.connected && workspaceSlots.accountKey) {
   board = guestWorkspace.board;
   storageReady = guestWorkspace.storageReady;
 }
+
+const sharing = mountLiveSharing({
+  storage: localStorage,
+  getScope: () => workspaceSlots.accountKey || (workspaceSlots.isGuest ? "guest" : "local"),
+  getBoards: () => createSyncWorkspace(workspaceStorage, workspace).boards.map((item) => ({ ...item, connectionStyle })),
+  getCurrentId: () => workspace.activeId,
+  save: commitCurrentBoard,
+  canPublish: () => storageReady && !workspaceActionPending && !boardDirty,
+});
 
 syncVisualViewportChrome();
 updateChromeResumeRecovery();
@@ -1096,6 +1107,7 @@ function canApplyDriveWorkspace() {
     && selectedIds.size === 0
     && !selectedEdgeId
     && menu.hidden
+    && !document.querySelector("#share-dialog[open]")
     && searchPanel.hidden
     && !document.querySelector(".node.editing")
     && boardTitleEditor.hidden
@@ -1233,6 +1245,7 @@ function renderBoardList() {
     fragment.append(option);
   });
   boardList.replaceChildren(fragment);
+  sharing.schedule();
 }
 
 async function newBoard(event) {
@@ -1276,6 +1289,7 @@ async function removeCurrentBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
+    if (!await sharing.stopCurrent()) return;
     replaceBoard(await withWorkspaceLock(() => deleteDocument(workspaceStorage, workspace)));
     driveSync.schedule();
     clearSaveFailure();
@@ -1488,6 +1502,7 @@ function onCopy(event) {
 }
 
 function onPaste(event) {
+  if (document.querySelector("#share-dialog[open]")) return;
   if (document.activeElement?.matches("textarea, input")) return;
   const text = event.clipboardData.getData("text/plain");
   let payload = null;
@@ -1562,7 +1577,7 @@ function showExportChoices(event) {
   event.stopPropagation();
   menu.classList.add("choosing-export");
   exportButton.setAttribute("aria-expanded", "true");
-  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
+  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = false;
   });
   requestAnimationFrame(() => exportJsonButton.focus());
@@ -1572,7 +1587,7 @@ function disarmExport(event, restoreFocus = false) {
   event?.stopPropagation();
   menu.classList.remove("choosing-export");
   exportButton.setAttribute("aria-expanded", "false");
-  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton].forEach((button) => {
+  [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = true;
   });
   if (restoreFocus) exportButton.focus();
@@ -2470,6 +2485,7 @@ function boardBounds() {
 }
 
 function onKeyDown(event) {
+  if (document.querySelector("#share-dialog[open]")) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
     openSearch(event);
     return;

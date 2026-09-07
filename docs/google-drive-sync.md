@@ -2,7 +2,7 @@
 
 [中文说明](#中文说明)
 
-Scattered remains fully local-first when `DRIVE_SYNC_API` is empty. When a user explicitly connects Google Drive, the browser writes versioned workspace snapshots directly to that user's Drive `appDataFolder`. A stateless Cloudflare Worker only performs OAuth token exchange; it has no database and never receives workspace content.
+Scattered remains local-first when `DRIVE_SYNC_API` is empty. When a user explicitly connects Google Drive, the browser writes versioned workspace snapshots directly to that user's Drive `appDataFolder`. The Cloudflare Worker's OAuth endpoints only perform token exchange and never receive workspace content. Separately, explicitly enabled [live presentation links](live-sharing.md) send just the shared canvas to a D1 table on this Worker; this does not change Google Drive permissions.
 
 Each browser installation keeps its own Drive file. This avoids two devices overwriting the same file. Independent canvas edits merge automatically; concurrent edits to the same canvas are retained as separate canvas copies.
 
@@ -39,7 +39,7 @@ For local testing, keep `http://localhost:4173/` in `APP_URLS`; the production O
 ## Security and operating boundary
 
 - The OAuth scope is limited to `https://www.googleapis.com/auth/drive.appdata`.
-- The refresh token is encrypted into an opaque browser-held session using AES-GCM. The Worker stores neither tokens nor canvas content.
+- The refresh token is encrypted into an opaque browser-held session using AES-GCM. The OAuth flow stores neither tokens nor canvas content on the Worker. The separate presentation-sharing endpoints only store explicitly shared canvases.
 - Access tokens are short-lived and kept only in memory. The service worker ignores cross-origin requests, so Drive and broker responses are never cached.
 - Account identity is derived from the Drive user's opaque permission ID and stored only as a one-way SHA-256 fingerprint. Account workspaces and sync ancestry are stored separately in the browser.
 - Disconnecting removes this browser's session but intentionally keeps its local workspace. To revoke the Google grant everywhere, use the Google Account third-party access page.
@@ -47,7 +47,7 @@ For local testing, keep `http://localhost:4173/` in `APP_URLS`; the production O
 
 ## 中文说明
 
-当 `DRIVE_SYNC_API` 为空时，Scattered 仍是完全本地优先的应用。用户主动连接 Google Drive 后，浏览器才会把带版本的工作区快照直接写入该用户 Drive 的 `appDataFolder`。无状态 Cloudflare Worker 只负责 OAuth 凭据交换；它没有数据库，也不会收到工作区内容。
+当 `DRIVE_SYNC_API` 为空时，Scattered 仍是本地优先的应用。用户主动连接 Google Drive 后，浏览器才会把带版本的工作区快照直接写入该用户 Drive 的 `appDataFolder`。Cloudflare Worker 的 OAuth 接口只负责凭据交换，不接收工作区内容。另行主动开启的[实时展示链接](live-sharing.md)只将选中画布发送到 Worker 的 D1 分享表，不改变 Google Drive 的权限。
 
 每个浏览器安装会维护自己的 Drive 文件，避免两台设备同时写同一个文件。不同画布的修改会自动合并；如果两边同时修改同一张画布，两个版本都会保留为独立画布副本。
 

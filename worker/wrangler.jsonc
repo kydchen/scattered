@@ -3,6 +3,17 @@
   "name": "scattered-sync",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
+  "d1_databases": [
+    {
+      "binding": "SHARES",
+      "database_name": "scattered-shares",
+      "database_id": "36925cc3-a2c8-4e09-b478-bfd7ba02d1f6"
+    }
+  ],
+  "ratelimits": [
+    { "name": "SHARE_WRITES", "namespace_id": "7101001", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SHARE_CREATES", "namespace_id": "7101002", "simple": { "limit": 60, "period": 60 } }
+  ],
   "vars": {
     "APP_URLS": "https://scatterednote.space/,https://www.scatterednote.space/,https://scattered.pages.dev/,http://localhost:4173/"
   }

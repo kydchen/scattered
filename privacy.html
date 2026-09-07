@@ -25,15 +25,20 @@
   <body>
     <main>
       <h1>Privacy / 隐私</h1>
-      <p class="updated">Last updated: September 3, 2026 / 最后更新：2026 年 9 月 3 日</p>
+      <p class="updated">Last updated: September 7, 2026 / 最后更新：2026 年 9 月 7 日</p>
       <h2>Local data / 本地数据</h2>
       <p>Boards, recovery copies, preferences, and account-specific local workspaces are stored in your browser. Scattered does not require an account. Clearing browser or site data may remove this local data, so export important boards as JSON.</p>
       <p lang="zh-Hans">画布、恢复副本、偏好设置及按账号隔离的本地工作区保存在浏览器中。Scattered 无需账户。清除浏览器或网站数据可能删除这些内容，请将重要画布导出为 JSON。</p>
       <h2>Optional Google Drive sync / 可选的 Google Drive 同步</h2>
-      <p>If you explicitly connect Google Drive, Scattered requests only the <code>drive.appdata</code> scope and writes versioned workspace snapshots to the hidden app-data folder in your own Drive. The browser sends canvas content directly to Google Drive. A stateless Cloudflare Worker performs OAuth token exchange but has no content database and does not receive note text, board structure, or exported files.</p>
-      <p lang="zh-Hans">只有在你主动连接 Google Drive 后，Scattered 才会申请 <code>drive.appdata</code> 权限，并把版本化工作区快照写入你自己 Drive 的隐藏应用数据目录。画布内容由浏览器直接发送给 Google Drive。无状态的 Cloudflare Worker 只负责 OAuth 凭据交换，没有内容数据库，也不会收到卡片文字、画布结构或导出文件。</p>
+      <p>If you explicitly connect Google Drive, Scattered requests only the <code>drive.appdata</code> scope and writes versioned workspace snapshots to the hidden app-data folder in your own Drive. The browser sends canvas content directly to Google Drive. Cloudflare Worker OAuth endpoints only exchange credentials and do not receive workspace content.</p>
+      <p lang="zh-Hans">只有在你主动连接 Google Drive 后，Scattered 才会申请 <code>drive.appdata</code> 权限，并把版本化工作区快照写入你自己 Drive 的隐藏应用数据目录。画布内容由浏览器直接发送给 Google Drive，Cloudflare Worker 的 OAuth 接口仅交换凭据，不接收工作区内容。</p>
       <p>Disconnecting removes the credential from this browser but does not delete local boards or existing Drive app data. You can revoke access and remove app data through your Google Account and Google Drive settings.</p>
       <p lang="zh-Hans">断开连接会从当前浏览器删除凭据，但不会删除本地画布或 Drive 中已有的应用数据。你可以在 Google 账号及 Google Drive 设置中撤销授权并删除应用数据。</p>
+      <h2>Optional live presentation links / 可选的实时展示链接</h2>
+      <p>Only after you enable sharing, the title, notes, positions, colors, and connections of that canvas are sent to Cloudflare and stored in D1. Other canvases and Google credentials are not included. Anyone holding the unlisted link can view, forward, or save its contents without signing in. This is read-only sharing, not access-controlled confidential storage.</p>
+      <p lang="zh-Hans">仅在主动开启分享后，当前画布的标题、卡片内容、位置、颜色和连线才会发送到 Cloudflare 并保存在 D1 中，不包含其他画布或 Google 凭据。链接不公开列出，但任何拿到链接的人都能免登录查看、转发或保存内容。只读分享不等于有身份权限控制的保密存储。</p>
+      <p>The last published copy remains available after the author closes the app. Stopping sharing deletes its content from the active share table and prevents further access through that link; existing viewers learn of closure at their next successful check. Offline viewers and copies already saved by others cannot be remotely erased. A content-free tombstone (random link ID, hashed management credential, revision and timestamp) is retained to reject delayed uploads. Management credentials stay in the publishing browser, separate from board exports and Google sync. Clearing site data loses the ability to manage existing links, so stop sharing first. Cloudflare processes IP addresses for abuse prevention and hosting.</p>
+      <p lang="zh-Hans">作者关闭应用后，最后发布的副本仍可访问。关闭分享会删除有效分享表中的画布内容，并停止该链接后续访问；已经打开的展示页会在下一次成功检查时得知关闭。离线展示及别人已保存的副本无法远程擦除。服务保留不含画布内容的撤销记录（随机链接 ID、管理凭据的哈希、版本号和时间），用于拒绝延迟上传。管理凭据留在发布浏览器中，与画布导出和 Google 同步分开。清除网站数据会失去管理既有链接的能力，请先关闭分享。Cloudflare 会处理用于托管和防滥用的 IP 地址。</p>
       <h2>Traffic analytics / 访问统计</h2>
       <p>The hosted site uses Cloudflare Web Analytics for basic aggregate traffic measurement. Scattered's application code does not send note text, board structure, or exported files to analytics.</p>
       <p lang="zh-Hans">在线站点使用 Cloudflare Web Analytics 进行基本的汇总访问统计。Scattered 的应用代码不会把卡片文字、画布结构或导出文件发送给统计服务。</p>

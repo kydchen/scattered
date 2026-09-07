@@ -1,0 +1,48 @@
+.share-dialog {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--floating-shadow);
+  overflow: auto;
+}
+.share-dialog::backdrop { background: rgba(20, 24, 32, .32); }
+.share-dialog h2 { margin: 0 0 12px; font-size: 20px; }
+.share-dialog p { line-height: 1.55; font-size: 14px; }
+.share-dialog .share-notice { color: var(--muted); }
+.share-dialog input { width: 100%; margin: 8px 0; padding: 12px; border: 1px solid var(--field-border); border-radius: 10px; background: var(--canvas); color: var(--ink); }
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.share-actions button, .presentation-tools button {
+  min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 22px;
+  background: var(--paper); color: var(--ink); font: inherit; cursor: pointer;
+}
+.share-actions button:focus-visible, .presentation-tools button:focus-visible { outline: 2px solid var(--thread); outline-offset: 3px; }
+.share-actions button:disabled { opacity: .5; cursor: wait; }
+#share-enable { background: var(--thread); color: var(--paper); }
+#share-stop { color: var(--danger); }
+#share-status { min-height: 1.6em; }
+#export-share-button[data-sharing="true"] { color: var(--thread); box-shadow: inset 0 0 0 1px var(--thread); }
+.share-viewer #presentation {
+  position: fixed; inset: 0; overflow: hidden; touch-action: none; user-select: none;
+  background: var(--canvas) radial-gradient(circle, var(--grid) 1px, transparent 1.2px) 0 0 / 28px 28px;
+  cursor: grab;
+}
+.share-viewer #presentation:active { cursor: grabbing; }
+.share-viewer #presentation:focus-visible { outline: 2px solid var(--thread); outline-offset: -3px; }
+.presentation-heading { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); max-width: calc(100% - 40px); pointer-events: none; }
+.presentation-heading h1 { font-size: 21px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presentation-heading p { font-size: 12px; color: var(--muted); margin: 6px 0; padding: 3px 0; background: var(--canvas); }
+.presentation-tools { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-wrap: wrap; gap: 8px; max-width: calc(100% - 32px); }
+.share-viewer svg > rect { fill: transparent; }
+.share-viewer svg .note-text { fill: var(--ink); }
+.share-viewer svg .edge { stroke: var(--thread); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.share-viewer svg .edge-label { fill: var(--ink); stroke: var(--canvas); }
+.share-viewer svg marker path { fill: var(--thread); }
+.share-viewer svg g rect { fill: var(--paper); stroke: var(--overview-node-outline); stroke-width: 1.15px; vector-effect: non-scaling-stroke; }
+.share-viewer svg rect[data-color="yellow"] { fill: var(--note-yellow); }
+.share-viewer svg rect[data-color="mint"] { fill: var(--note-mint); }
+.share-viewer svg rect[data-color="blue"] { fill: var(--note-blue); }
+.share-viewer svg rect[data-color="rose"] { fill: var(--note-rose); }

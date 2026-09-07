@@ -39,7 +39,8 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=70" />
+    <link rel="stylesheet" href="styles.css?v=71" />
+    <link rel="stylesheet" href="sharing.css?v=71" />
     <title>Scattered</title>
   </head>
   <body>
@@ -192,6 +193,9 @@
             <path d="m9 7-5 5 5 5M15 7l5 5-5 5M13.5 4.5l-3 15"></path>
           </svg>
         </button>
+        <button id="export-share-button" class="export-choice" type="button" aria-label="实时只读链接" data-i18n-aria="shareTitle" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 15l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m2 10a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-1 1" transform="translate(0 -1)"></path></svg>
+        </button>
         <button id="import-button" type="button" aria-label="导入 JSON 到当前画布" data-i18n-aria="importBackup">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 15V3M8 7l4-4 4 4M5 19h14"></path>
@@ -212,12 +216,6 @@
             <path class="connection-style-curved" d="M5.5 17c6.5 0 6.5-10 13-10"></path>
           </svg>
         </button>
-        <a id="about-link" href="about.html" target="_blank" rel="noopener noreferrer" aria-label="关于 Scattered" data-i18n-aria="aboutScattered">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="9"></circle>
-            <path d="M12 10.5v6M12 7.5h.01"></path>
-          </svg>
-        </a>
         <a id="github-link" href="https://github.com/kydchen/scattered" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库" data-i18n-aria="githubRepository">
           <svg viewBox="-1 -1 26 26" aria-hidden="true">
             <path fill="currentColor" stroke="none" d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"></path>
@@ -359,7 +357,7 @@
       </article>
     </template>
 
-    <script type="module" src="app.js?v=70"></script>
+    <script type="module" src="app.js?v=71"></script>
     <!-- Cloudflare Web Analytics -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"}'></script>
     <!-- End Cloudflare Web Analytics -->

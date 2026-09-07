@@ -1,12 +1,12 @@
 # Scattered
 
-[Open Scattered](https://scatterednote.space/) · [Local-only version](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
+[Open Scattered](https://scatterednote.space/) · [Local edition](https://kydchen.github.io/scattered/) · [简体中文](README.zh-CN.md)
 
 Scattered is a minimalist, local-first canvas for freely arranging and connecting notes—built for Pencil, touch, and mouse. Write a note, move it anywhere, connect it only when useful, and keep thinking.
 
 ![A Scattered canvas with freely arranged and connected notes](docs/scattered-canvas.png)
 
-There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. On the recommended hosted version, connecting Google Drive once on each device can optionally keep the workspace in sync; each Google account has its own isolated workspace. The [GitHub Pages version](https://kydchen.github.io/scattered/) keeps cloud integration disabled for a strictly local-only experience.
+There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. On the recommended hosted version, connecting Google Drive once on each device can optionally keep the workspace in sync; each Google account has its own isolated workspace. The [GitHub Pages version](https://kydchen.github.io/scattered/) disables Google sync. Both versions stay local unless you explicitly connect Drive or enable a live presentation link.
 
 ## Install it like an app
 
@@ -45,7 +45,7 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
 
-When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The first connected account claims any previously unsynced local workspace. Connecting a different account switches the browser to that account's separate local workspace instead of merging or copying the previous account's boards. Disconnecting removes the credential but keeps that account's local workspace available offline. The small authorization broker has no content database and does not receive note text or board structure.
+When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The first connected account claims any previously unsynced local workspace. Connecting a different account switches the browser to that account's separate local workspace instead of merging or copying the previous account's boards. Disconnecting removes the credential but keeps that account's local workspace available offline. OAuth endpoints only exchange credentials; explicitly enabled presentation links use a separate Cloudflare D1 share table, not public Google Drive files.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.
 
@@ -56,6 +56,9 @@ See the public [About](https://scatterednote.space/about.html) and [Privacy](htt
 - **JSON** preserves the current editable canvas. Importing it replaces the current canvas and keeps a local recovery copy; older workspace backup files remain supported and add their canvases to the local list.
 - **SVG** exports the complete board as a lightweight vector image, automatically fitted to its content.
 - **Mermaid Markdown** turns notes and connections into a diagram that can be used in Markdown documents and AI-assisted workflows.
+- **Live read-only link:** choose Export → Live read-only link → Enable sharing, then copy the link. Anyone with it can open the current canvas without signing in, pan, zoom, fit the view, and present it full screen. Only this canvas is published; the viewer cannot edit it or overwrite their own local workspace.
+
+Keep the publishing browser open and online: saved content updates normally appear within a few seconds without changing the URL or the viewer's framing. After the author leaves, the last successful upload remains available. Return to the same browser and workspace to stop sharing. Management credentials are local to that browser and are not synced through Google or included in exports; stop sharing before clearing site data. Anyone with the link can forward or save its contents, and stopping sharing cannot retract those copies. The first release limits a shared canvas to 256 KiB, 500 notes, and 1,000 connections. [Sharing deployment and boundaries](docs/live-sharing.md).
 
 On browsers that support file sharing, export opens the system share sheet; elsewhere it downloads the file directly.
 

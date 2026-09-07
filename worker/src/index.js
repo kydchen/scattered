@@ -1,3 +1,5 @@
+import { handleShares } from "./shares.js";
+
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -13,6 +15,7 @@ export default {
 
 export async function handleRequest(request, env) {
   const url = new URL(request.url);
+  if (url.pathname.startsWith("/shares/")) return handleShares(request, env);
   if (request.method === "GET" && url.pathname === "/oauth/start") return startOAuth(request, env);
   if (request.method === "GET" && url.pathname === "/oauth/callback") return finishOAuth(request, env);
   if (request.method === "OPTIONS" && url.pathname === "/token") {

@@ -72,7 +72,7 @@ export function createBoardSvg(board, connectionStyle = "straight", measure = me
       `      <tspan x="${number(node.x + NODE_PADDING_X)}" y="${number(node.y + NODE_PADDING_Y + NODE_FONT_SIZE + index * NODE_LINE_HEIGHT)}">${xml(line)}</tspan>`
     )).join("\n");
     const text = lines ? `\n    <text class="note-text">\n${lines}\n    </text>` : "";
-    return `  <g><rect x="${number(node.x)}" y="${number(node.y)}" width="${number(node.width)}" height="${number(node.height)}" rx="9" fill="${fill}" stroke="${stroke}"/>${text}\n  </g>`;
+    return `  <g><rect data-color="${xml(node.color || "plain")}" x="${number(node.x)}" y="${number(node.y)}" width="${number(node.width)}" height="${number(node.height)}" rx="9" fill="${fill}" stroke="${stroke}"/>${text}\n  </g>`;
   }).join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
