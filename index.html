@@ -39,7 +39,7 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=71" />
+    <link rel="stylesheet" href="styles.css?v=72" />
     <link rel="stylesheet" href="sharing.css?v=71" />
     <title>Scattered</title>
   </head>
@@ -164,7 +164,13 @@
         </button>
       </div>
 
-      <button id="menu-button" class="quiet-button menu-button" type="button" aria-label="画布菜单" data-i18n-aria="canvasMenu" aria-controls="menu" aria-expanded="false">•••</button>
+      <button id="menu-button" class="quiet-button menu-button" type="button" aria-label="画布菜单" data-i18n-aria="canvasMenu" aria-controls="menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="5" cy="12" r="1.5"></circle>
+          <circle cx="12" cy="12" r="1.5"></circle>
+          <circle cx="19" cy="12" r="1.5"></circle>
+        </svg>
+      </button>
       <section id="menu" class="menu" role="group" hidden aria-label="画布菜单" data-i18n-aria="canvasMenu">
         <button id="export-button" type="button" aria-label="导出当前画布" data-i18n-aria="exportBackup" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true">
