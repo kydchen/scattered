@@ -11,7 +11,8 @@ import {
   mergeSnapshotHistory,
   mergeSyncWorkspaces,
   parseSyncIndex,
-} from "./sync-model.js";
+  snapshotLineage,
+} from "./sync-model.js?v=79";
 
 const SESSION_KEY = "scattered-drive-session-v1";
 const DEVICE_KEY = "scattered-drive-device-v1";
@@ -220,6 +221,7 @@ export function createDriveSync(options) {
     const ownFile = files
       .filter((file) => file.appProperties?.deviceId === deviceId)
       .sort((left, right) => String(right.modifiedTime).localeCompare(String(left.modifiedTime)))[0] || null;
+    const ownSnapshot = snapshots.find((item) => item.file.id === ownFile?.id);
     const migrateLegacyState = !boundAccountKey;
     const state = readState(storage, driveAccountKey, migrateLegacyState);
 
@@ -241,18 +243,19 @@ export function createDriveSync(options) {
     syncStage = "merge";
     const combined = await combineHeads(heads);
     const remote = combined.snapshot;
-    const remoteLineage = new Set(heads.flatMap((item) => [item.snapshotId, ...(item.ancestors || [])]));
+    const remoteLineage = new Set(heads.flatMap(snapshotLineage));
     const remoteContainsLast = Boolean(state.lastSnapshotId && remoteLineage.has(state.lastSnapshotId));
     const localChanged = !state.lastFingerprint || localFingerprint !== state.lastFingerprint;
     let nextWorkspace = remote.workspace;
     let conflicts = combined.conflicts;
-    let shouldUpload = heads.length > 1;
+    let shouldUpload = heads.length > 1 || ownSnapshot?.snapshotId !== state.lastSnapshotId;
 
     if (!state.lastSnapshotId && isDisposableSyncWorkspace(local)) {
       shouldUpload = true;
     } else if (localChanged || !remoteContainsLast) {
       const localSnapshot = {
         snapshotId: state.lastSnapshotId || `local-${deviceId}`,
+        parents: state.parents || [],
         ancestors: state.ancestors || [],
         history: state.history || [],
         index: localIndex,
@@ -267,6 +270,7 @@ export function createDriveSync(options) {
 
     const nextFingerprint = await fingerprintSyncWorkspace(nextWorkspace);
     if (nextFingerprint !== localFingerprint) {
+      shouldUpload = true;
       if (options.canApply && !options.canApply()) throw busyError();
       syncStage = "apply";
       ensureSyncActive(generation);
@@ -277,7 +281,7 @@ export function createDriveSync(options) {
       syncStage = "snapshot";
       const snapshot = await createCloudSnapshot(nextWorkspace, {
         deviceId,
-        parents: heads,
+        parents: snapshots,
         history: mergeSnapshotHistory(state.history || [], remote.history || []),
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
@@ -286,9 +290,10 @@ export function createDriveSync(options) {
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
       ensureSyncActive(generation);
       saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
-    } else {
-      saveState(storage, stateFromSnapshot(heads[0], nextFingerprint, ownFile?.id), driveAccountKey, migrateLegacyState);
     }
+    // Keep the local merge base tied to our own stored checkpoint, even when
+    // another device publishes an identical workspace. Otherwise a dormant
+    // browser's last observed base can disappear from every cloud file.
     return { conflicts };
   }
 
@@ -311,6 +316,7 @@ export function createDriveSync(options) {
       conflicts += merged.conflicts;
       current = {
         snapshotId: `combined-${globalThis.crypto.randomUUID()}`,
+        parents: unique([...snapshotLineage(current), ...snapshotLineage(next)]),
         ancestors: unique([
           current.snapshotId,
           ...(current.ancestors || []),
@@ -359,6 +365,9 @@ export function createDriveSync(options) {
       throw syncError("snapshot-invalid");
     }
     if (!validCloudToken(value.snapshotId) || !validCloudToken(value.deviceId)) throw syncError("snapshot-invalid");
+    if (value.parents !== undefined && (!Array.isArray(value.parents) || value.parents.some((id) => !validCloudToken(id)))) {
+      throw syncError("snapshot-invalid");
+    }
     let workspace;
     try { workspace = parseSyncWorkspace(value.workspace); } catch { throw syncError("snapshot-invalid"); }
     const index = await indexSyncWorkspace(workspace);
@@ -370,6 +379,7 @@ export function createDriveSync(options) {
       snapshotId: value.snapshotId,
       deviceId: value.deviceId,
       createdAt: Number(value.createdAt) || 0,
+      parents: unique(value.parents || []),
       ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
       history,
       index,
@@ -511,6 +521,7 @@ function readState(storage, accountKey, allowLegacy = false) {
       version: 1,
       lastSnapshotId: validCloudToken(value.lastSnapshotId) ? value.lastSnapshotId : null,
       lastFingerprint: typeof value.lastFingerprint === "string" ? value.lastFingerprint : null,
+      parents: unique(Array.isArray(value.parents) ? value.parents.filter(validCloudToken) : []),
       ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
       history: Array.isArray(value.history) ? value.history.flatMap((entry) => (
         validCloudToken(entry?.snapshotId) && parseSyncIndex(entry.index).length > 0
@@ -529,6 +540,7 @@ function stateFromSnapshot(snapshot, fingerprint, fileId) {
     version: 1,
     lastSnapshotId: snapshot.snapshotId,
     lastFingerprint: fingerprint,
+    parents: snapshot.parents || [],
     ancestors: snapshot.ancestors || [],
     history: snapshot.history || [],
     fileId: fileId || null,
@@ -556,7 +568,7 @@ function stateStorageKey(accountKey) {
 }
 
 function emptyState() {
-  return { version: 1, lastSnapshotId: null, lastFingerprint: null, ancestors: [], history: [], fileId: null };
+  return { version: 1, lastSnapshotId: null, lastFingerprint: null, parents: [], ancestors: [], history: [], fileId: null };
 }
 
 function readOrCreateDeviceId(storage) {

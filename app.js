@@ -1,8 +1,8 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseImportedWorkspace, readRecovery, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=78";
-import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
-import { createDriveSync } from "./drive-sync.js?v=78";
+import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
+import { createDriveSync } from "./drive-sync.js?v=79";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=78";
 import { mountLiveSharing } from "./share-ui.js?v=78";

@@ -41,23 +41,26 @@ export function parseSyncIndex(value) {
 }
 
 export function findCommonBaseIndex(left, right) {
-  const rightLineage = new Set([right.snapshotId, ...(right.ancestors || [])]);
+  const rightLineage = new Set(snapshotLineage(right));
   const history = new Map();
   [...(left.history || []), ...(right.history || [])].forEach((entry) => {
     if (typeof entry?.snapshotId !== "string" || !entry.snapshotId || history.has(entry.snapshotId)) return;
     history.set(entry.snapshotId, parseSyncIndex(entry.index));
   });
-  return [left.snapshotId, ...(left.ancestors || [])]
+  return snapshotLineage(left)
     .filter((id) => rightLineage.has(id))
     .map((id) => history.get(id))
     .find(Boolean) || [];
 }
 
+export function snapshotLineage(snapshot) {
+  return unique([snapshot.snapshotId, ...(snapshot.parents || []), ...(snapshot.ancestors || [])]);
+}
+
 export function cloudSnapshotHeads(snapshots) {
   const valid = snapshots.filter((snapshot) => snapshot?.snapshotId);
-  return valid.filter((candidate) => !valid.some((other) => (
-    other !== candidate && (other.ancestors || []).includes(candidate.snapshotId)
-  )));
+  const ancestors = new Set(valid.flatMap((snapshot) => snapshotLineage(snapshot).slice(1)));
+  return valid.filter((candidate) => !ancestors.has(candidate.snapshotId));
 }
 
 export async function mergeSyncWorkspaces(local, remote, baseIndex = []) {
@@ -74,6 +77,7 @@ export async function mergeSyncWorkspaces(local, remote, baseIndex = []) {
   const titles = new Set();
   const usedIds = new Set(ids);
   const activeReplacements = new Map();
+  const copies = [];
   let conflicts = 0;
 
   for (const id of ids) {
@@ -106,26 +110,31 @@ export async function mergeSyncWorkspaces(local, remote, baseIndex = []) {
       continue;
     }
 
-    conflicts += 1;
     if (localState.kind === "deleted" || remoteState.kind === "deleted") {
       const deleted = localState.kind === "deleted" ? localState : remoteState;
       const kept = localState.kind === "board" ? localState : remoteState;
       appendState(deleted, localState, boards, tombstones, titles);
-      const copy = conflictCopy(kept.item, kept.hash, id, titles, usedIds);
-      boards.push(copy);
-      titles.add(copy.board.title);
-      usedIds.add(copy.id);
-      if (localState.kind === "board") activeReplacements.set(id, copy.id);
+      copies.push({ state: kept, id, replaceActive: localState.kind === "board" });
       continue;
     }
 
     const [primary, secondary] = [localState, remoteState].sort((left, right) => left.hash.localeCompare(right.hash));
     appendState(primary, localState, boards, tombstones, titles);
-    const copy = conflictCopy(secondary.item, secondary.hash, id, titles, usedIds);
-    boards.push(copy);
-    titles.add(copy.board.title);
-    usedIds.add(copy.id);
-    if (localState.hash === secondary.hash) activeReplacements.set(id, copy.id);
+    copies.push({ state: secondary, id, replaceActive: localState.hash === secondary.hash });
+  }
+
+  // Resolve existing IDs first: only reuse copies which survive this merge.
+  const preserved = new Map(boards.map((item) => [item.id, item]));
+  for (const { state, id, replaceActive } of copies) {
+    const copy = await conflictCopy(state.item, state.hash, id, titles, usedIds, preserved);
+    if (!preserved.has(copy.id)) {
+      boards.push(copy);
+      titles.add(copy.board.title);
+      usedIds.add(copy.id);
+      preserved.set(copy.id, copy);
+      conflicts += 1;
+    }
+    if (replaceActive) activeReplacements.set(id, copy.id);
   }
 
   boards.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
@@ -152,8 +161,13 @@ export async function mergeSyncWorkspaces(local, remote, baseIndex = []) {
 export async function createCloudSnapshot(workspace, options = {}) {
   const snapshotId = globalThis.crypto.randomUUID();
   const parentSnapshots = (options.parents || []).filter((item) => item?.snapshotId);
+  // Pin every currently stored device snapshot. Dormant files must not become
+  // new heads when the rolling ancestry window fills up. Size scales with
+  // device files, not with the number of edits; the upload byte limit still applies.
+  const parents = unique(parentSnapshots.map((item) => item.snapshotId));
   const ancestors = unique([
-    ...parentSnapshots.flatMap((item) => [item.snapshotId, ...(item.ancestors || [])]),
+    ...parents,
+    ...parentSnapshots.flatMap(snapshotLineage),
     ...(options.ancestorIds || []),
   ]).filter((id) => id !== snapshotId).slice(0, ANCESTOR_LIMIT);
   const currentIndex = await indexSyncWorkspace(workspace);
@@ -171,6 +185,7 @@ export async function createCloudSnapshot(workspace, options = {}) {
     snapshotId,
     deviceId: String(options.deviceId || ""),
     createdAt: Number(options.createdAt || Date.now()),
+    parents,
     ancestors,
     history,
     workspace,
@@ -217,12 +232,16 @@ function newerDeletion(left, right) {
   return (Number(left.deletedAt) || 0) >= (Number(right.deletedAt) || 0) ? left : right;
 }
 
-function conflictCopy(item, hash, originalId, titles, usedIds) {
+async function conflictCopy(item, hash, originalId, titles, usedIds, preserved) {
   const copy = clone(item);
   const baseId = `sync-${stableHash(`${originalId}:${hash}`)}`;
   copy.id = baseId;
   let suffix = 2;
   while (usedIds.has(copy.id)) {
+    const existing = preserved.get(copy.id);
+    // The merge may have renamed a copy to avoid a title collision. Compare its
+    // full content using the source title, not just its short deterministic ID.
+    if (existing && await hashBoardContent({ ...existing.board, title: item.board.title }) === hash) return existing;
     copy.id = `${baseId}-${suffix}`;
     suffix += 1;
   }
@@ -235,10 +254,11 @@ function availableTitle(title, titles) {
   const value = String(title || "Untitled").trim() || "Untitled";
   if (!titles.has(value)) return value;
   let number = 2;
-  let candidate = `${value} · ${number}`.slice(0, 120);
+  const numbered = () => `${value.slice(0, 120 - ` · ${number}`.length)} · ${number}`;
+  let candidate = numbered();
   while (titles.has(candidate)) {
     number += 1;
-    candidate = `${value} · ${number}`.slice(0, 120);
+    candidate = numbered();
   }
   return candidate;
 }

@@ -1443,16 +1443,19 @@ assert.equal(messages["zh-Hans"].driveConflict, messages.en.driveConflict);
 assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(html, /<script type="module" src="app\.js\?v=78"><\/script>/);
+assert.match(html, /<script type="module" src="app\.js\?v=79"><\/script>/);
+assert.match(app, /from "\.\/sync-model\.js\?v=79"/);
+assert.match(app, /from "\.\/drive-sync\.js\?v=79"/);
+assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /scattered-v78/);
+assert.match(serviceWorker, /scattered-v79/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
-assert.match(serviceWorker, /\.\/app\.js\?v=78/);
+assert.match(serviceWorker, /\.\/app\.js\?v=79/);
 assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
-assert.match(serviceWorker, /\.\/sync-model\.js/);
-assert.match(serviceWorker, /\.\/drive-sync\.js/);
+assert.match(serviceWorker, /\.\/sync-model\.js\?v=79/);
+assert.match(serviceWorker, /\.\/drive-sync\.js\?v=79/);
 assert.match(serviceWorker, /origin !== self\.location\.origin/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);
@@ -1611,11 +1614,53 @@ assert.equal(deleteEditMerge.conflicts, 1);
 assert.ok(deleteEditMerge.workspace.tombstones.some((item) => item.id === "a"));
 assert.ok(deleteEditMerge.workspace.boards.some((item) => item.board.nodes[0]?.text === "right-a"));
 
+// Replaying a previously preserved conflict must not allocate another canvas.
+for (const [merged, stale] of [[conflictingMerge, syncLeft], [conflictingMerge, sameBoardRight], [deleteEditMerge, sameBoardRight]]) {
+  let workspace = merged.workspace;
+  for (let replay = 0; replay < 5; replay += 1) {
+    const result = await mergeSyncWorkspaces(workspace, stale, syncBaseIndex);
+    assert.equal(result.conflicts, 0, "An already preserved variant is not a new conflict");
+    assert.equal(await fingerprintSyncWorkspace(result.workspace), await fingerprintSyncWorkspace(workspace));
+    workspace = result.workspace;
+  }
+}
+const originalCopy = conflictingMerge.workspace.boards.find((item) => item.id.startsWith("sync-"));
+const staleCopySource = originalCopy.board.nodes[0].text === "left-a" ? syncLeft : sameBoardRight;
+const editedCopyWorkspace = structuredClone(conflictingMerge.workspace);
+editedCopyWorkspace.boards.find((item) => item.id === originalCopy.id).board.nodes[0].text = "edited preserved copy";
+const editedCopyMerge = await mergeSyncWorkspaces(editedCopyWorkspace, staleCopySource, syncBaseIndex);
+assert.equal(editedCopyMerge.conflicts, 1, "A different variant must not be overwritten just because its ID matches");
+assert.equal(editedCopyMerge.workspace.boards.find((item) => item.id === originalCopy.id).board.nodes[0].text, "edited preserved copy");
+assert.ok(editedCopyMerge.workspace.boards.some((item) => item.board.nodes[0]?.text === originalCopy.board.nodes[0].text));
+const editedReplay = await mergeSyncWorkspaces(editedCopyMerge.workspace, staleCopySource, syncBaseIndex);
+assert.equal(editedReplay.conflicts, 0);
+assert.equal(await fingerprintSyncWorkspace(editedReplay.workspace), await fingerprintSyncWorkspace(editedCopyMerge.workspace));
+const movedCopyWorkspace = structuredClone(conflictingMerge.workspace);
+movedCopyWorkspace.boards.find((item) => item.id === originalCopy.id).board.view.x = 999;
+const movedReplay = await mergeSyncWorkspaces(movedCopyWorkspace, staleCopySource, syncBaseIndex);
+assert.equal(movedReplay.conflicts, 0, "Local view changes do not defeat conflict-copy reuse");
+const longTitle = "A".repeat(120);
+const longTitleMerge = await mergeSyncWorkspaces(
+  syncWorkspace([syncBoard("a", longTitle, "left")]),
+  syncWorkspace([syncBoard("a", longTitle, "right")]),
+);
+assert.equal(longTitleMerge.workspace.boards.length, 2);
+assert.equal(new Set(longTitleMerge.workspace.boards.map((item) => item.board.title)).size, 2);
+assert.ok(longTitleMerge.workspace.boards.every((item) => item.board.title.length <= 120));
+const removedCopyWorkspace = structuredClone(conflictingMerge.workspace);
+removedCopyWorkspace.boards = removedCopyWorkspace.boards.filter((item) => item.id !== originalCopy.id);
+removedCopyWorkspace.activeId = "a";
+removedCopyWorkspace.tombstones.push({ id: originalCopy.id, deletedAt: 99 });
+const removedCopyMerge = await mergeSyncWorkspaces(removedCopyWorkspace, staleCopySource, syncBaseIndex);
+assert.ok(removedCopyMerge.workspace.tombstones.some((item) => item.id === originalCopy.id));
+assert.ok(!removedCopyMerge.workspace.boards.some((item) => item.id === originalCopy.id), "An uncertain conflict cannot overwrite a tombstoned ID");
+
 const viewOnlyLeft = syncWorkspace([syncBoard("a", "A", "base-a", 1, 10)]);
 const viewOnlyRight = syncWorkspace([syncBoard("a", "A", "base-a", 1, 999)]);
 assert.equal(await fingerprintSyncWorkspace(viewOnlyLeft), await fingerprintSyncWorkspace(viewOnlyRight));
 
 const baseCloud = await createCloudSnapshot(syncBase, { deviceId: "one", createdAt: 1 });
+assert.equal(cloudSnapshotHeads([baseCloud, structuredClone(baseCloud)]).length, 2, "Duplicate files containing the same snapshot do not cancel each other out");
 const leftCloud = await createCloudSnapshot(syncLeft, { deviceId: "one", parents: [baseCloud], createdAt: 2 });
 const rightCloud = await createCloudSnapshot(syncRight, { deviceId: "two", parents: [baseCloud], createdAt: 3 });
 assert.deepEqual(findCommonBaseIndex(leftCloud, rightCloud), syncBaseIndex);

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createDriveSync } from "./drive-sync.js";
-import { blankBoard } from "./model.js";
+import { blankBoard, normalizeBoard } from "./model.js";
+import { cloudSnapshotHeads, createCloudSnapshot, fingerprintSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
+import { parseSyncWorkspace } from "./workspace.js";
 
 class MemoryStorage {
   constructor(entries = []) { this.values = new Map(entries); }
@@ -299,5 +301,208 @@ const failingLocal = createDriveSync({
 assert.equal(await failingLocal.syncNow(), false);
 assert.equal(stagedLocalError?.syncStage, "local");
 assert.equal(stagedLocalError?.message, "sync.invalidWorkspace");
+
+// Exercise the real sync controller with isolated devices and an in-memory Drive.
+function syncLab() {
+  const files = new Map();
+  let frozenFiles = null;
+  let uploads = 0;
+  let failUpload = false;
+  let serial = 0;
+  const seed = boardWorkspace("canvas", "Canvas");
+  seed.boards[0].board = normalizeBoard({ ...seed.boards[0].board, nodes: [{ id: "note", text: "initial", x: 0, y: 0 }] });
+  return {
+    files,
+    get uploads() { return uploads; },
+    freeze() { frozenFiles = structuredClone(files); },
+    unfreeze() { frozenFiles = null; },
+    failNextUpload() { failUpload = true; },
+    device(id, initial = seed) {
+      const binding = createAccountBinding();
+      const device = { workspace: structuredClone(initial), conflicts: 0, storage: sessionStorage(id), errors: [] };
+      const options = {
+        apiUrl: "https://broker.test",
+        storage: device.storage,
+        getBoundAccount: binding.get,
+        bindAccount: binding.bind,
+        getWorkspace: () => structuredClone(device.workspace),
+        canApply: () => true,
+        applyWorkspace: async (incoming, expected) => {
+          assert.equal(await fingerprintSyncWorkspace(device.workspace), expected);
+          device.workspace = structuredClone(incoming);
+        },
+        onConflict: (count) => { device.conflicts += count; },
+        onError: (error) => { device.errors.push(error); },
+        fetch: async (url, init = {}) => {
+          const path = new URL(url).pathname;
+          const visible = frozenFiles ?? files;
+          if (path === "/token") return Response.json({ accessToken: "mock-only", expiresIn: 3600 });
+          if (path === "/drive/v3/about") return Response.json({ user: { permissionId: "same-account" } });
+          if (path === "/drive/v3/files") return Response.json({ files: [...visible].map(([fileId, snapshot]) => ({
+            id: fileId, appProperties: { deviceId: snapshot.deviceId }, modifiedTime: "2026-09-15T00:00:00Z",
+          })) });
+          if (path.startsWith("/drive/v3/files/")) return Response.json(visible.get(path.split("/").at(-1)));
+          if (path.startsWith("/upload/drive/v3/files")) {
+            const fileId = path.split("/")[5] || `file-${++serial}`;
+            return new Response(null, { headers: { Location: `https://mock.test/session/${fileId}` } });
+          }
+          if (path.startsWith("/session/")) {
+            if (failUpload) { failUpload = false; return new Response("offline", { status: 503 }); }
+            const fileId = path.split("/").at(-1);
+            const snapshot = JSON.parse(init.body);
+            parseSyncWorkspace(snapshot.workspace);
+            files.set(fileId, snapshot);
+            uploads += 1;
+            return Response.json({ id: fileId });
+          }
+          throw new Error(`Unexpected mock request: ${url}`);
+        },
+      };
+      let controller = createDriveSync(options);
+      device.restart = () => { controller.stop(); controller = createDriveSync(options); };
+      device.sync = async (success = true) => {
+        assert.equal(await controller.syncNow(), success, device.errors.at(-1)?.message);
+      };
+      device.edit = (text, boardId = "canvas") => {
+        const item = device.workspace.boards.find((board) => board.id === boardId);
+        item.board.nodes[0].text = text;
+        item.revision = globalThis.crypto.randomUUID();
+        item.updatedAt += 1;
+      };
+      return device;
+    },
+  };
+}
+
+const longRun = syncLab();
+const writer = longRun.device("writer");
+const dormant = longRun.device("dormant");
+await writer.sync();
+await dormant.sync();
+await writer.sync();
+for (let edit = 1; edit <= 160; edit += 1) {
+  writer.edit(`edit-${edit}`);
+  await writer.sync();
+  assert.equal(writer.workspace.boards.length, 1, `Dormant device must not create copies at edit ${edit}`);
+  assert.equal(writer.conflicts, 0);
+  if (edit === 80) writer.restart();
+}
+await dormant.sync();
+assert.equal(dormant.workspace.boards.length, 1);
+assert.equal(dormant.workspace.boards[0].board.nodes[0].text, "edit-160");
+await writer.sync();
+const idleUploads = longRun.uploads;
+for (let poll = 0; poll < 5; poll += 1) { await dormant.sync(); await writer.sync(); }
+assert.equal(longRun.uploads, idleUploads, "Idle devices must not ping-pong new checkpoints");
+assert.equal(dormant.conflicts, 0);
+
+// A device which adopted remote edits must retain a usable base while dormant.
+for (let edit = 161; edit <= 240; edit += 1) { writer.edit(`edit-${edit}`); await writer.sync(); }
+dormant.edit("offline edit");
+await dormant.sync();
+await writer.sync();
+assert.equal(writer.workspace.boards.length, 2, "Real concurrent edits preserve both variants exactly once");
+assert.deepEqual(new Set(writer.workspace.boards.map((item) => item.board.nodes[0].text)), new Set(["edit-240", "offline edit"]));
+for (let poll = 0; poll < 5; poll += 1) { await dormant.sync(); await writer.sync(); }
+assert.equal(writer.workspace.boards.length, 2);
+assert.equal(dormant.workspace.boards.length, 2);
+assert.equal(dormant.conflicts, 1);
+
+// Genuine simultaneous uploads remain distinct heads until merged.
+const concurrent = syncLab();
+const peers = [concurrent.device("left"), concurrent.device("right"), concurrent.device("third")];
+for (const peer of peers) await peer.sync();
+concurrent.freeze();
+for (const [index, peer] of peers.entries()) { peer.edit(`concurrent-${index}`); await peer.sync(); }
+concurrent.unfreeze();
+for (let round = 0; round < 3; round += 1) for (const peer of peers) await peer.sync();
+for (const peer of peers) {
+  assert.equal(peer.workspace.boards.length, 3);
+  assert.deepEqual(new Set(peer.workspace.boards.map((item) => item.board.nodes[0].text)), new Set(["concurrent-0", "concurrent-1", "concurrent-2"]));
+}
+const concurrentUploads = concurrent.uploads;
+for (const peer of peers) await peer.sync();
+assert.equal(concurrent.uploads, concurrentUploads);
+
+// Independent canvas edits after a long offline period merge without copies.
+const independent = syncLab();
+const multi = independent.device("multi");
+multi.workspace.boards.push({ ...structuredClone(multi.workspace.boards[0]), id: "second" });
+const offline = independent.device("offline", multi.workspace);
+await multi.sync(); await offline.sync();
+for (let edit = 0; edit < 100; edit += 1) { multi.edit(`online-${edit}`); await multi.sync(); }
+offline.edit("independent offline edit", "second");
+await offline.sync(); await multi.sync();
+assert.equal(offline.conflicts, 0);
+assert.equal(multi.workspace.boards.length, 2);
+assert.equal(multi.workspace.boards.find((item) => item.id === "canvas").board.nodes[0].text, "online-99");
+assert.equal(multi.workspace.boards.find((item) => item.id === "second").board.nodes[0].text, "independent offline edit");
+
+// Delete versus edit preserves the edit, never resurrecting the deleted ID.
+multi.workspace.boards = multi.workspace.boards.filter((item) => item.id !== "second");
+multi.workspace.activeId = "canvas";
+multi.workspace.tombstones.push({ id: "second", deletedAt: 1000 });
+offline.edit("edit while deleted", "second");
+await multi.sync(); await offline.sync(); await multi.sync();
+assert.ok(multi.workspace.tombstones.some((item) => item.id === "second"));
+assert.ok(!multi.workspace.boards.some((item) => item.id === "second"));
+assert.ok(multi.workspace.boards.some((item) => item.board.nodes[0].text === "edit while deleted"));
+const deletionCount = multi.workspace.boards.length;
+for (let poll = 0; poll < 4; poll += 1) { await offline.sync(); await multi.sync(); }
+assert.equal(multi.workspace.boards.length, deletionCount);
+
+// Upload failure after applying a conflict must not multiply copies on retry.
+const retry = syncLab();
+const retryA = retry.device("retry-a"), retryB = retry.device("retry-b");
+await retryA.sync(); await retryB.sync();
+retryA.edit("first edit"); retryB.edit("second edit");
+await retryA.sync();
+retry.failNextUpload();
+await retryB.sync(false);
+assert.equal(retryB.workspace.boards.length, 2);
+retryB.restart();
+await retryB.sync(); await retryA.sync();
+assert.equal(retryB.workspace.boards.length, 2);
+assert.equal(await fingerprintSyncWorkspace(retryA.workspace), await fingerprintSyncWorkspace(retryB.workspace));
+
+// Migration: even with no usable ancestry, legacy copies are retained and reused.
+const legacy = syncLab();
+const upgraded = legacy.device("upgraded");
+const stale = structuredClone(upgraded.workspace);
+upgraded.edit("latest before upgrade");
+const alreadyMerged = await mergeSyncWorkspaces(upgraded.workspace, stale);
+upgraded.workspace = alreadyMerged.workspace;
+const legacyA = await createCloudSnapshot(alreadyMerged.workspace, { deviceId: "upgraded" });
+const legacyB = await createCloudSnapshot(stale, { deviceId: "old-device" });
+delete legacyA.parents; delete legacyB.parents;
+legacy.files.set("legacy-a", legacyA); legacy.files.set("legacy-b", legacyB);
+const beforeUpgrade = await fingerprintSyncWorkspace(upgraded.workspace);
+await upgraded.sync();
+assert.equal(await fingerprintSyncWorkspace(upgraded.workspace), beforeUpgrade, "Upgrade never cleans up or replaces existing copies");
+assert.equal(upgraded.conflicts, 0);
+for (let edit = 0; edit < 100; edit += 1) { upgraded.edit(`after upgrade ${edit}`); await upgraded.sync(); }
+assert.equal(upgraded.workspace.boards.length, alreadyMerged.workspace.boards.length);
+assert.equal(upgraded.conflicts, 0);
+
+// Parent acknowledgements must not silently truncate at the old 48-entry limit.
+const many = syncLab();
+const manyWriter = many.device("many-writer");
+for (let device = 0; device < 60; device += 1) {
+  const old = await createCloudSnapshot(manyWriter.workspace, { deviceId: `old-${device}` });
+  delete old.parents;
+  many.files.set(`old-file-${device}`, old);
+}
+await manyWriter.sync();
+for (let edit = 0; edit < 55; edit += 1) { manyWriter.edit(`many-${edit}`); await manyWriter.sync(); }
+assert.equal(manyWriter.workspace.boards.length, 1);
+assert.equal(manyWriter.conflicts, 0);
+assert.equal(cloudSnapshotHeads([...many.files.values()]).length, 1);
+const beforeInvalid = await fingerprintSyncWorkspace(manyWriter.workspace);
+const uploadsBeforeInvalid = many.uploads;
+many.files.get("old-file-0").parents = [42];
+await manyWriter.sync(false);
+assert.equal(manyWriter.errors.at(-1)?.syncStage, "download");
+assert.equal(many.uploads, uploadsBeforeInvalid, "Invalid new metadata must stop uploads");
+assert.equal(await fingerprintSyncWorkspace(manyWriter.workspace), beforeInvalid);
 
 console.log("drive sync checks passed");
