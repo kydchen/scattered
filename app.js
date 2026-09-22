@@ -4,8 +4,8 @@ import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, c
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
 import { createDriveSync } from "./drive-sync.js?v=81";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=78";
-import { mountLiveSharing } from "./share-ui.js?v=78";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=82";
+import { mountLiveSharing } from "./share-ui.js?v=82";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
@@ -49,6 +49,7 @@ const fitButton = document.querySelector("#fit-button");
 const undoButton = document.querySelector("#undo-button");
 const redoButton = document.querySelector("#redo-button");
 const selectionBar = document.querySelector("#selection-bar");
+const selectAllButton = document.querySelector("#select-all");
 const colorSelectionButton = document.querySelector("#color-selection");
 const arrowSelectionButton = document.querySelector("#arrow-selection");
 const colorPalette = document.querySelector("#color-palette");
@@ -434,6 +435,7 @@ cancelClearButton.addEventListener("click", (event) => {
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 fitButton.addEventListener("click", fitBoard);
+selectAllButton.addEventListener("click", selectAllNodes);
 colorSelectionButton.addEventListener("click", (event) => {
   event.stopPropagation();
   openColorPalette([...selectedIds], event.currentTarget);
@@ -588,6 +590,13 @@ function onPointerDown(event) {
   const touches = activeTouches();
   if (shouldPinch(touches.map((pointer) => pointer.type))) {
     clearLongPress();
+    if (mode?.type === "node" && mode.moved) {
+      restoreDraggedNodes(mode);
+      scheduleSave();
+    }
+    clearNodeDropTarget();
+    hideLasso();
+    stopDragAutoPan();
     const [a, b] = touches;
     mode = {
       type: "pinch",
@@ -709,7 +718,7 @@ function onPointerDown(event) {
     mode = event.pointerType === "pen"
       ? { type: "lasso", pointerId: event.pointerId, pointerType: event.pointerType, points: [{ x: event.clientX, y: event.clientY }], moved: false, toggle: selectionMode }
       : event.pointerType === "mouse"
-        ? { type: "marquee", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, points: [], moved: false, toggle: event.shiftKey, tapCanvas: !event.shiftKey }
+        ? { type: "marquee", pointerId: event.pointerId, pointerType: event.pointerType, startX: event.clientX, startY: event.clientY, points: [], moved: false, toggle: event.shiftKey, tapCanvas: !event.shiftKey }
       : {
           type: "pan",
           pointerId: event.pointerId,
@@ -720,6 +729,22 @@ function onPointerDown(event) {
           pointerType: event.pointerType,
           moved: false,
         };
+    if (event.pointerType === "touch") {
+      const pending = mode;
+      pending.longPressTimer = setTimeout(() => {
+        if (mode !== pending || pending.moved || pointers.size !== 1) return;
+        // Ignore finger jitter before the hold, so the selection anchor stays put.
+        board.view.x = pending.viewX;
+        board.view.y = pending.viewY;
+        applyView();
+        mode = { type: "marquee", pointerId: event.pointerId, pointerType: "touch",
+          startX: event.clientX, startY: event.clientY, points: [], moved: false, toggle: false, tapCanvas: false };
+        selectionMode = true;
+        updateSelection();
+        const { startX: x, startY: y } = mode;
+        showSelectionPath([{ x: x - 9, y: y - 9 }, { x: x + 9, y: y - 9 }, { x: x + 9, y: y + 9 }, { x: x - 9, y: y + 9 }]);
+      }, 450);
+    }
   }
 }
 
@@ -748,6 +773,7 @@ function onPointerMove(event) {
     const dx = event.clientX - mode.startX;
     const dy = event.clientY - mode.startY;
     mode.moved ||= hasDragIntent(mode.pointerType, dx, dy);
+    if (mode.moved) clearLongPress();
     board.view.x = mode.viewX + dx;
     board.view.y = mode.viewY + dy;
     applyView();
@@ -760,14 +786,10 @@ function onPointerMove(event) {
   }
 
   if (mode?.type === "marquee" && mode.pointerId === event.pointerId) {
-    const x1 = mode.startX;
-    const y1 = mode.startY;
-    const x2 = event.clientX;
-    const y2 = event.clientY;
-    mode.moved ||= hasDragIntent("mouse", x2 - x1, y2 - y1);
+    mode.moved ||= hasDragIntent(mode.pointerType, event.clientX - mode.startX, event.clientY - mode.startY);
     if (!mode.moved) return;
-    mode.points = [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }];
-    showSelectionPath(mode.points);
+    updateMarquee(mode, event.clientX, event.clientY);
+    if (mode.pointerType === "touch") requestDragAutoPan();
     return;
   }
 
@@ -817,7 +839,62 @@ function moveDraggedNodes(target, screenX, screenY) {
     node.y = start.y + dy;
     positionNode(node);
   });
+  updateNodeDropTarget(target);
   queueEdgeRender();
+}
+
+function restoreDraggedNodes(target) {
+  target.positions.forEach((start) => {
+    const node = findNode(start.id, false);
+    if (!node) return;
+    node.x = start.x;
+    node.y = start.y;
+    positionNode(node);
+  });
+  queueEdgeRender();
+}
+
+function updateNodeDropTarget(target) {
+  const bounds = (element) => {
+    const rect = element.getBoundingClientRect();
+    const overview = viewport.classList.contains("overview");
+    const width = overview ? Math.max(64, rect.width) : rect.width;
+    const height = overview ? Math.max(20, rect.height) : rect.height;
+    const left = rect.left + (rect.width - width) / 2;
+    const top = rect.top + (rect.height - height) / 2;
+    return { left, top, right: left + width, bottom: top + height };
+  };
+  const dragged = new Set(target.positions.map((position) => position.id));
+  const sources = [...dragged].map((id) => bounds(nodeElements.get(id)));
+  let hit = null, largestOverlap = 0;
+  // ponytail: compare dragged bounds with other cards; add a spatial index if large selections need it.
+  nodeElements.forEach((element, id) => {
+    if (dragged.has(id)) return;
+    const rect = bounds(element);
+    sources.forEach((source) => {
+      const overlap = Math.max(0, Math.min(source.right, rect.right) - Math.max(source.left, rect.left))
+        * Math.max(0, Math.min(source.bottom, rect.bottom) - Math.max(source.top, rect.top));
+      if (overlap > largestOverlap) { largestOverlap = overlap; hit = id; }
+    });
+  });
+  if (target.dropTargetId === hit) return;
+  clearNodeDropTarget();
+  target.dropTargetId = hit;
+  if (hit) {
+    dragged.forEach((id) => nodeElements.get(id).classList.add("drop-source"));
+    nodeElements.get(hit).classList.add("link-target");
+  }
+}
+
+function clearNodeDropTarget() {
+  document.querySelectorAll(".node.drop-source, .node.link-target").forEach((element) => {
+    element.classList.remove("drop-source", "link-target");
+  });
+}
+
+function updateMarquee(target, x, y) {
+  target.points = [{ x: target.startX, y: target.startY }, { x, y: target.startY }, { x, y }, { x: target.startX, y }];
+  showSelectionPath(target.points);
 }
 
 function edgeAutoPanVelocity(point, bounds, inset = 56, maxSpeed = 640) {
@@ -846,7 +923,7 @@ function requestDragAutoPan() {
 
 function runDragAutoPan(timestamp) {
   dragAutoPanFrame = 0;
-  if (!mode?.moved || !["node", "link"].includes(mode.type)) {
+  if (!mode?.moved || !["node", "link", "marquee"].includes(mode.type)) {
     dragAutoPanAt = 0;
     return;
   }
@@ -879,7 +956,13 @@ function runDragAutoPan(timestamp) {
       mode.startY += dy;
       moveDraggedNodes(mode, pointer.x, pointer.y);
     }
+    if (mode.type === "marquee") {
+      mode.startX += dx;
+      mode.startY += dy;
+      updateMarquee(mode, pointer.x, pointer.y);
+    }
     applyView();
+    if (mode.type === "node") updateNodeDropTarget(mode);
     if (mode.type === "link") {
       updateLinkPreview(mode.sourceIds, pointer.x, pointer.y);
       updateLinkTarget(mode.sourceIds, pointer.x, pointer.y);
@@ -923,7 +1006,21 @@ function onPointerUp(event) {
     if (!currentMode.moved) handleCanvasTap();
     else scheduleSave();
   } else if (currentMode?.type === "node") {
-    if (currentMode.moved) scheduleSave();
+    if (currentMode.moved) {
+      moveDraggedNodes(currentMode, event.clientX, event.clientY);
+      if (currentMode.dropTargetId) {
+        restoreDraggedNodes(currentMode);
+        const to = currentMode.dropTargetId;
+        const sources = currentMode.positions.map((position) => position.id).filter((from) =>
+          !board.edges.some((edge) => (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from)));
+        // Preserve each dragged note as the source, including when adding arrows later.
+        board.edges = sources.reduce((edges, from) => toggleConnectionsToTarget(edges, [from], to), board.edges);
+        queueEdgeRender();
+        announce(t("connectionUpdated"));
+      }
+      clearNodeDropTarget();
+      scheduleSave();
+    }
     else if (!currentMode.longPressed && currentMode.tapAction !== "keep") {
       if (currentMode.tapAction === "toggle") toggleNodeSelection(currentMode.id);
       else if (currentMode.tapAction === "collapse") selectNode(currentMode.id);
@@ -964,6 +1061,9 @@ function onPointerUp(event) {
 
 function cancelGesture() {
   const autoPanned = mode?.autoPanned;
+  const movedNode = mode?.type === "node" && mode.moved;
+  if (movedNode) restoreDraggedNodes(mode);
+  clearNodeDropTarget();
   stopDragAutoPan();
   clearLongPress();
   pointers.clear();
@@ -973,7 +1073,7 @@ function cancelGesture() {
   linkPreview.toggleAttribute("hidden", true);
   hideLasso();
   document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
-  if (autoPanned) scheduleSave();
+  if (autoPanned || movedNode) scheduleSave();
 }
 
 function onWheel(event) {
@@ -2216,6 +2316,15 @@ function toggleNodeSelection(id) {
   updateSelection();
 }
 
+function selectAllNodes(event) {
+  event?.preventDefault();
+  clearEdgeSelection();
+  selectedIds.clear();
+  board.nodes.forEach((node) => selectedIds.add(node.id));
+  selectionMode = selectedIds.size > 0;
+  updateSelection();
+}
+
 function updateSelection() {
   const primaryId = selectedIds.values().next().value;
   nodeElements.forEach((element, nodeId) => {
@@ -2230,8 +2339,13 @@ function updateSelection() {
 }
 
 function updateSelectionBar() {
-  const visible = selectionMode && selectedIds.size > 0;
+  const visible = selectionMode;
   selectionBar.hidden = !visible;
+  selectAllButton.disabled = board.nodes.length === 0;
+  selectAllButton.setAttribute("aria-pressed", String(board.nodes.length > 0 && selectedIds.size === board.nodes.length));
+  colorSelectionButton.disabled = selectedIds.size === 0;
+  duplicateSelectionButton.disabled = selectedIds.size === 0;
+  document.querySelector("#delete-selection").disabled = selectedIds.size === 0;
   const connectedEdges = board.edges.filter((edge) => selectedIds.has(edge.from) || selectedIds.has(edge.to));
   const directions = new Set(connectedEdges.map((edge) => edge.arrow || "none"));
   const direction = directions.size > 1 ? "mixed" : directions.values().next().value || "none";
@@ -2682,12 +2796,7 @@ function onKeyDown(event) {
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
-    event.preventDefault();
-    clearEdgeSelection();
-    selectedIds.clear();
-    board.nodes.forEach((node) => selectedIds.add(node.id));
-    selectionMode = selectedIds.size > 0;
-    updateSelection();
+    selectAllNodes(event);
   } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
     event.preventDefault();
     if (event.shiftKey) redo();
@@ -2734,12 +2843,21 @@ function scheduleSave() {
   saveTimer = setTimeout(() => { void saveBoardNow(); }, 180);
 }
 
+function boardWithoutDragPreview() {
+  if (mode?.type !== "node" || !mode.moved) return board;
+  const original = new Map(mode.positions.map((position) => [position.id, position]));
+  return { ...board, nodes: board.nodes.map((node) => {
+    const position = original.get(node.id);
+    return position ? { ...node, x: position.x, y: position.y } : node;
+  }) };
+}
+
 function stagePendingSave() {
   if (!storageReady) return;
   syncOpenInputs();
   if (!boardDirty) return;
   try {
-    stagePendingDocument(workspaceStorage, workspace, board);
+    stagePendingDocument(workspaceStorage, workspace, boardWithoutDragPreview());
   } catch {
     markSaveFailure(t("errorSave"));
   }
@@ -2757,7 +2875,7 @@ async function saveBoardNow() {
   try {
     const savedSuccessfully = await withWorkspaceLock(() => {
       const previousId = workspace.activeId;
-      const saved = saveDocument(workspaceStorage, workspace, board);
+      const saved = saveDocument(workspaceStorage, workspace, boardWithoutDragPreview());
       const conflicted = workspace.activeId !== previousId;
       if (conflicted) {
         cancelGesture();

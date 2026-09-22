@@ -1,6 +1,6 @@
 import { createLiveShare } from "./live-share.js";
 import { SHARE_API } from "./share-config.js";
-import { hasMessage, t } from "./i18n.js?v=78";
+import { hasMessage, t } from "./i18n.js?v=82";
 
 const quietStates = new Set(["shareOff", "shareUploading", "shareLive", "shareStopping", "shareCopied"]);
 const bilingual = (key) => `${t(key, {}, "zh-Hans")} / ${t(key, {}, "en")}`;

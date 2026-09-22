@@ -5,6 +5,7 @@ import { testEnvironment } from "./test-sharing.mjs";
 import { handleShares } from "./worker/src/shares.js";
 import { blankBoard } from "./model.js";
 import { createCloudSnapshot } from "./sync-model.js";
+import { checkCanvasGestures } from "./test-gestures-browser.mjs";
 
 // Optional browser regression: PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs node --experimental-sqlite test-sharing-browser.mjs
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
@@ -39,6 +40,7 @@ try {
     result.on("page", (page) => page.on("pageerror", (error) => errors.push(`${page.url()}: ${error.stack}`)));
     return result;
   }
+  await checkCanvasGestures(await context({ hasTouch: true }));
   const authorContext = await context();
   const author = await authorContext.newPage();
   await author.goto("http://localhost:4173");

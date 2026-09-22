@@ -39,7 +39,7 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=78" />
+    <link rel="stylesheet" href="styles.css?v=82" />
     <link rel="stylesheet" href="sharing.css?v=78" />
     <title>Scattered</title>
   </head>
@@ -265,6 +265,11 @@
       </button>
 
       <section id="selection-bar" class="selection-bar" role="group" aria-label="多选操作" data-i18n-aria="selectionActions" hidden>
+        <button id="select-all" class="selection-action" type="button" aria-label="选择全部标签" data-i18n-aria="selectAll" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12l3 3 7-7"></path>
+          </svg>
+        </button>
         <button id="color-selection" class="selection-action" type="button" aria-label="更改所选标签颜色" data-i18n-aria="colorSelected" aria-controls="color-palette" aria-expanded="false">
           <svg class="color-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="9" cy="9" r="5" fill="#e8cc66"></circle>
@@ -389,7 +394,7 @@
       <div id="recovery-list"></div>
     </dialog>
 
-    <script type="module" src="app.js?v=81"></script>
+    <script type="module" src="app.js?v=82"></script>
     <!-- Cloudflare Web Analytics -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"}'></script>
     <!-- End Cloudflare Web Analytics -->

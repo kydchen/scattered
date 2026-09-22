@@ -21,7 +21,8 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Create and edit notes with a double-click or double-tap
 - Move notes freely and resize long notes
 - Connect notes, cycle arrow direction, and label connections; drag a connector onto empty canvas to create the next linked note
-- Lasso, marquee-select, or long-press to select multiple notes
+- Drop a note or selection onto another note to connect them; dragged notes turn translucent and return to their original positions on release
+- Lasso, marquee-select, or long-press blank space and drag to select multiple notes; select all, move, or delete together
 - Move, recolor, duplicate, connect, disconnect, or delete a selection together
 - Keep multiple local boards and switch between them from the Scattered mark
 - Optionally sync the whole workspace through the user's own Google Drive, without creating a Scattered account
@@ -38,7 +39,7 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 | Input | Selection and navigation | Fast actions |
 | --- | --- | --- |
 | Apple Pencil + touch | Lasso with Pencil; pan and pinch with fingers | Use the visual selection bar; write in notes and search with Scribble |
-| Touch only | Long-press a note to enter multi-select; drag to pan and pinch to zoom | Use the visual selection bar and top-right menu |
+| Touch only | Long-press blank space and drag to box-select, or long-press a note and tap others; ordinary dragging pans, two fingers zoom | Select all from the selection bar; drag any selected note to move the group |
 | Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `N` creates; `Enter/F2` edits; `Space/Shift+Space` selects; arrows move; `L` starts a connection; `Cmd/Ctrl` + `A/C/V/D/F/Z` |
 
 ## Local data and privacy

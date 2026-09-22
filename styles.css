@@ -719,6 +719,21 @@ button {
   background: var(--target);
 }
 
+#viewport.overview .node.link-target::before {
+  border-color: var(--thread);
+  background: var(--target);
+}
+
+.node.drop-source {
+  opacity: 0.45;
+}
+
+.node.drop-source .node-actions,
+.node.drop-source .resize-handle,
+.node.drop-source .link-handle {
+  visibility: hidden;
+}
+
 .app-mark {
   position: fixed;
   top: calc(max(12px, env(safe-area-inset-top)) + var(--visual-offset-top, 0px));
@@ -1339,6 +1354,11 @@ html[data-theme="dark"] .theme-sun {
   opacity: 0.38;
 }
 
+.selection-bar button[aria-pressed="true"] {
+  background: var(--thread-soft);
+  color: var(--thread);
+}
+
 .selection-bar .danger {
   background: var(--danger-soft);
   color: var(--danger);
@@ -1559,8 +1579,8 @@ html[data-theme="dark"] .theme-sun {
   }
 }
 
-@media (max-width: 360px) {
-  #viewport.multi-selecting .theme-button {
+@media (max-width: 480px) {
+  #viewport.multi-selecting ~ #chrome-layer .theme-button {
     transform: translateY(-58px);
   }
 }
