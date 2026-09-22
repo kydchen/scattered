@@ -27,6 +27,7 @@ const edgeLayer = document.querySelector("#edge-layer");
 const arrowMarker = document.querySelector("#edge-arrowhead");
 const linkPreview = document.querySelector("#link-preview");
 const lassoPath = document.querySelector("#lasso-path");
+const touchSelectionCue = document.querySelector("#touch-selection-cue");
 const template = document.querySelector("#node-template");
 const menu = document.querySelector("#menu");
 const menuButton = document.querySelector("#menu-button");
@@ -742,7 +743,10 @@ function onPointerDown(event) {
         selectionMode = true;
         updateSelection();
         const { startX: x, startY: y } = mode;
-        showSelectionPath([{ x: x - 9, y: y - 9 }, { x: x + 9, y: y - 9 }, { x: x + 9, y: y + 9 }, { x: x - 9, y: y + 9 }]);
+        // Feedback sits outside the finger; it never changes the selection bounds.
+        touchSelectionCue.setAttribute("transform", `translate(${x} ${y})`);
+        touchSelectionCue.classList.remove("fading");
+        touchSelectionCue.toggleAttribute("hidden", false);
       }, 450);
     }
   }
@@ -3272,6 +3276,7 @@ function addLassoPoints(event) {
 }
 
 function showSelectionPath(points) {
+  touchSelectionCue.classList.add("fading");
   lassoPath.setAttribute("d", `${points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")} Z`);
   lassoPath.toggleAttribute("hidden", false);
 }
@@ -3293,6 +3298,7 @@ function finishLasso(points, toggle = selectionMode) {
 }
 
 function hideLasso() {
+  touchSelectionCue.toggleAttribute("hidden", true);
   lassoPath.toggleAttribute("hidden", true);
   lassoPath.removeAttribute("d");
 }

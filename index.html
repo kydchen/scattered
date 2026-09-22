@@ -39,7 +39,7 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=82" />
+    <link rel="stylesheet" href="styles.css?v=83" />
     <link rel="stylesheet" href="sharing.css?v=78" />
     <title>Scattered</title>
   </head>
@@ -60,6 +60,9 @@
       </div>
 
       <svg id="lasso-overlay" aria-hidden="true">
+        <g id="touch-selection-cue" hidden>
+          <path d="M-28-44H-44V-28M28-44H44V-28M44 28V44H28M-28 44H-44V28"></path>
+        </g>
         <path id="lasso-path" hidden></path>
       </svg>
     </main>
@@ -394,7 +397,7 @@
       <div id="recovery-list"></div>
     </dialog>
 
-    <script type="module" src="app.js?v=82"></script>
+    <script type="module" src="app.js?v=83"></script>
     <!-- Cloudflare Web Analytics -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"}'></script>
     <!-- End Cloudflare Web Analytics -->

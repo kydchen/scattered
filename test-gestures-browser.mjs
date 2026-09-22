@@ -42,10 +42,41 @@ export async function checkCanvasGestures(context) {
   });
 
   await page.setViewportSize({ width: 390, height: 780 });
+  const cue = page.locator("#touch-selection-cue");
+  // The ready cue must remain outside the finger without selecting nearby notes.
+  for (const theme of ["light", "dark"]) {
+    await reset(fixture(true));
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await touch("touchStart", [[190, 190]]);
+    await cue.waitFor({ state: "visible" });
+    await page.waitForTimeout(500);
+    const box = await cue.boundingBox();
+    await page.screenshot({ path: `/tmp/scattered-touch-ready-${theme}.png` });
+    // The painted bounds include the 2px stroke around the 88px corner geometry.
+    assert.ok(Math.abs(box.width - 90) < 1 && Math.abs(box.height - 90) < 1, JSON.stringify(box));
+    assert.ok(Math.abs(box.x + box.width / 2 - 190) < 1 && Math.abs(box.y + box.height / 2 - 190) < 1);
+    assert.deepEqual(await selected(), [], "The larger ready cue is feedback, not a selection area");
+    assert.equal(await page.locator("#lasso-path").isVisible(), false);
+    await touch("touchMove", [[330, 300]]);
+    assert.equal(await page.locator("#lasso-path").getAttribute("d"), "M 190 190 L 330 190 L 330 300 L 190 300 Z", "Actual selection still starts at the finger's original position");
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#touch-selection-cue")).opacity === "0");
+    await touch("touchEnd");
+    assert.equal(await cue.isVisible(), false);
+    assert.deepEqual(await selected(), ["b"]);
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await reset(fixture(true));
+  await touch("touchStart", [[190, 190]]);
+  await cue.waitFor({ state: "visible" });
+  assert.equal(await cue.locator("path").evaluate(element => getComputedStyle(element).animationName), "none");
+  await touch("touchCancel");
+  assert.equal(await cue.isVisible(), false, "Cancellation removes the ready cue");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
   await reset(fixture(true));
   // Holding blank space exposes selection + select-all even before a card is selected.
   await touch("touchStart", [[25, 190]]);
-  await page.locator("#lasso-path:not([hidden])").waitFor();
+  await cue.waitFor({ state: "visible" });
   assert.equal(await page.locator("#select-all").isVisible(), true);
   assert.equal(await page.locator("#delete-selection").isDisabled(), true);
   await touch("touchMove", [[352, 300]]);
@@ -89,8 +120,9 @@ export async function checkCanvasGestures(context) {
 
   await reset(fixture(true));
   await touch("touchStart", [[25, 190]]);
-  await page.locator("#lasso-path:not([hidden])").waitFor();
+  await cue.waitFor({ state: "visible" });
   await touch("touchEnd");
+  assert.equal(await cue.isVisible(), false, "Releasing without dragging removes the ready cue");
   await page.locator("#select-all").click();
   assert.deepEqual(await selected(), ["a", "b", "c"], "Hold and release blank space can select all without drawing a box");
 
@@ -101,6 +133,7 @@ export async function checkCanvasGestures(context) {
   await touch("touchMove", [[180, 550]]);
   await page.waitForTimeout(500);
   assert.equal(await page.locator("#selection-bar").isVisible(), false, "Ordinary panning cancels long-press selection");
+  assert.equal(await cue.isVisible(), false);
   assert.notEqual(await world(), viewBefore);
   await touch("touchEnd");
 
@@ -110,11 +143,19 @@ export async function checkCanvasGestures(context) {
   await touch("touchMove", [[130, 470, 0], [300, 580, 1]]);
   await page.waitForTimeout(500);
   assert.equal(await page.locator("#selection-bar").isVisible(), false, "A second finger cancels the pending hold");
+  assert.equal(await cue.isVisible(), false);
+  await touch("touchEnd");
+
+  await reset(fixture(true));
+  await touch("touchStart", [[190, 190, 0]]);
+  await cue.waitFor({ state: "visible" });
+  await touch("touchStart", [[190, 190, 0], [300, 550, 1]]);
+  assert.equal(await cue.isVisible(), false, "Pinching also removes an already visible cue");
   await touch("touchEnd");
 
   await reset(fixture(true));
   await touch("touchStart", [[25, 190]]);
-  await page.locator("#lasso-path:not([hidden])").waitFor();
+  await cue.waitFor({ state: "visible" });
   const anchored = await world();
   await touch("touchMove", [[380, 600]]);
   await page.waitForFunction(before => document.querySelector("#world").style.transform !== before, anchored);
@@ -210,11 +251,25 @@ export async function checkCanvasGestures(context) {
   // Existing desktop marquee and keyboard select-all still use the same selection.
   await reset();
   await page.mouse.move(75, 190); await page.mouse.down(); await page.mouse.move(700, 300); await page.mouse.up();
+  assert.equal(await cue.isVisible(), false, "Mouse selection does not show the touch cue");
   assert.deepEqual(await selected(), ["a", "b"]);
   await page.keyboard.press("Control+a");
   assert.deepEqual(await selected(), ["a", "b", "c"]);
   await page.keyboard.press("Escape");
   assert.deepEqual(await selected(), []);
+  await reset();
+  await page.evaluate(() => {
+    const target = document.querySelector("#gesture-surface");
+    const send = (type, x, y) => target.dispatchEvent(new PointerEvent(type, {
+      pointerId: 77, pointerType: "pen", isPrimary: true, bubbles: true, clientX: x, clientY: y,
+      buttons: type === "pointerup" ? 0 : 1,
+    }));
+    send("pointerdown", 75, 190);
+    for (const [x, y] of [[700, 190], [700, 300], [75, 300], [75, 190]]) send("pointermove", x, y);
+    send("pointerup", 75, 190);
+  });
+  assert.deepEqual(await selected(), ["a", "b"], "Pen lasso still selects directly without a hold");
+  assert.equal(await cue.isVisible(), false, "Pen selection does not show the touch cue");
   await context.close();
   console.log("gesture checks passed: native touch marquee, selection edits, group move, select-all, bulk delete/undo, pan/pinch, edge pan, mouse/touch/pen drop-link and cancellation");
 }
