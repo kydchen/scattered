@@ -324,9 +324,9 @@ function syncLab() {
     freeze() { frozenFiles = structuredClone(files); frozenVersions = new Map(versions); },
     unfreeze() { frozenFiles = null; frozenVersions = null; },
     failNextUpload() { failUpload = true; },
-    device(id, initial = seed) {
+    device(id, initial = seed, storage = sessionStorage(id)) {
       const binding = createAccountBinding();
-      const device = { workspace: structuredClone(initial), conflicts: 0, storage: sessionStorage(id), errors: [], canApply: true, canSync: true, statuses: [], requests: [] };
+      const device = { workspace: structuredClone(initial), conflicts: 0, storage, errors: [], canApply: true, canSync: true, statuses: [], requests: [] };
       const options = {
         apiUrl: "https://broker.test",
         storage: device.storage,
@@ -349,6 +349,8 @@ function syncLab() {
           const path = new URL(url).pathname;
           device.requests.push(path);
           await device.beforeRequest?.(path);
+          const response = await device.respond?.(url, init);
+          if (response) return response;
           const visible = frozenFiles ?? files;
           if (path === "/token") return Response.json({ accessToken: "mock-only", expiresIn: 3600 });
           if (path === "/drive/v3/about") return Response.json({ user: { permissionId: "same-account" } });
@@ -375,6 +377,8 @@ function syncLab() {
       };
       let controller = createDriveSync(options);
       device.stop = () => controller.stop();
+      device.disconnect = () => controller.disconnect();
+      Object.defineProperty(device, "connected", { get: () => controller.connected });
       device.start = () => controller.start();
       device.schedule = (...args) => controller.schedule(...args);
       device.restart = () => { controller.stop(); controller = createDriveSync(options); };
@@ -558,9 +562,115 @@ try {
   typing.stop();
   assert.equal(timers.size, 0);
   assert.equal(intervals.size, 0);
+
+  // A deadline must cover token fetch, a stalled body, and an interrupted upload.
+  for (const stage of ["token", "body", "upload"]) {
+    const lab = syncLab(), device = lab.device(`timeout-${stage}`);
+    let entered, capturedSignal;
+    const waiting = new Promise(resolve => { entered = resolve; });
+    device.respond = async (url, init) => {
+      const path = new URL(url).pathname;
+      if (!((stage === "token" && path === "/token")
+        || (stage === "body" && path === "/drive/v3/files")
+        || (stage === "upload" && path.startsWith("/session/")))) return;
+      capturedSignal = init.signal;
+      entered();
+      if (stage === "body") return new Response(new ReadableStream({ start(controller) {
+        init.signal.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
+      } }));
+      return new Promise((_, reject) => init.signal.addEventListener("abort",
+        () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
+    };
+    device.start();
+    const attempt = device.sync(false);
+    await waiting;
+    const deadline = [...timers.values()].find(item => item.delay === 90_000);
+    assert.ok(deadline, `${stage}: sync needs a deadline, not an endless spinner`);
+    deadline.fn();
+    await attempt;
+    assert.equal(capturedSignal.aborted, true);
+    assert.match(device.errors.at(-1).message, /timeout/);
+    assert.equal(device.statuses.at(-1), "error");
+    assert.equal(device.connected, true, "A network timeout must not sign the user out");
+    device.respond = null;
+    await device.sync();
+    assert.equal(device.statuses.at(-1), "synced", "The next poll can retry after timeout");
+    assert.equal(device.workspace.boards.length, 1);
+    assert.equal(device.conflicts, 0);
+    device.stop();
+    assert.equal(timers.size, 0);
+    assert.equal(intervals.size, 0);
+  }
 } finally {
   globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
   globalThis.setInterval = realSetInterval; globalThis.clearInterval = realClearInterval;
+}
+
+// Tabs share persistent credentials, but must never continue with stale ones.
+const SESSION_KEY = "scattered-drive-session-v1";
+{
+  const lab = syncLab(), first = lab.device("same-device");
+  await first.sync();
+  const other = lab.device("same-device", first.workspace, first.storage);
+  other.disconnect();
+  const uploads = lab.uploads;
+  first.edit("local edit after another tab logs out");
+  await first.sync(false);
+  assert.equal(first.connected, false);
+  assert.equal(lab.uploads, uploads, "Logout in another tab prevents later uploads");
+  assert.equal(first.workspace.boards[0].board.nodes[0].text, "local edit after another tab logs out");
+  first.stop(); other.stop();
+}
+for (const response of [() => new Response(null, { status: 401 }),
+  () => Response.json({ accessToken: "old-access", session: "v1.b2xkLXJvdGF0ZWQ", expiresIn: 3600 })]) {
+  const lab = syncLab(), old = lab.device("old-tab");
+  let entered, finish;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  const released = new Promise(resolve => { finish = resolve; });
+  old.respond = async () => { entered(); await released; return response(); };
+  const attempt = old.sync(false);
+  await waiting;
+  old.storage.setItem(SESSION_KEY, "v1.bmV3LWxvZ2lu");
+  finish();
+  await attempt;
+  assert.equal(old.storage.getItem(SESSION_KEY), "v1.bmV3LWxvZ2lu", "A late old response cannot delete or overwrite a new login");
+  assert.equal(old.connected, false);
+  assert.equal(lab.uploads, 0);
+  old.disconnect();
+  assert.equal(old.storage.getItem(SESSION_KEY), "v1.bmV3LWxvZ2lu", "Even a stale logout cannot delete a newer login");
+  old.stop();
+}
+{
+  const add = globalThis.addEventListener, remove = globalThis.removeEventListener;
+  const listeners = new Set();
+  globalThis.addEventListener = (name, fn) => { if (name === "storage") listeners.add(fn); };
+  globalThis.removeEventListener = (name, fn) => { if (name === "storage") listeners.delete(fn); };
+  const lab = syncLab(), old = lab.device("storage-event");
+  try {
+    let entered;
+    const waiting = new Promise(resolve => { entered = resolve; });
+    old.respond = async (_url, init) => new Promise((_, reject) => {
+      init.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      entered();
+    });
+    old.start();
+    const attempt = old.sync(false);
+    await waiting;
+    assert.equal(listeners.size, 1);
+    old.storage.removeItem(SESSION_KEY);
+    for (const listener of listeners) listener({ key: SESSION_KEY, storageArea: old.storage });
+    await attempt;
+    assert.equal(old.connected, false, "Storage events cancel in-flight sync without waiting for the next poll");
+    assert.equal(old.statuses.at(-1), "disconnected");
+    assert.equal(old.errors.length, 0, "An intentional logout is not a network error");
+    assert.equal(lab.uploads, 0);
+    old.stop();
+    assert.equal(listeners.size, 0);
+  } finally {
+    old.stop();
+    globalThis.addEventListener = add;
+    globalThis.removeEventListener = remove;
+  }
 }
 
 const longRun = syncLab();

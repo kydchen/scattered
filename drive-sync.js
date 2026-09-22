@@ -21,6 +21,7 @@ const DRIVE_MARK = "workspace-v1";
 const SYNC_LOCK_PREFIX = "scattered-drive-sync-v1:";
 const SYNC_DELAY = 800;
 const POLL_INTERVAL = 10_000;
+const SYNC_TIMEOUT = 90_000;
 const MAX_CLOUD_BYTES = MAX_WORKSPACE_IMPORT_BYTES + 2 * 1024 * 1024;
 
 export function createDriveSync(options) {
@@ -78,6 +79,7 @@ export function createDriveSync(options) {
     globalThis.addEventListener?.("online", onWake);
     globalThis.addEventListener?.("offline", onOffline);
     globalThis.addEventListener?.("focus", onWake);
+    globalThis.addEventListener?.("storage", onStorage);
     globalThis.document?.addEventListener?.("visibilitychange", onVisibilityChange);
     pollTimer = globalThis.setInterval?.(() => {
       if (globalThis.document?.visibilityState !== "hidden") schedule(0);
@@ -87,6 +89,7 @@ export function createDriveSync(options) {
 
   function stop() {
     syncGeneration += 1;
+    queued = false;
     activeAbortController?.abort();
     activeAbortController = null;
     clearTimeout(timer);
@@ -96,6 +99,7 @@ export function createDriveSync(options) {
     globalThis.removeEventListener?.("online", onWake);
     globalThis.removeEventListener?.("offline", onOffline);
     globalThis.removeEventListener?.("focus", onWake);
+    globalThis.removeEventListener?.("storage", onStorage);
     globalThis.document?.removeEventListener?.("visibilitychange", onVisibilityChange);
   }
 
@@ -106,6 +110,7 @@ export function createDriveSync(options) {
   }
 
   function disconnect() {
+    const previousSession = session;
     syncGeneration += 1;
     activeAbortController?.abort();
     activeAbortController = null;
@@ -118,11 +123,13 @@ export function createDriveSync(options) {
     authenticatedAccountKey = null;
     profile = null;
     snapshotCache.clear();
-    remove(storage, SESSION_KEY);
+    // A stale tab must never delete another tab's newer login.
+    if (read(storage, SESSION_KEY) === previousSession) remove(storage, SESSION_KEY);
     setStatus("disconnected");
   }
 
   function schedule(delay = SYNC_DELAY) {
+    onStorage();
     if (!session || !controller.available) return;
     const due = clock() + delay;
     // Continuous editing must not keep postponing an already scheduled upload.
@@ -136,6 +143,7 @@ export function createDriveSync(options) {
   async function syncNow() {
     clearTimeout(timer);
     timer = null;
+    onStorage();
     if (!session || !controller.available) return false;
     if (globalThis.navigator?.onLine === false) { setStatus("offline"); return false; }
     if (running) {
@@ -147,9 +155,12 @@ export function createDriveSync(options) {
       return false;
     }
     running = true;
-    const generation = syncGeneration;
+    const generation = ++syncGeneration;
     const abortController = new AbortController();
     activeAbortController = abortController;
+    let timedOut = false;
+    // Bound the entire cycle, including response bodies, not just response headers.
+    const deadline = setTimeout(() => { timedOut = true; abortController.abort(); }, SYNC_TIMEOUT);
     setStatus("syncing");
     try {
       const result = await withSyncLock(() => performSync(generation));
@@ -163,6 +174,8 @@ export function createDriveSync(options) {
       if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
     } catch (error) {
+      onStorage();
+      if (timedOut) error = syncError("timeout");
       if (error && typeof error === "object" && !error.syncStage) error.syncStage = syncStage;
       if (generation !== syncGeneration || error?.name === "AbortError" || error?.code === "cancelled") return false;
       if (error?.code === "busy") {
@@ -170,26 +183,14 @@ export function createDriveSync(options) {
         schedule(900);
         return false;
       }
-      if (error?.code === "auth") {
-        session = null;
-        accessToken = null;
-        authenticatedAccountKey = null;
-        profile = null;
-        remove(storage, SESSION_KEY);
-      }
-      if (error?.code === "account") {
-        session = null;
-        accessToken = null;
-        accessTokenExpiresAt = 0;
-        authenticatedAccountKey = null;
-        profile = null;
-        remove(storage, SESSION_KEY);
-      }
+      if (error?.code === "auth" || error?.code === "account") disconnect();
       if (session && globalThis.navigator?.onLine === false) { setStatus("offline"); return false; }
       options.onError?.(error);
       setStatus("error");
       return false;
     } finally {
+      clearTimeout(deadline);
+      abortController.abort();
       if (activeAbortController === abortController) activeAbortController = null;
       syncStage = "idle";
       running = false;
@@ -475,10 +476,14 @@ export function createDriveSync(options) {
   }
 
   async function driveRequest(url, init = {}, retry = true) {
+    const generation = syncGeneration;
+    ensureSyncActive(generation);
     const token = await getAccessToken();
+    ensureSyncActive(generation);
     const headers = new Headers(init.headers || {});
     headers.set("Authorization", `Bearer ${token}`);
     const response = await fetcher(url, { ...init, headers, signal: init.signal || activeAbortController?.signal });
+    ensureSyncActive(generation);
     if (response.status === 401 && retry) {
       accessToken = null;
       accessTokenExpiresAt = 0;
@@ -489,6 +494,8 @@ export function createDriveSync(options) {
   }
 
   async function getAccessToken() {
+    const generation = syncGeneration;
+    ensureSyncActive(generation);
     if (accessToken && accessTokenExpiresAt > clock() + 30_000) return accessToken;
     const response = await fetcher(`${apiUrl}/token`, {
       method: "POST",
@@ -498,6 +505,7 @@ export function createDriveSync(options) {
     if (response.status === 401 || response.status === 403) throw authError();
     if (!response.ok) throw syncError(`broker-${response.status}`);
     const payload = await response.json();
+    ensureSyncActive(generation);
     if (typeof payload.accessToken !== "string" || !payload.accessToken) throw syncError("broker-response");
     accessToken = payload.accessToken;
     accessTokenExpiresAt = clock() + Math.max(30, Number(payload.expiresIn) || 300) * 1_000;
@@ -558,7 +566,17 @@ export function createDriveSync(options) {
     if (globalThis.document?.visibilityState === "visible") onWake();
   }
 
+  function onStorage(event) {
+    if (event && ((event.key !== null && event.key !== SESSION_KEY)
+      || (event.storageArea && event.storageArea !== storage))) return;
+    // Keep this tab's local work intact. Reopening/reloading adopts the new login
+    // through the normal account-isolation flow, never during an active edit.
+    if (session && read(storage, SESSION_KEY) !== session) disconnect();
+  }
+
   function ensureSyncActive(generation) {
+    onStorage();
+    if (activeAbortController?.signal.aborted) throw activeAbortController.signal.reason;
     if (session && generation === syncGeneration) return;
     const error = new Error("Drive sync cancelled");
     error.code = "cancelled";
