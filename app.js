@@ -2,7 +2,7 @@ import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseImportedWorkspace, readRecovery, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=78";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=79";
+import { createDriveSync } from "./drive-sync.js?v=80";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=78";
 import { mountLiveSharing } from "./share-ui.js?v=78";
@@ -141,7 +141,9 @@ const driveSync = createDriveSync({
   bindAccount: bindDriveAccount,
   switchAccount: switchDriveAccount,
   applyWorkspace: applyDriveWorkspace,
+  canSync: canSyncDriveWorkspace,
   canApply: canApplyDriveWorkspace,
+  hasPendingChanges: () => boardDirty || Boolean(mode?.moved),
   onStatus: updateDriveSyncControl,
   onConflict: (count) => showToast(t("driveConflict", { count }), false, 4_800),
   onError: (error) => {
@@ -1139,13 +1141,17 @@ function updateDriveSyncControl(status) {
   if (["unavailable", "disconnected"].includes(status)) disarmDriveControls();
 }
 
-function canApplyDriveWorkspace() {
+function canSyncDriveWorkspace() {
   return storageReady
-    && !workspaceActionPending
+    && !workspaceActionPending;
+}
+
+function canApplyDriveWorkspace() {
+  return canSyncDriveWorkspace()
     && !boardDirty
     && !mode
-    && selectedIds.size === 0
-    && !selectedEdgeId
+    && !keyboardLinkSourceIds
+    && colorPalette.hidden
     && menu.hidden
     && !boardPicker.classList.contains("confirming-delete")
     && !document.querySelector("dialog[open]")
@@ -1158,6 +1164,7 @@ function canApplyDriveWorkspace() {
 async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
   if (!canApplyDriveWorkspace() || !beginWorkspaceAction()) throw driveBusyError();
   try {
+    const previousActiveId = workspace.activeId;
     const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
     const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
     const applied = await withWorkspaceLock(async () => {
@@ -1167,7 +1174,7 @@ async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
       const nextBoard = applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
       return { nextBoard, fitIncoming: !localIds.has(workspace.activeId) };
     });
-    if (activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming);
+    if (activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming, workspace.activeId === previousActiveId);
     else renderBoardList();
     clearSaveFailure();
     updateRecoveryControl();
@@ -1378,13 +1385,14 @@ async function openBoard(id) {
   }
 }
 
-function replaceBoard(nextBoard, fitIncoming = false) {
+function replaceBoard(nextBoard, fitIncoming = false, keepSelection = false) {
+  const focusedNodeId = keepSelection ? document.activeElement?.closest(".node")?.dataset.id : null;
   cancelGesture();
   board = normalizeBoard(nextBoard);
   boardDirty = false;
-  selectedIds.clear();
-  selectionMode = false;
-  selectedEdgeId = null;
+  for (const id of selectedIds) if (!keepSelection || !findNode(id, false)) selectedIds.delete(id);
+  selectionMode = keepSelection && selectionMode && selectedIds.size > 0;
+  if (!keepSelection || !findEdge(selectedEdgeId, false)) selectedEdgeId = null;
   undoStack.length = 0;
   redoStack.length = 0;
   closeSearch();
@@ -1393,6 +1401,7 @@ function replaceBoard(nextBoard, fitIncoming = false) {
   fitOpenedBoardIfOffscreen(fitIncoming);
   renderBoardList();
   updateHistoryControls();
+  if (focusedNodeId) nodeElements.get(focusedNodeId)?.focus({ preventScroll: true });
 }
 
 function fitOpenedBoardIfOffscreen(force = false) {

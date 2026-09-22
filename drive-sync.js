@@ -19,8 +19,8 @@ const DEVICE_KEY = "scattered-drive-device-v1";
 const STATE_KEY = "scattered-drive-sync-v1";
 const DRIVE_MARK = "workspace-v1";
 const SYNC_LOCK_PREFIX = "scattered-drive-sync-v1:";
-const SYNC_DELAY = 1_500;
-const POLL_INTERVAL = 45_000;
+const SYNC_DELAY = 800;
+const POLL_INTERVAL = 10_000;
 const MAX_CLOUD_BYTES = MAX_WORKSPACE_IMPORT_BYTES + 2 * 1024 * 1024;
 
 export function createDriveSync(options) {
@@ -37,12 +37,14 @@ export function createDriveSync(options) {
   let authenticatedAccountKey = null;
   let profile = null;
   let timer = null;
+  let timerDue = 0;
   let pollTimer = null;
   let running = false;
   let queued = false;
   let syncStage = "idle";
   let syncGeneration = 0;
   let activeAbortController = null;
+  const snapshotCache = new Map();
 
   const controller = {
     available: Boolean(apiUrl),
@@ -88,6 +90,8 @@ export function createDriveSync(options) {
     activeAbortController?.abort();
     activeAbortController = null;
     clearTimeout(timer);
+    timer = null;
+    snapshotCache.clear();
     clearInterval(pollTimer);
     globalThis.removeEventListener?.("online", onWake);
     globalThis.removeEventListener?.("offline", onOffline);
@@ -113,13 +117,18 @@ export function createDriveSync(options) {
     accessTokenExpiresAt = 0;
     authenticatedAccountKey = null;
     profile = null;
+    snapshotCache.clear();
     remove(storage, SESSION_KEY);
     setStatus("disconnected");
   }
 
   function schedule(delay = SYNC_DELAY) {
     if (!session || !controller.available) return;
+    const due = clock() + delay;
+    // Continuous editing must not keep postponing an already scheduled upload.
+    if (timer !== null && timerDue <= due) return;
     clearTimeout(timer);
+    timerDue = due;
     if (!running) setStatus(globalThis.navigator?.onLine === false ? "offline" : "connected");
     timer = setTimeout(() => { void syncNow(); }, delay);
   }
@@ -133,7 +142,7 @@ export function createDriveSync(options) {
       queued = true;
       return false;
     }
-    if (options.canApply && !options.canApply()) {
+    if (options.canSync && !options.canSync()) {
       schedule(900);
       return false;
     }
@@ -145,7 +154,12 @@ export function createDriveSync(options) {
     try {
       const result = await withSyncLock(() => performSync(generation));
       ensureSyncActive(generation);
-      setStatus("synced");
+      const latestFingerprint = await fingerprintSyncWorkspace(await options.getWorkspace());
+      ensureSyncActive(generation);
+      if (latestFingerprint !== result.fingerprint || options.hasPendingChanges?.()) {
+        setStatus("connected");
+        schedule();
+      } else setStatus("synced");
       if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
     } catch (error) {
@@ -213,6 +227,8 @@ export function createDriveSync(options) {
       listDeviceFiles(),
     ]);
     ensureSyncActive(generation);
+    const fileIds = new Set(files.map((file) => file.id));
+    for (const id of snapshotCache.keys()) if (!fileIds.has(id)) snapshotCache.delete(id);
     syncStage = "download";
     const snapshots = await Promise.all(files.map(readSnapshot));
     ensureSyncActive(generation);
@@ -237,7 +253,7 @@ export function createDriveSync(options) {
       const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
       ensureSyncActive(generation);
       saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
-      return { conflicts: 0 };
+      return { conflicts: 0, fingerprint: localFingerprint };
     }
 
     syncStage = "merge";
@@ -271,7 +287,36 @@ export function createDriveSync(options) {
     const nextFingerprint = await fingerprintSyncWorkspace(nextWorkspace);
     if (nextFingerprint !== localFingerprint) {
       shouldUpload = true;
-      if (options.canApply && !options.canApply()) throw busyError();
+      if (options.canApply && !options.canApply()) {
+        // Publish only our saved branch while the editor/gesture is busy. Do not
+        // acknowledge remote heads until their contents have been applied locally.
+        // An uncheckpointed own upload must be merged, never overwritten here.
+        if (localChanged && (!ownSnapshot || ownSnapshot.snapshotId === state.lastSnapshotId)
+          && !isDisposableSyncWorkspace(local)) {
+          const knownLineage = new Set(ownSnapshot ? snapshotLineage(ownSnapshot)
+            : [state.lastSnapshotId, ...state.parents, ...state.ancestors]);
+          const mergeBases = heads.filter((head) => !knownLineage.has(head.snapshotId)).flatMap((head) => {
+            const remoteIds = new Set(snapshotLineage(head));
+            const base = [...state.history, ...head.history].find((entry) =>
+              knownLineage.has(entry.snapshotId) && remoteIds.has(entry.snapshotId));
+            return base ? [base] : [];
+          });
+          const snapshot = await createCloudSnapshot(local, {
+            deviceId,
+            // Pin acknowledged dormant files and the bases of deferred merges.
+            // Otherwise a long edit can outlive the rolling ancestry/history.
+            parents: [...snapshots.filter((item) => knownLineage.has(item.snapshotId)), ...mergeBases],
+            history: mergeSnapshotHistory(mergeBases, state.history),
+            ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
+          });
+          syncStage = "upload";
+          ensureSyncActive(generation);
+          const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+          ensureSyncActive(generation);
+          saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
+        }
+        throw busyError();
+      }
       syncStage = "apply";
       ensureSyncActive(generation);
       await options.applyWorkspace(nextWorkspace, localFingerprint);
@@ -294,7 +339,7 @@ export function createDriveSync(options) {
     // Keep the local merge base tied to our own stored checkpoint, even when
     // another device publishes an identical workspace. Otherwise a dormant
     // browser's last observed base can disappear from every cloud file.
-    return { conflicts };
+    return { conflicts, fingerprint: nextFingerprint };
   }
 
   async function withSyncLock(action) {
@@ -356,6 +401,12 @@ export function createDriveSync(options) {
   }
 
   async function readSnapshot(file) {
+    const accountKey = authenticatedAccountKey;
+    const generation = syncGeneration;
+    const version = typeof file.version === "string" && /^\d+$/.test(file.version) ? file.version : null;
+    const cached = snapshotCache.get(file.id);
+    if (version && cached?.version === version && cached.accountKey === accountKey) return { ...cached.snapshot, file };
+    snapshotCache.delete(file.id);
     const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
     const encoded = await response.text();
     if (new TextEncoder().encode(encoded).byteLength > MAX_CLOUD_BYTES) throw syncError("snapshot-too-large");
@@ -375,7 +426,7 @@ export function createDriveSync(options) {
       [{ snapshotId: value.snapshotId, index }],
       Array.isArray(value.history) ? value.history.filter((item) => validCloudToken(item?.snapshotId)) : [],
     );
-    return {
+    const snapshot = {
       snapshotId: value.snapshotId,
       deviceId: value.deviceId,
       createdAt: Number(value.createdAt) || 0,
@@ -386,6 +437,9 @@ export function createDriveSync(options) {
       workspace,
       file,
     };
+    // Cache only validated content and only with Drive's explicit file version.
+    if (version && generation === syncGeneration) snapshotCache.set(file.id, { accountKey, version, snapshot });
+    return snapshot;
   }
 
   async function uploadSnapshot(snapshot, fileId) {
@@ -416,6 +470,7 @@ export function createDriveSync(options) {
     });
     const result = await uploaded.json();
     if (!result.id && !fileId) throw syncError("upload-result");
+    snapshotCache.delete(result.id || fileId);
     return { ...result, id: result.id || fileId };
   }
 

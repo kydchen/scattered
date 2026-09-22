@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { createDriveSync } from "./drive-sync.js";
 import { blankBoard, normalizeBoard } from "./model.js";
 import { cloudSnapshotHeads, createCloudSnapshot, fingerprintSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
@@ -305,43 +307,55 @@ assert.equal(stagedLocalError?.message, "sync.invalidWorkspace");
 // Exercise the real sync controller with isolated devices and an in-memory Drive.
 function syncLab() {
   const files = new Map();
+  const versions = new Map();
   let frozenFiles = null;
+  let frozenVersions = null;
   let uploads = 0;
+  let downloads = 0;
   let failUpload = false;
   let serial = 0;
   const seed = boardWorkspace("canvas", "Canvas");
   seed.boards[0].board = normalizeBoard({ ...seed.boards[0].board, nodes: [{ id: "note", text: "initial", x: 0, y: 0 }] });
   return {
     files,
+    versions,
     get uploads() { return uploads; },
-    freeze() { frozenFiles = structuredClone(files); },
-    unfreeze() { frozenFiles = null; },
+    get downloads() { return downloads; },
+    freeze() { frozenFiles = structuredClone(files); frozenVersions = new Map(versions); },
+    unfreeze() { frozenFiles = null; frozenVersions = null; },
     failNextUpload() { failUpload = true; },
     device(id, initial = seed) {
       const binding = createAccountBinding();
-      const device = { workspace: structuredClone(initial), conflicts: 0, storage: sessionStorage(id), errors: [] };
+      const device = { workspace: structuredClone(initial), conflicts: 0, storage: sessionStorage(id), errors: [], canApply: true, canSync: true, statuses: [], requests: [] };
       const options = {
         apiUrl: "https://broker.test",
         storage: device.storage,
+        now: () => device.now ?? Date.now(),
         getBoundAccount: binding.get,
         bindAccount: binding.bind,
         getWorkspace: () => structuredClone(device.workspace),
-        canApply: () => true,
+        canSync: () => device.canSync,
+        canApply: () => device.canApply,
+        hasPendingChanges: () => device.pendingChanges,
         applyWorkspace: async (incoming, expected) => {
+          assert.ok(device.canApply, "Never replace an active editor or gesture");
           assert.equal(await fingerprintSyncWorkspace(device.workspace), expected);
           device.workspace = structuredClone(incoming);
         },
         onConflict: (count) => { device.conflicts += count; },
+        onStatus: (status) => { device.statuses.push(status); },
         onError: (error) => { device.errors.push(error); },
         fetch: async (url, init = {}) => {
           const path = new URL(url).pathname;
+          device.requests.push(path);
+          await device.beforeRequest?.(path);
           const visible = frozenFiles ?? files;
           if (path === "/token") return Response.json({ accessToken: "mock-only", expiresIn: 3600 });
           if (path === "/drive/v3/about") return Response.json({ user: { permissionId: "same-account" } });
           if (path === "/drive/v3/files") return Response.json({ files: [...visible].map(([fileId, snapshot]) => ({
-            id: fileId, appProperties: { deviceId: snapshot.deviceId }, modifiedTime: "2026-09-15T00:00:00Z",
+            id: fileId, appProperties: { deviceId: snapshot.deviceId }, modifiedTime: "2026-09-15T00:00:00Z", version: (frozenVersions ?? versions).get(fileId),
           })) });
-          if (path.startsWith("/drive/v3/files/")) return Response.json(visible.get(path.split("/").at(-1)));
+          if (path.startsWith("/drive/v3/files/")) { downloads += 1; return Response.json(visible.get(path.split("/").at(-1))); }
           if (path.startsWith("/upload/drive/v3/files")) {
             const fileId = path.split("/")[5] || `file-${++serial}`;
             return new Response(null, { headers: { Location: `https://mock.test/session/${fileId}` } });
@@ -352,6 +366,7 @@ function syncLab() {
             const snapshot = JSON.parse(init.body);
             parseSyncWorkspace(snapshot.workspace);
             files.set(fileId, snapshot);
+            versions.set(fileId, String(Number(versions.get(fileId) || 0) + 1));
             uploads += 1;
             return Response.json({ id: fileId });
           }
@@ -359,6 +374,9 @@ function syncLab() {
         },
       };
       let controller = createDriveSync(options);
+      device.stop = () => controller.stop();
+      device.start = () => controller.start();
+      device.schedule = (...args) => controller.schedule(...args);
       device.restart = () => { controller.stop(); controller = createDriveSync(options); };
       device.sync = async (success = true) => {
         assert.equal(await controller.syncNow(), success, device.errors.at(-1)?.message);
@@ -372,6 +390,177 @@ function syncLab() {
       return device;
     },
   };
+}
+
+// Use the actual app guards, not an always-idle approximation of the UI.
+const appSource = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+const ui = {
+  storageReady: true, workspaceActionPending: false, boardDirty: false, mode: null,
+  selectedIds: new Set(["note"]), selectedEdgeId: "edge", keyboardLinkSourceIds: null,
+  menu: { hidden: true }, boardPicker: { classList: { contains: () => false } },
+  searchPanel: { hidden: true }, boardTitleEditor: { hidden: true }, edgeLabelEditor: { hidden: true },
+  colorPalette: { hidden: true }, editing: false,
+};
+ui.document = { querySelector: (selector) => selector === ".node.editing" && ui.editing ? {} : null };
+const guardSource = ["canSyncDriveWorkspace", "canApplyDriveWorkspace"].map((name) => appSource.match(new RegExp(`function ${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))[0]).join("\n");
+const appGuard = (name) => vm.runInNewContext(`${guardSource}; ${name}`, ui);
+assert.equal(appGuard("canApplyDriveWorkspace")(), true, "Selection alone must not indefinitely block receiving remote changes");
+ui.editing = true;
+assert.equal(appGuard("canApplyDriveWorkspace")(), false, "Applying still waits for the active editor");
+assert.equal(appGuard("canSyncDriveWorkspace")(), true, "Persisted input can upload while editing");
+ui.workspaceActionPending = true;
+assert.equal(appGuard("canSyncDriveWorkspace")(), false, "Account and workspace changes remain protected");
+
+const background = syncLab();
+const tablet = background.device("tablet"), desktop = background.device("desktop");
+await tablet.sync(); await desktop.sync(); await tablet.sync();
+tablet.canApply = false;
+tablet.edit("saved while editing");
+await tablet.sync();
+await desktop.sync();
+assert.equal(desktop.workspace.boards[0].board.nodes[0].text, "saved while editing", "Upload does not require closing the editor or opening the logo menu");
+desktop.edit("desktop concurrent edit");
+await desktop.sync();
+tablet.edit("tablet concurrent edit");
+const tabletBeforeMerge = await fingerprintSyncWorkspace(tablet.workspace);
+await tablet.sync(false);
+assert.equal(await fingerprintSyncWorkspace(tablet.workspace), tabletBeforeMerge, "A deferred remote merge must not touch an active editor");
+const pendingHeads = cloudSnapshotHeads([...background.files.values()]);
+assert.equal(pendingHeads.length, 2, "Uploading local edits must not acknowledge unapplied remote changes");
+assert.deepEqual(new Set(pendingHeads.map((item) => item.workspace.boards[0].board.nodes[0].text)), new Set(["desktop concurrent edit", "tablet concurrent edit"]));
+const pendingUploads = background.uploads;
+await tablet.sync(false);
+assert.equal(background.uploads, pendingUploads, "Waiting for editing to end must not repeatedly upload the same local branch");
+assert.equal(tablet.conflicts, 0, "Only report a conflict copy after it has actually been applied");
+tablet.restart();
+tablet.canApply = true;
+await tablet.sync(); await desktop.sync();
+assert.equal(tablet.workspace.boards.length, 2);
+assert.equal(await fingerprintSyncWorkspace(tablet.workspace), await fingerprintSyncWorkspace(desktop.workspace));
+const settledUploads = background.uploads;
+await tablet.sync(); await desktop.sync();
+const settledDownloads = background.downloads;
+await tablet.sync(); await desktop.sync();
+assert.equal(background.uploads, settledUploads);
+assert.equal(background.downloads, settledDownloads, "Unchanged versioned snapshots must not download again");
+const requestsBeforeAction = tablet.requests.length;
+tablet.canSync = false;
+await tablet.sync(false);
+assert.equal(tablet.requests.length, requestsBeforeAction, "A critical workspace action blocks all sync work");
+tablet.stop(); desktop.stop();
+
+const cacheChecks = syncLab(), cachedDevice = cacheChecks.device("cache");
+await cachedDevice.sync(); await cachedDevice.sync();
+const cacheFile = [...cacheChecks.files.keys()][0];
+const warmDownloads = cacheChecks.downloads;
+await cachedDevice.sync();
+assert.equal(cacheChecks.downloads, warmDownloads);
+cacheChecks.files.get(cacheFile).parents = [42];
+cacheChecks.versions.set(cacheFile, "2");
+const uploadsBeforeCacheError = cacheChecks.uploads;
+await cachedDevice.sync(false);
+assert.equal(cachedDevice.errors.at(-1)?.syncStage, "download", "A changed file version must be downloaded and validated again");
+assert.equal(cacheChecks.uploads, uploadsBeforeCacheError);
+cacheChecks.files.get(cacheFile).parents = [];
+await cachedDevice.sync();
+cacheChecks.versions.delete(cacheFile);
+const downloadsWithoutVersion = cacheChecks.downloads;
+await cachedDevice.sync(); await cachedDevice.sync();
+assert.equal(cacheChecks.downloads, downloadsWithoutVersion + 2, "Missing versions must never reuse cached content");
+cachedDevice.stop();
+
+const incomplete = syncLab(), uncheckpointed = incomplete.device("uncheckpointed"), other = incomplete.device("other");
+await uncheckpointed.sync(); await other.sync();
+uncheckpointed.edit("uploaded before checkpoint failure");
+const normalSave = uncheckpointed.storage.setItem.bind(uncheckpointed.storage);
+uncheckpointed.storage.setItem = (key, value) => {
+  if (key.startsWith("scattered-drive-sync-v1:")) throw new Error("storage full");
+  normalSave(key, value);
+};
+await uncheckpointed.sync(false);
+uncheckpointed.storage.setItem = normalSave;
+other.edit("other edit"); await other.sync();
+uncheckpointed.edit("new edit after failed checkpoint");
+uncheckpointed.canApply = false;
+const beforeBlockedUpload = incomplete.uploads;
+await uncheckpointed.sync(false);
+assert.equal(incomplete.uploads, beforeBlockedUpload, "An upload without a saved checkpoint cannot be overwritten by a deferred branch");
+uncheckpointed.canApply = true;
+await uncheckpointed.sync(); await other.sync();
+assert.ok(other.workspace.boards.some((item) => item.board.nodes[0].text === "new edit after failed checkpoint"));
+assert.ok(other.workspace.boards.some((item) => item.board.nodes[0].text === "other edit"));
+uncheckpointed.stop(); other.stop();
+
+// A long-running editor must keep acknowledged dormant files pinned without
+// acknowledging another device's concurrent edit before actually applying it.
+const busyRun = syncLab();
+const busyWriter = busyRun.device("busy-writer"), busyPeer = busyRun.device("busy-peer"), oldPeer = busyRun.device("old-peer");
+await busyWriter.sync(); await busyPeer.sync(); await oldPeer.sync(); await busyWriter.sync();
+busyPeer.edit("remote while editing"); await busyPeer.sync();
+busyWriter.canApply = false;
+for (let edit = 0; edit < 65; edit += 1) { busyWriter.edit(`busy-${edit}`); await busyWriter.sync(false); }
+assert.equal(cloudSnapshotHeads([...busyRun.files.values()]).length, 2, "Dormant heads must not replay after the ancestry limit during deferred merges");
+busyWriter.canApply = true;
+await busyWriter.sync(); await busyPeer.sync(); await oldPeer.sync();
+assert.equal(busyWriter.workspace.boards.length, 2);
+assert.deepEqual(new Set(busyWriter.workspace.boards.map((item) => item.board.nodes[0].text)), new Set(["remote while editing", "busy-64"]));
+busyWriter.stop(); busyPeer.stop(); oldPeer.stop();
+
+const busyIndependent = syncLab(), independentEditor = busyIndependent.device("independent-editor");
+independentEditor.workspace.boards.push({ ...structuredClone(independentEditor.workspace.boards[0]), id: "second" });
+const independentPeer = busyIndependent.device("independent-peer", independentEditor.workspace);
+await independentEditor.sync(); await independentPeer.sync(); await independentEditor.sync();
+independentPeer.edit("remote second canvas", "second"); await independentPeer.sync();
+independentEditor.canApply = false;
+for (let edit = 0; edit < 65; edit += 1) { independentEditor.edit(`local first canvas ${edit}`); await independentEditor.sync(false); }
+independentEditor.canApply = true;
+await independentEditor.sync(); await independentPeer.sync();
+assert.equal(independentEditor.workspace.boards.length, 2, "A deferred branch retains its common base even during a long editing session");
+assert.equal(independentEditor.conflicts, 0, "Different-canvas edits are not conflicts");
+assert.equal(independentEditor.workspace.boards.find((item) => item.id === "second").board.nodes[0].text, "remote second canvas");
+independentEditor.stop(); independentPeer.stop();
+
+// Use fake scheduling only here; request and merge checks above use real code.
+const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+const realSetInterval = globalThis.setInterval, realClearInterval = globalThis.clearInterval;
+const timers = new Map(), intervals = new Map();
+let timerSerial = 0;
+globalThis.setTimeout = (fn, delay) => { timers.set(++timerSerial, { fn, delay }); return timerSerial; };
+globalThis.clearTimeout = (id) => timers.delete(id);
+globalThis.setInterval = (fn, delay) => { intervals.set(++timerSerial, { fn, delay }); return timerSerial; };
+globalThis.clearInterval = (id) => intervals.delete(id);
+try {
+  const timed = syncLab(), typing = timed.device("typing");
+  typing.now = 1000;
+  typing.start();
+  assert.equal([...intervals.values()][0].delay, 10_000, "Foreground checks run every ten seconds, not every forty-five");
+  await typing.sync();
+  typing.schedule();
+  const firstTimer = [...timers.keys()][0];
+  assert.equal(timers.get(firstTimer).delay, 800);
+  for (let tick = 1; tick <= 6; tick += 1) { typing.now += 100; typing.schedule(); }
+  assert.ok(timers.has(firstTimer), "Continuing to type must not postpone the existing sync deadline");
+  typing.schedule(0);
+  assert.equal([...timers.values()][0].delay, 0, "Focus/manual sync can move the deadline earlier");
+  await typing.sync();
+  typing.edit("before upload");
+  typing.beforeRequest = (path) => {
+    if (path.startsWith("/session/")) { typing.beforeRequest = null; typing.edit("during upload"); }
+  };
+  await typing.sync();
+  assert.equal(typing.statuses.at(-1), "connected", "An old upload must not label newer saved changes synced");
+  assert.equal(timers.size, 1, "New edits during upload schedule a follow-up");
+  await typing.sync();
+  assert.equal([...timed.files.values()][0].workspace.boards[0].board.nodes[0].text, "during upload");
+  typing.pendingChanges = true;
+  await typing.sync();
+  assert.equal(typing.statuses.at(-1), "connected", "Unsaved input must not be labelled synced either");
+  typing.stop();
+  assert.equal(timers.size, 0);
+  assert.equal(intervals.size, 0);
+} finally {
+  globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
+  globalThis.setInterval = realSetInterval; globalThis.clearInterval = realClearInterval;
 }
 
 const longRun = syncLab();

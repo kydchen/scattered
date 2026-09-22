@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { testEnvironment } from "./test-sharing.mjs";
 import { handleShares } from "./worker/src/shares.js";
 import { blankBoard } from "./model.js";
+import { createCloudSnapshot } from "./sync-model.js";
 
 // Optional browser regression: PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs node --experimental-sqlite test-sharing-browser.mjs
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
@@ -248,6 +249,7 @@ try {
     if (location.origin === "http://localhost:4173") localStorage.setItem("scattered-drive-session-v1", "v1.dGVzdA");
   });
   let driveFails = false;
+  let uiCloudSnapshot = null, remoteSnapshot = null, uiCloudVersion = 0;
   const cors = { "Access-Control-Allow-Origin": "http://localhost:4173", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS", "Access-Control-Expose-Headers": "Location" };
   await uiContext.route("https://sync.scatterednote.space/token", (route) => route.fulfill({ headers: cors, json: { accessToken: "test-only", expiresIn: 3600 } }));
   await uiContext.route("https://www.googleapis.com/**", async (route) => {
@@ -255,8 +257,18 @@ try {
     if (href.includes("/about?")) return route.fulfill({ headers: cors, json: { user: { permissionId: "ui-test", displayName: "Alex", emailAddress: "alex@example.test", photoLink: "https://lh3.googleusercontent.com/test-avatar.svg" } } });
     if (driveFails) return route.fulfill({ status: 503, headers: cors, body: "unavailable" });
     if (href.includes("/upload/")) return route.fulfill({ status: 200, headers: { ...cors, Location: "https://www.googleapis.com/test-upload" }, body: "" });
-    if (href.endsWith("/test-upload")) return route.fulfill({ headers: cors, json: { id: "ui-cloud-file", version: "1" } });
-    return route.fulfill({ headers: cors, json: { files: [] } });
+    if (href.endsWith("/test-upload")) {
+      uiCloudSnapshot = route.request().postDataJSON();
+      uiCloudVersion += 1;
+      return route.fulfill({ headers: cors, json: { id: "ui-cloud-file", version: String(uiCloudVersion) } });
+    }
+    if (href.includes("/files/ui-cloud-file?alt=media")) return route.fulfill({ headers: cors, json: uiCloudSnapshot });
+    if (href.includes("/files/remote-file?alt=media")) return route.fulfill({ headers: cors, json: remoteSnapshot });
+    const files = [
+      ...(uiCloudSnapshot ? [{ id: "ui-cloud-file", version: String(uiCloudVersion), appProperties: { deviceId: uiCloudSnapshot.deviceId } }] : []),
+      ...(remoteSnapshot ? [{ id: "remote-file", version: "1", appProperties: { deviceId: remoteSnapshot.deviceId } }] : []),
+    ];
+    return route.fulfill({ headers: cors, json: { files } });
   });
   await uiContext.route("https://lh3.googleusercontent.com/test-avatar.svg", (route) => route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="#5679a8"/><circle cx="32" cy="24" r="10" fill="#dfeaf5"/><path d="M12 58a20 20 0 0 1 40 0" fill="#dfeaf5"/></svg>' }));
   const ui = await uiContext.newPage();
@@ -280,6 +292,24 @@ try {
   const first = await readWorkspace();
   assert.equal(first.boards.length, baseline.boards.length + 1);
   assert.deepEqual(first.boards.find((item) => item.id === baseline.activeId).board, baseline.boards.find((item) => item.id === baseline.activeId).board, "Import preserves the previously active canvas");
+  // The actual editor must upload without opening the logo/menu or losing focus.
+  await ui.locator('.node[data-id="one"]').dblclick();
+  const backgroundUpload = ui.waitForResponse((response) => response.url().endsWith("/test-upload")
+    && response.request().postDataJSON().workspace.boards.some((item) => item.id === first.activeId && item.board.nodes.some((node) => node.text === "Saved without opening the logo")));
+  await ui.locator(".node.editing .node-editor").fill("Saved without opening the logo");
+  await backgroundUpload;
+  assert.equal(await ui.locator("#board-picker").isVisible(), false);
+  assert.equal(await ui.locator(".node.editing .node-editor").inputValue(), "Saved without opening the logo");
+  assert.equal(await ui.locator(".node.editing .node-editor").evaluate((element) => element === document.activeElement), true);
+  await ui.locator(".node.editing .node-editor").press("Meta+Enter");
+  await ui.waitForFunction(() => document.querySelector('#drive-sync-button[data-status="synced"]'));
+  assert.equal(await ui.locator('.node[data-id="one"]').evaluate((element) => element.classList.contains("selected")), true);
+  const remoteWorkspace = structuredClone(uiCloudSnapshot.workspace);
+  remoteWorkspace.boards.find((item) => item.id === first.activeId).board.nodes.find((node) => node.id === "one").text = "Changed on another device";
+  remoteSnapshot = await createCloudSnapshot(remoteWorkspace, { deviceId: "remote-ui-device", parents: [uiCloudSnapshot] });
+  await ui.waitForFunction(() => document.querySelector('.node[data-id="one"] .node-text')?.textContent === "Changed on another device", null, { timeout: 15_000 });
+  assert.equal(await ui.locator('.node[data-id="one"]').evaluate((element) => element.classList.contains("selected")), true, "A selected card receives remote changes without losing selection");
+  assert.equal(await ui.locator("#board-picker").isVisible(), false);
   await upload("小组讨论");
   await ui.waitForFunction(() => document.querySelector("#board-title").textContent !== "小组讨论");
   const second = await readWorkspace();
@@ -382,7 +412,7 @@ try {
   await author.waitForFunction(() => document.querySelector("#share-status:not(.sr-only)")?.textContent.includes("Too many"));
   assert.match(await author.locator("#share-status").textContent(), /分享请求/);
   assert.equal(errors.length, 0, errors.join("\n"));
-  console.log("browser sharing checks passed: shared viewer chrome, bilingual icons, themes, fullscreen, quiet healthy state, visible failures, compact dialog, opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline recovery, mobile layout, revocation");
+  console.log("browser sharing checks passed: background Drive upload while editing with the logo closed, selected-card remote updates, shared viewer chrome, bilingual icons, themes, fullscreen, quiet healthy state, visible failures, compact dialog, opt-in, live edits, stable URL, framing, XSS, no workspace writes, offline recovery, mobile layout, revocation");
 } finally {
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));
