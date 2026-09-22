@@ -1015,10 +1015,11 @@ function onPointerUp(event) {
       if (currentMode.dropTargetId) {
         restoreDraggedNodes(currentMode);
         const to = currentMode.dropTargetId;
-        const sources = currentMode.positions.map((position) => position.id).filter((from) =>
+        const sources = currentMode.positions.map((position) => position.id);
+        const missing = sources.filter((from) =>
           !board.edges.some((edge) => (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from)));
-        // Preserve each dragged note as the source, including when adding arrows later.
-        board.edges = sources.reduce((edges, from) => toggleConnectionsToTarget(edges, [from], to), board.edges);
+        // Complete a partial group; disconnect a fully connected group. New edges stay source-to-target.
+        board.edges = (missing.length ? missing : sources).reduce((edges, from) => toggleConnectionsToTarget(edges, [from], to), board.edges);
         queueEdgeRender();
         announce(t("connectionUpdated"));
       }

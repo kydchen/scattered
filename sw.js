@@ -1,5 +1,5 @@
-const CACHE = "scattered-v83";
-const ASSETS = ["./", "./index.html", "./about.html", "./privacy.html", "./styles.css?v=83", "./sharing.css?v=78", "./model.js", "./workspace.js?v=78", "./sync-model.js?v=79", "./drive-sync.js?v=81", "./sync-config.js?v=68", "./svg-export.js", "./svg-export.js?v=75", "./i18n.js?v=82", "./app.js?v=83", "./share-ui.js?v=82", "./live-share.js", "./share-model.js", "./share-config.js", "./present.html", "./present.js?v=82", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+const CACHE = "scattered-v84";
+const ASSETS = ["./", "./index.html", "./about.html", "./privacy.html", "./styles.css?v=83", "./sharing.css?v=78", "./model.js", "./workspace.js?v=78", "./sync-model.js?v=79", "./drive-sync.js?v=81", "./sync-config.js?v=68", "./svg-export.js", "./svg-export.js?v=75", "./i18n.js?v=82", "./app.js?v=84", "./share-ui.js?v=82", "./live-share.js", "./share-model.js", "./share-config.js", "./present.html", "./present.js?v=82", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

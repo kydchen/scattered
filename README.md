@@ -21,7 +21,7 @@ You can use Scattered directly in a browser, but installing the web app gives it
 - Create and edit notes with a double-click or double-tap
 - Move notes freely and resize long notes
 - Connect notes, cycle arrow direction, and label connections; drag a connector onto empty canvas to create the next linked note
-- Drop a note or selection onto another note to connect them; dragged notes turn translucent and return to their original positions on release
+- Drop a note or selection onto another note to connect them, or disconnect if all are already connected; dragged notes turn translucent and return to their original positions on release
 - Lasso, marquee-select, or long-press blank space and drag to select multiple notes; select all, move, or delete together
 - Move, recolor, duplicate, connect, disconnect, or delete a selection together
 - Keep multiple local boards and switch between them from the Scattered mark

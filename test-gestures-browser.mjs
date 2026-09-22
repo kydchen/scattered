@@ -194,7 +194,10 @@ export async function checkCanvasGestures(context) {
     assert.equal(connected.edges[0].to, "b");
     assert.equal(connected.edges[0].arrow, false);
     await dispatch("down", start); await dispatch("move", end); await dispatch("up", end);
-    assert.equal(await page.locator(".edge").count(), 1, "Repeated drops do not remove or duplicate a connection");
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 0);
+    assert.deepEqual(await position("a"), origin, "Dropping an already connected note disconnects and returns it");
+    await page.locator("#undo-button").click();
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 1);
     await dispatch("down", start); await dispatch("move", end);
     const empty = [start[0] + 250, start[1] + 160];
     await dispatch("move", empty);
@@ -227,7 +230,10 @@ export async function checkCanvasGestures(context) {
     await page.waitForTimeout(240);
     assert.deepEqual((await savedBoard()).edges.map(({ from, to }) => [from, to]).sort(), [["a", "c"], ["b", "c"]]);
     await dispatch("down", start); await dispatch("move", drop); await dispatch("up", drop);
-    assert.equal(await page.locator(".edge").count(), 2, "Repeated group drops preserve all existing connections");
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 0);
+    assert.deepEqual({ a: await position("a"), b: await position("b") }, groupOrigin, "Dropping a fully connected group disconnects it and returns all notes");
+    await page.locator("#undo-button").click();
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 2);
 
     const existing = { id: "existing", from: "c", to: "a", arrow: "forward", label: "Keep this" };
     groupBoard.edges = [existing];
@@ -238,6 +244,12 @@ export async function checkCanvasGestures(context) {
     const partial = (await savedBoard()).edges;
     assert.deepEqual(partial.find(edge => edge.id === "existing"), existing, "A group drop preserves existing direction, arrow and label");
     assert.equal(partial.find(edge => edge.id !== "existing").from, "b");
+    await dispatch("down", start); await dispatch("move", drop); await dispatch("up", drop);
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 0);
+    await page.locator("#undo-button").click();
+    await page.waitForFunction(() => document.querySelectorAll(".edge").length === 2);
+    await page.waitForTimeout(240);
+    assert.deepEqual((await savedBoard()).edges, partial, "Undo disconnection restores original IDs, directions and labels");
     await page.locator("#undo-button").click();
     await page.waitForFunction(() => document.querySelectorAll(".edge").length === 1);
     assert.equal(await page.locator(".edge").count(), 1, "The entire group connection is one undo step");
