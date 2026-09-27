@@ -59,6 +59,15 @@ export async function checkCanvasGestures(context) {
     assert.equal(await page.locator("#lasso-path").isVisible(), false);
     await touch("touchMove", [[330, 300]]);
     assert.equal(await page.locator("#lasso-path").getAttribute("d"), "M 190 190 L 330 190 L 330 300 L 190 300 Z", "Actual selection still starts at the finger's original position");
+    assert.deepEqual(await selected(), ["b"], "Touch marquee highlights before the finger is released");
+    assert.equal(await page.locator("#delete-selection").isDisabled(), true, "Preview does not commit the selection");
+    assert.equal(await page.locator('.node[data-id="b"] .link-handle').isVisible(), false, "Preview shows no per-note controls");
+    const [centerX] = await center("b");
+    await touch("touchMove", [[centerX - 10, 300]]);
+    assert.deepEqual(await selected(), [], "Touching the card's edge without its center does not select it");
+    await touch("touchMove", [[centerX + 10, 300]]);
+    assert.deepEqual(await selected(), ["b"], "Including the center is enough without enclosing the whole card");
+    await page.screenshot({ path: `/tmp/scattered-selection-preview-${theme}.png` });
     await page.waitForFunction(() => getComputedStyle(document.querySelector("#touch-selection-cue")).opacity === "0");
     await touch("touchEnd");
     assert.equal(await cue.isVisible(), false);
@@ -126,6 +135,30 @@ export async function checkCanvasGestures(context) {
   await page.locator("#select-all").click();
   assert.deepEqual(await selected(), ["a", "b", "c"], "Hold and release blank space can select all without drawing a box");
 
+  for (const cancel of ["touchCancel", "pinch", "blur"]) {
+    await reset(fixture(true));
+    await touch("touchStart", [[190, 190]]);
+    await cue.waitFor({ state: "visible" });
+    await touch("touchMove", [[330, 300]]);
+    await touch("touchEnd");
+    assert.deepEqual(await selected(), ["b"]);
+    await touch("touchStart", [[25, 400, 0]]);
+    await cue.waitFor({ state: "visible" });
+    await touch("touchMove", [[180, 500, 0]]);
+    assert.deepEqual(await selected(), ["c"], "Replacement preview temporarily hides the previous selection");
+    if (cancel === "pinch") {
+      await touch("touchStart", [[180, 500, 0], [280, 550, 1]]);
+      await touch("touchEnd");
+    } else if (cancel === "blur") {
+      await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      await touch("touchEnd");
+    } else await touch("touchCancel");
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    assert.deepEqual(await selected(), ["b"], `${cancel}: cancellation restores the committed selection`);
+    assert.equal(await page.locator("#lasso-path").isVisible(), false);
+    assert.equal(await page.locator("#selection-bar").evaluate(element => element.inert), false);
+  }
+
   await reset(fixture(true));
   const world = () => page.locator("#world").evaluate(element => element.style.transform);
   const viewBefore = await world();
@@ -153,15 +186,19 @@ export async function checkCanvasGestures(context) {
   assert.equal(await cue.isVisible(), false, "Pinching also removes an already visible cue");
   await touch("touchEnd");
 
-  await reset(fixture(true));
+  const edgeBoard = fixture(true);
+  edgeBoard.nodes.push({ ...edgeBoard.nodes[1], id: "offscreen", x: 450 });
+  await reset(edgeBoard);
   await touch("touchStart", [[25, 190]]);
   await cue.waitFor({ state: "visible" });
   const anchored = await world();
   await touch("touchMove", [[380, 600]]);
   await page.waitForFunction(before => document.querySelector("#world").style.transform !== before, anchored);
   assert.equal(await page.locator("#lasso-path").isVisible(), true, "Selection extends while edge panning");
+  await page.locator('.node[data-id="offscreen"].selected').waitFor();
   await touch("touchCancel");
   assert.equal(await page.locator("#lasso-path").isVisible(), false);
+  assert.deepEqual(await selected(), [], "Edge-pan preview is discarded on cancellation");
 
   await page.setViewportSize({ width: 1280, height: 800 });
   for (const pointerType of ["mouse", "touch", "pen"]) {
@@ -262,9 +299,24 @@ export async function checkCanvasGestures(context) {
 
   // Existing desktop marquee and keyboard select-all still use the same selection.
   await reset();
-  await page.mouse.move(75, 190); await page.mouse.down(); await page.mouse.move(700, 300); await page.mouse.up();
+  await page.mouse.move(75, 190); await page.mouse.down(); await page.mouse.move(700, 300);
+  await page.waitForFunction(() => document.querySelectorAll(".node.selected").length === 2);
+  assert.deepEqual(await selected(), ["a", "b"], "Mouse preview matches the eventual selection");
+  await page.mouse.up();
   assert.equal(await cue.isVisible(), false, "Mouse selection does not show the touch cue");
   assert.deepEqual(await selected(), ["a", "b"]);
+  await page.keyboard.down("Shift");
+  await page.mouse.move(75, 190); await page.mouse.down(); await page.mouse.move(700, 500);
+  await page.waitForFunction(() => document.querySelectorAll(".node.selected").length === 1);
+  assert.deepEqual(await selected(), ["c"], "Shift preview toggles against the original selection");
+  await page.mouse.move(710, 500);
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  assert.deepEqual(await selected(), ["c"], "Repeated preview frames never toggle the selection again");
+  await page.keyboard.press("Delete");
+  assert.equal(await page.locator(".node").count(), 3, "Keyboard edits cannot act on the old selection during preview");
+  await page.keyboard.press("Escape");
+  await page.keyboard.up("Shift"); await page.mouse.up();
+  assert.deepEqual(await selected(), ["a", "b"], "Escape restores selection and prevents a later release from committing");
   await page.keyboard.press("Control+a");
   assert.deepEqual(await selected(), ["a", "b", "c"]);
   await page.keyboard.press("Escape");
@@ -278,10 +330,29 @@ export async function checkCanvasGestures(context) {
     }));
     send("pointerdown", 75, 190);
     for (const [x, y] of [[700, 190], [700, 300], [75, 300], [75, 190]]) send("pointermove", x, y);
-    send("pointerup", 75, 190);
   });
+  await page.waitForFunction(() => document.querySelectorAll(".node.selected").length === 2);
+  assert.deepEqual(await selected(), ["a", "b"], "Pen lasso highlights before release");
+  await page.dispatchEvent("#viewport", "pointerup", { pointerId: 77, pointerType: "pen", bubbles: true, clientX: 75, clientY: 190 });
   assert.deepEqual(await selected(), ["a", "b"], "Pen lasso still selects directly without a hold");
   assert.equal(await cue.isVisible(), false, "Pen selection does not show the touch cue");
+
+  for (const scale of [1, 0.5, 0.2]) {
+    await reset({ ...fixture(), view: { x: 220, y: 180, scale } });
+    const [x, y] = await center("a");
+    // Overview cards keep a minimum painted size, so start outside that too.
+    const start = [x - Math.max(110 * scale, 45), y - Math.max(45 * scale, 30)];
+    assert.equal(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest(".node"), start), false);
+    await page.mouse.move(...start); await page.mouse.down();
+    await page.mouse.move(x - 2, y + 35 * scale);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    assert.deepEqual(await selected(), [], `At scale ${scale}, an edge overlap alone is not enough`);
+    await page.mouse.move(x + 2, y + 35 * scale);
+    await page.waitForFunction(() => document.querySelectorAll(".node.selected").length === 1);
+    assert.deepEqual(await selected(), ["a"], `At scale ${scale}, preview uses the same center as commit`);
+    await page.mouse.up();
+    assert.deepEqual(await selected(), ["a"]);
+  }
   await context.close();
-  console.log("gesture checks passed: native touch marquee, selection edits, group move, select-all, bulk delete/undo, pan/pinch, edge pan, mouse/touch/pen drop-link and cancellation");
+  console.log("gesture checks passed: live touch/mouse/pen selection preview, cancellation, zoom and edge pan, selection edits, group move, select-all, bulk delete/undo, pan/pinch, drop-link and cancellation");
 }

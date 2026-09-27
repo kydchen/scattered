@@ -488,6 +488,11 @@ button {
   display: grid;
 }
 
+#viewport.selection-preview .node :is(.node-actions, .resize-handle, .link-handle) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .node.editing {
   cursor: text;
   touch-action: auto;

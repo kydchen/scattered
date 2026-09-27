@@ -473,16 +473,63 @@ await cachedDevice.sync(); await cachedDevice.sync();
 assert.equal(cacheChecks.downloads, downloadsWithoutVersion + 2, "Missing versions must never reuse cached content");
 cachedDevice.stop();
 
+// One device can lose a committed upload's reply or its local checkpoint.
+// Resuming and continuing that same branch must not invent a second writer.
+for (const failure of ["first-response", "response", "checkpoint"]) {
+  const lab = syncLab(), phone = lab.device(`only-phone-${failure}`);
+  if (failure !== "first-response") await phone.sync();
+  const save = phone.storage.setItem.bind(phone.storage);
+  if (failure === "checkpoint") {
+    phone.storage.setItem = (key, value) => {
+      if (key.startsWith("scattered-drive-sync-v1:") && !JSON.parse(value).pendingUpload) throw new Error("checkpoint interrupted");
+      save(key, value);
+    };
+  } else {
+    phone.respond = (url, init) => {
+      const path = new URL(url).pathname;
+      if (!path.startsWith("/session/")) return;
+      const id = path.split("/").at(-1);
+      lab.files.set(id, JSON.parse(init.body));
+      lab.versions.set(id, String(Number(lab.versions.get(id) || 0) + 1));
+      throw new TypeError("Upload committed, reply lost");
+    };
+  }
+  phone.edit("uploaded before interruption");
+  await phone.sync(false);
+  assert.equal(lab.files.size, 1);
+  assert.equal([...lab.files.values()][0].workspace.boards[0].board.nodes[0].text, "uploaded before interruption");
+  phone.storage.setItem = save;
+  phone.respond = null;
+  phone.restart();
+  phone.edit("continued on the same phone");
+  phone.canApply = false; // Still typing: recovery must not replace the editor.
+  await phone.sync();
+  assert.equal(phone.conflicts, 0, `${failure}: an unacknowledged own upload is not a conflict`);
+  assert.equal(phone.workspace.boards.length, 1);
+  assert.equal([...lab.files.values()][0].workspace.boards[0].board.nodes[0].text, "continued on the same phone");
+  const uploads = lab.uploads;
+  phone.restart(); await phone.sync();
+  assert.equal(lab.uploads, uploads, "A recovered checkpoint settles instead of replaying the upload");
+  phone.stop();
+}
+
 const incomplete = syncLab(), uncheckpointed = incomplete.device("uncheckpointed"), other = incomplete.device("other");
 await uncheckpointed.sync(); await other.sync();
 uncheckpointed.edit("uploaded before checkpoint failure");
 const normalSave = uncheckpointed.storage.setItem.bind(uncheckpointed.storage);
 uncheckpointed.storage.setItem = (key, value) => {
-  if (key.startsWith("scattered-drive-sync-v1:")) throw new Error("storage full");
+  if (key.startsWith("scattered-drive-sync-v1:") && !JSON.parse(value).pendingUpload) throw new Error("storage full");
   normalSave(key, value);
 };
 await uncheckpointed.sync(false);
 uncheckpointed.storage.setItem = normalSave;
+// Older versions did not record upload intent. Without proof, remain conservative.
+for (const [key, value] of uncheckpointed.storage.values) {
+  if (!key.startsWith("scattered-drive-sync-v1:")) continue;
+  const state = JSON.parse(value);
+  delete state.pendingUpload;
+  normalSave(key, JSON.stringify(state));
+}
 other.edit("other edit"); await other.sync();
 uncheckpointed.edit("new edit after failed checkpoint");
 uncheckpointed.canApply = false;
@@ -494,6 +541,63 @@ await uncheckpointed.sync(); await other.sync();
 assert.ok(other.workspace.boards.some((item) => item.board.nodes[0].text === "new edit after failed checkpoint"));
 assert.ok(other.workspace.boards.some((item) => item.board.nodes[0].text === "other edit"));
 uncheckpointed.stop(); other.stop();
+
+const resumed = syncLab(), resumedPhone = resumed.device("resumed-phone"), resumedPeer = resumed.device("resumed-peer");
+await resumedPhone.sync(); await resumedPeer.sync();
+resumedPhone.edit("uploaded before reply loss");
+resumedPhone.respond = (url, init) => {
+  const path = new URL(url).pathname;
+  if (!path.startsWith("/session/")) return;
+  const id = path.split("/").at(-1);
+  resumed.files.set(id, JSON.parse(init.body));
+  resumed.versions.set(id, String(Number(resumed.versions.get(id)) + 1));
+  throw new TypeError("Reply lost");
+};
+await resumedPhone.sync(false);
+resumedPhone.respond = null;
+await resumedPeer.sync();
+resumedPeer.edit("genuine peer edit"); await resumedPeer.sync();
+resumedPhone.restart(); resumedPhone.edit("genuine phone edit");
+await resumedPhone.sync(); await resumedPeer.sync();
+assert.equal(resumedPhone.workspace.boards.length, 2, "Recovery must not acknowledge the peer's subsequent edit");
+assert.deepEqual(new Set(resumedPhone.workspace.boards.map(item => item.board.nodes[0].text)), new Set(["genuine phone edit", "genuine peer edit"]));
+assert.equal(resumedPhone.conflicts, 1);
+assert.equal(await fingerprintSyncWorkspace(resumedPhone.workspace), await fingerprintSyncWorkspace(resumedPeer.workspace));
+resumedPhone.stop(); resumedPeer.stop();
+
+const fullStorageLab = syncLab(), fullStoragePhone = fullStorageLab.device("full-storage");
+await fullStoragePhone.sync();
+const uploadsBeforeFullStorage = fullStorageLab.uploads;
+const saveBeforeFullStorage = fullStoragePhone.storage.setItem.bind(fullStoragePhone.storage);
+fullStoragePhone.storage.setItem = (key, value) => {
+  if (key.startsWith("scattered-drive-sync-v1:")) throw new Error("storage full");
+  saveBeforeFullStorage(key, value);
+};
+fullStoragePhone.edit("local text with no room for upload intent");
+await fullStoragePhone.sync(false);
+assert.equal(fullStorageLab.uploads, uploadsBeforeFullStorage, "Failure to record intent must prevent the upload, not leave an untraceable cloud commit");
+fullStoragePhone.storage.setItem = saveBeforeFullStorage;
+await fullStoragePhone.sync();
+assert.equal(fullStoragePhone.conflicts, 0);
+assert.equal(fullStoragePhone.workspace.boards.length, 1);
+fullStoragePhone.stop();
+
+const unmatched = syncLab(), unmatchedPhone = unmatched.device("unmatched-phone");
+await unmatchedPhone.sync();
+unmatchedPhone.edit("local continuation");
+unmatched.failNextUpload();
+await unmatchedPhone.sync(false);
+const pendingState = JSON.parse([...unmatchedPhone.storage.values]
+  .find(([key]) => key.startsWith("scattered-drive-sync-v1:"))[1]);
+const [unmatchedFileId, unmatchedSnapshot] = [...unmatched.files][0];
+// A matching ID/device with different content is not proof of our upload.
+unmatchedSnapshot.snapshotId = pendingState.pendingUpload.snapshotId;
+unmatchedSnapshot.workspace.boards[0].board.nodes[0].text = "different cloud content";
+unmatched.versions.set(unmatchedFileId, "2");
+unmatchedPhone.restart(); await unmatchedPhone.sync();
+assert.equal(unmatchedPhone.workspace.boards.length, 2);
+assert.deepEqual(new Set(unmatchedPhone.workspace.boards.map(item => item.board.nodes[0].text)), new Set(["local continuation", "different cloud content"]));
+unmatchedPhone.stop();
 
 // A long-running editor must keep acknowledged dormant files pinned without
 // acknowledging another device's concurrent edit before actually applying it.

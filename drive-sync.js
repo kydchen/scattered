@@ -240,7 +240,26 @@ export function createDriveSync(options) {
       .sort((left, right) => String(right.modifiedTime).localeCompare(String(left.modifiedTime)))[0] || null;
     const ownSnapshot = snapshots.find((item) => item.file.id === ownFile?.id);
     const migrateLegacyState = !boundAccountKey;
-    const state = readState(storage, driveAccountKey, migrateLegacyState);
+    let state = readState(storage, driveAccountKey, migrateLegacyState);
+    const pending = state.pendingUpload;
+    const committed = pending && snapshots.find((item) => item.snapshotId === pending.snapshotId
+      && item.deviceId === deviceId && item.file.appProperties?.deviceId === deviceId);
+    if (committed && await fingerprintSyncWorkspace(committed.workspace) === pending.fingerprint) {
+      // The upload reached Drive before its reply/checkpoint reached this browser.
+      // Only a matching, locally recorded upload can advance our merge base.
+      ensureSyncActive(generation);
+      state = stateFromSnapshot(committed, pending.fingerprint, committed.file.id);
+      saveState(storage, state, driveAccountKey, migrateLegacyState);
+    }
+
+    async function publishSnapshot(snapshot, fingerprint) {
+      ensureSyncActive(generation);
+      // Persist intent first. If this fails, do not create an untraceable upload.
+      saveState(storage, { ...state, pendingUpload: { snapshotId: snapshot.snapshotId, fingerprint } }, driveAccountKey, migrateLegacyState);
+      const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
+      ensureSyncActive(generation);
+      saveState(storage, stateFromSnapshot(snapshot, fingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
+    }
 
     if (heads.length === 0) {
       syncStage = "snapshot";
@@ -250,10 +269,7 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
-      ensureSyncActive(generation);
-      const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
-      ensureSyncActive(generation);
-      saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
+      await publishSnapshot(snapshot, localFingerprint);
       return { conflicts: 0, fingerprint: localFingerprint };
     }
 
@@ -311,10 +327,7 @@ export function createDriveSync(options) {
             ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
           });
           syncStage = "upload";
-          ensureSyncActive(generation);
-          const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
-          ensureSyncActive(generation);
-          saveState(storage, stateFromSnapshot(snapshot, localFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
+          await publishSnapshot(snapshot, localFingerprint);
         }
         throw busyError();
       }
@@ -332,10 +345,7 @@ export function createDriveSync(options) {
         ancestorIds: state.lastSnapshotId ? [state.lastSnapshotId, ...(state.ancestors || [])] : [],
       });
       syncStage = "upload";
-      ensureSyncActive(generation);
-      const uploaded = await uploadSnapshot(snapshot, ownFile?.id);
-      ensureSyncActive(generation);
-      saveState(storage, stateFromSnapshot(snapshot, nextFingerprint, uploaded.id), driveAccountKey, migrateLegacyState);
+      await publishSnapshot(snapshot, nextFingerprint);
     }
     // Keep the local merge base tied to our own stored checkpoint, even when
     // another device publishes an identical workspace. Otherwise a dormant
@@ -602,6 +612,11 @@ function readState(storage, accountKey, allowLegacy = false) {
           : []
       )).slice(0, 8) : [],
       fileId: typeof value.fileId === "string" ? value.fileId : null,
+      pendingUpload: validCloudToken(value.pendingUpload?.snapshotId)
+        && typeof value.pendingUpload?.fingerprint === "string"
+        && /^[a-f0-9]{64}$/.test(value.pendingUpload.fingerprint)
+        ? { snapshotId: value.pendingUpload.snapshotId, fingerprint: value.pendingUpload.fingerprint }
+        : null,
     };
   } catch {
     return emptyState();

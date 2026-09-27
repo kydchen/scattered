@@ -42,6 +42,8 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 | Touch only | Long-press blank space and drag to box-select, or long-press a note and tap others; ordinary dragging pans, two fingers zoom | Select all from the selection bar; drag any selected note to move the group |
 | Keyboard + mouse | Shift-click or drag a marquee; hold Space and drag to pan | `N` creates; `Enter/F2` edits; `Space/Shift+Space` selects; arrows move; `L` starts a connection; `Cmd/Ctrl` + `A/C/V/D/F/Z` |
 
+Box and lasso selections highlight notes while you drag, using each note's center rather than requiring the whole card to fit inside. Mouse, touch, and Pencil use the same highlight; release to confirm, or cancel to keep the previous selection.
+
 ## Local data and privacy
 
 Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.

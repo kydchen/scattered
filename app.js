@@ -2,7 +2,7 @@ import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown
 import { createBoardSvg } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseImportedWorkspace, readRecovery, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=78";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=81";
+import { createDriveSync } from "./drive-sync.js?v=85";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=82";
 import { mountLiveSharing } from "./share-ui.js?v=82";
@@ -109,6 +109,7 @@ let connectionStyle = readConnectionStyle();
 let edgeRenderFrame = 0;
 let dragAutoPanFrame = 0;
 let dragAutoPanAt = 0;
+let selectionPreviewFrame = 0;
 let revealMotionTimer = null;
 let revealViewportFrame = 0;
 let palmGuardUntil = 0;
@@ -2330,12 +2331,18 @@ function selectAllNodes(event) {
   updateSelection();
 }
 
-function updateSelection() {
-  const primaryId = selectedIds.values().next().value;
+function paintSelection(ids) {
+  const primaryId = ids.values().next().value;
   nodeElements.forEach((element, nodeId) => {
-    const selected = selectedIds.has(nodeId);
+    const selected = ids.has(nodeId);
     element.classList.toggle("selected", selected);
     element.classList.toggle("selection-primary", selected && nodeId === primaryId);
+  });
+}
+
+function updateSelection() {
+  paintSelection(selectedIds);
+  nodeElements.forEach((element, nodeId) => {
     const node = findNode(nodeId, false);
     if (node) updateNodeAccessibility(element, node);
   });
@@ -2694,6 +2701,7 @@ function applyView() {
   arrowMarker.setAttribute("markerWidth", markerSize);
   arrowMarker.setAttribute("markerHeight", markerSize);
   positionEdgeControls();
+  queueSelectionPreview();
 }
 
 function fitBoard() {
@@ -2730,6 +2738,12 @@ function boardBounds() {
 
 function onKeyDown(event) {
   if (document.querySelector("dialog[open]")) return;
+  if (["lasso", "marquee"].includes(mode?.type)) {
+    // A preview is not committed: do not edit the old selection behind it.
+    event.preventDefault();
+    if (event.key === "Escape") cancelGesture();
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
     openSearch(event);
     return;
@@ -3280,16 +3294,34 @@ function showSelectionPath(points) {
   touchSelectionCue.classList.add("fading");
   lassoPath.setAttribute("d", `${points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")} Z`);
   lassoPath.toggleAttribute("hidden", false);
+  queueSelectionPreview();
 }
 
-function finishLasso(points, toggle = selectionMode) {
-  if (points.length < 3) return;
-  const enclosed = board.nodes.flatMap((node) => {
+function enclosedNodeIds(points) {
+  return board.nodes.flatMap((node) => {
     const rect = nodeElements.get(node.id)?.getBoundingClientRect();
     if (!rect) return [];
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     return pointInPolygon(center, points) ? [node.id] : [];
   });
+}
+
+function queueSelectionPreview() {
+  if (selectionPreviewFrame || !mode?.moved || !["lasso", "marquee"].includes(mode.type)) return;
+  selectionPreviewFrame = requestAnimationFrame(() => {
+    selectionPreviewFrame = 0;
+    // Read all bounds before painting, and always start from the committed set.
+    const next = mode.points.length < 3 ? selectedIds
+      : applyLassoSelection(selectedIds, enclosedNodeIds(mode.points), mode.toggle);
+    viewport.classList.add("selection-preview");
+    selectionBar.inert = true;
+    paintSelection(next);
+  });
+}
+
+function finishLasso(points, toggle = selectionMode) {
+  if (points.length < 3) return;
+  const enclosed = enclosedNodeIds(points);
   if (enclosed.length === 0 && toggle) return;
   const nextSelection = applyLassoSelection(selectedIds, enclosed, toggle);
   selectedIds.clear();
@@ -3299,6 +3331,11 @@ function finishLasso(points, toggle = selectionMode) {
 }
 
 function hideLasso() {
+  cancelAnimationFrame(selectionPreviewFrame);
+  selectionPreviewFrame = 0;
+  if (viewport.classList.contains("selection-preview")) paintSelection(selectedIds);
+  viewport.classList.remove("selection-preview");
+  selectionBar.inert = false;
   touchSelectionCue.toggleAttribute("hidden", true);
   lassoPath.toggleAttribute("hidden", true);
   lassoPath.removeAttribute("d");
