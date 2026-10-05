@@ -544,6 +544,13 @@ searchPreviousButton.addEventListener("click", () => moveSearch(-1));
 searchNextButton.addEventListener("click", () => moveSearch(1));
 searchCloseButton.addEventListener("click", () => closeSearch(true));
 
+document.addEventListener("selectionchange", (event) => {
+  // Older WebKit reports native textarea caret movement on the document.
+  if (event.target === document && document.activeElement?.matches(".node.editing .node-editor")) {
+    revealEditingNode();
+  }
+});
+
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
@@ -2144,6 +2151,8 @@ function renderNode(node, isNew = false) {
   });
   editor.addEventListener("blur", () => finishEditing(node.id));
   editor.addEventListener("select", revealEditingNode);
+  // Touch caret movement need not emit input, keyup, or select.
+  editor.addEventListener("selectionchange", revealEditingNode);
   editor.addEventListener("keyup", revealEditingNode);
   nodeElements.set(node.id, element);
   nodeLayer.append(element);

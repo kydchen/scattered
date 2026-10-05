@@ -7,13 +7,26 @@ import { blankBoard } from "./model.js";
 // PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs BROWSER=webkit node test-reliability-browser.mjs
 const engines = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const engine = process.env.BROWSER || "chromium";
+let stallNetwork = false;
+const stalledRequests = new Set();
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1) || "index.html";
   if (!/^[a-z0-9-]+\.(html|js|css|svg|png|webmanifest)$/.test(name)) return response.writeHead(404).end();
+  if (stallNetwork && name !== "sw.js") {
+    await new Promise(resolve => {
+      const release = () => { stalledRequests.delete(release); resolve(); };
+      stalledRequests.add(release);
+      response.once("close", release);
+    });
+    if (response.destroyed) return;
+  }
   try {
-    const content = name === "sync-config.js"
+    let content = name === "sync-config.js"
       ? 'export const DRIVE_SYNC_API = "https://broker.invalid";'
       : await readFile(new URL(name, import.meta.url));
+    // WebKit's service-worker-controlled requests can bypass Playwright routes.
+    // Keep telemetry out of this synthetic fixture instead of masking its errors.
+    if (name === "index.html") content = content.toString().replace(/<!-- Cloudflare Web Analytics -->[\s\S]*?<!-- End Cloudflare Web Analytics -->/, "");
     response.writeHead(200, { "Content-Type": { js: "text/javascript", html: "text/html", css: "text/css", svg: "image/svg+xml", png: "image/png" }[name.split(".").pop()] || "application/json" });
     response.end(content);
   } catch { response.writeHead(404).end(); }
@@ -26,7 +39,7 @@ const note = (id, x, y, text = id) => ({ id, x, y, text, width: 218, color: "pla
 async function check(name, run, options = {}) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block", locale: "en-US", ...options });
   await context.route("https://**/*", route => route.abort());
-  context.on("page", page => page.on("pageerror", error => errors.push(error.stack)));
+  context.on("page", page => page.on("pageerror", error => errors.push({ scenario: name, message: String(error), stack: error.stack })));
   try { await run(context); console.log(`PASS ${engine}: ${name}`); }
   catch (error) { failures.push(name); console.error(`FAIL ${engine}: ${name}\n${error.stack}`); }
   finally { await context.close(); }
@@ -107,6 +120,50 @@ try {
     assert.equal((await stored(b)).length, 1);
   });
 
+  await check("native caret changes reveal long-note text without keyboard or select events", async context => {
+    const page = await seed(context);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await edit(page, Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n"), false);
+    const editor = page.locator(".node.editing textarea");
+    await page.waitForTimeout(350);
+    assert.ok((await editor.boundingBox()).y < -100, "Fixture starts with the beginning off screen");
+    await editor.evaluate(e => {
+      // Native collapsed-caret movement can emit selectionchange alone. Do not
+      // let the extra select event from the script API mask the missing handler.
+      e.addEventListener("select", event => event.stopImmediatePropagation(), true);
+      e.setSelectionRange(0, 0);
+    });
+    await page.waitForTimeout(350);
+    const rect = await editor.boundingBox();
+    assert.ok(rect.y >= 0 && rect.y < 460, `Changed caret is visible: ${JSON.stringify(rect)}`);
+    assert.equal(await editor.evaluate(e => e.selectionStart), 0, "Camera movement does not rewrite the caret");
+    // Follow multiple incremental movements as well, including backward selection.
+    for (const line of [15, 30, 45, 30, 15, 0]) {
+      const caret = await editor.evaluate((e, line) => {
+        const start = e.value.split("\n").slice(0, line).join("\n").length + (line ? 1 : 0);
+        e.setSelectionRange(start, start + 4, "backward");
+        return start;
+      }, line);
+      await page.waitForTimeout(300);
+      const position = await editor.evaluate((e, line) => ({
+        y: e.getBoundingClientRect().y + line * parseFloat(getComputedStyle(e).lineHeight),
+        start: e.selectionStart, end: e.selectionEnd, direction: e.selectionDirection,
+      }), line);
+      assert.ok(position.y >= 40 && position.y < 460, JSON.stringify(position));
+      assert.deepEqual([position.start, position.end, position.direction], [caret, caret + 4, "backward"]);
+    }
+    // Older WebKit can notify on document instead of on the textarea.
+    await editor.evaluate(e => {
+      e.addEventListener("selectionchange", event => event.stopImmediatePropagation(), true);
+      e.setSelectionRange(e.value.length, e.value.length);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await page.waitForTimeout(350);
+    const endRect = await editor.boundingBox();
+    assert.ok(endRect.y + endRect.height > 40 && endRect.y + endRect.height < 500);
+    assert.deepEqual(await scroll(page), [0, 0]);
+  });
+
   await check("active editors defer refresh and true concurrent edits retain both versions", async context => {
     const a = await seed(context), b = await context.newPage();
     await b.goto(origin); await b.locator(".node").waitFor();
@@ -169,13 +226,34 @@ try {
     assert.equal(docs.length, 2);
     assert.equal(docs.find(d => d.title === "Test").nodes[0].text, "a");
   });
+  await check("a stalled network falls back to cached resources while the browser still reports online", async context => {
+    const page = await seed(context);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+    assert.equal(await page.evaluate(() => navigator.onLine), true);
+    stallNetwork = true;
+    try {
+      // A network failure rejects fast in automation; a hanging request does not.
+      // The cached document AND its module graph must load without that rejection.
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 8000 });
+      await page.locator('.node[data-id="a"]').waitFor({ timeout: 1000 });
+      assert.ok(stalledRequests.size > 0, "Real network requests are still pending");
+      await edit(page, "Saved while network hangs");
+      assert.equal((await stored(page))[0].nodes[0].text, "Saved while network hangs");
+    } finally {
+      stallNetwork = false;
+      for (const release of [...stalledRequests]) release();
+    }
+    await page.reload();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal(await page.locator('.node[data-id="a"] .node-text').textContent(), "Saved while network hangs");
+  }, { serviceWorkers: "allow" });
   // This automation environment fails offline navigation inside WebKit itself,
   // identically on the unmodified v85 baseline. Do not count it as a passed test.
   if (engine === "webkit") console.log("SKIP webkit: offline reload needs device acceptance; the same internal navigation error occurs on v85");
   else await check("the new offline cache loads all updated modules and keeps local saving available", async context => {
     const page = await seed(context);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86"));
+    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p1"));
     await context.setOffline(true);
     await page.reload();
     await page.locator('.node[data-id="a"]').waitFor();
