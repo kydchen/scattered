@@ -7,6 +7,8 @@ import { blankBoard } from "./model.js";
 // PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs BROWSER=webkit node test-reliability-browser.mjs
 const engines = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const engine = process.env.BROWSER || "chromium";
+const cacheName = (await readFile(new URL("./sw.js", import.meta.url), "utf8")).match(/^const CACHE = "([^"]+)";/)?.[1];
+assert.ok(cacheName, "The offline test must use the current service worker cache");
 let stallNetwork = false;
 const stalledRequests = new Set();
 const server = createServer(async (request, response) => {
@@ -455,7 +457,7 @@ try {
   else await check("the new offline cache loads all updated modules and keeps local saving available", async context => {
     const page = await seed(context);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p2-1"));
+    await page.waitForFunction(async name => (await caches.keys()).includes(name), cacheName);
     await context.setOffline(true);
     await page.reload();
     await page.locator('.node[data-id="a"]').waitFor();
