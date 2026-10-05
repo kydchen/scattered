@@ -2001,15 +2001,17 @@ function editorCaretBounds(editor, scale, nodeOrigin) {
   const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
   mirror.textContent = editor.value.slice(0, caret);
   const marker = document.createElement("span");
-  marker.textContent = editor.value.slice(caret, caret + 1) || "\u200b";
+  // Keep the suffix so words wrap exactly as in the editor. A truncated word
+  // can fit on the previous line and make caret following jump by a full row.
+  marker.textContent = editor.value.slice(caret) || "\u200b";
   mirror.append(marker);
   document.body.append(mirror);
   const origin = mirror.getBoundingClientRect();
-  const rect = marker.getBoundingClientRect();
+  const rect = marker.getClientRects()[0];
   const left = nodeOrigin.left + (editor.offsetLeft + rect.left - origin.left - editor.scrollLeft) * scale;
   const top = nodeOrigin.top + (editor.offsetTop + rect.top - origin.top - editor.scrollTop) * scale;
   mirror.remove();
-  return { left, top, right: left + Math.max(2, rect.width * scale), bottom: top + parseFloat(style.lineHeight) * scale };
+  return { left, top, right: left + 2 * scale, bottom: top + parseFloat(style.lineHeight) * scale };
 }
 
 function finishRevealMotion() {

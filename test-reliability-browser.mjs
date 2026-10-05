@@ -145,6 +145,28 @@ try {
     assert.deepEqual(await scroll(page), [0, 0]);
   });
 
+  await check("caret movement within a wrapped word does not jump the camera by a line", async context => {
+    const text = "Some long paragraphs with automatic wrapping and comfortable cursor movement. 中文文字混合 automatic words ".repeat(30);
+    const page = await seed(context, [note("a", 50, 150, text)]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    await page.waitForTimeout(350);
+    const editor = page.locator(".node.editing textarea");
+    const word = text.indexOf("Some", 1);
+    // The second "Some" wraps as a whole. Truncating its suffix during caret
+    // measurement incorrectly places its first three letters on the prior line.
+    await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 3);
+    await page.waitForTimeout(350);
+    const before = await page.locator("#world").evaluate(w => new DOMMatrix(w.style.transform).m42);
+    await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 1);
+    await page.waitForTimeout(350);
+    const after = await page.locator("#world").evaluate(w => new DOMMatrix(w.style.transform).m42);
+    assert.ok(Math.abs(after - before) < 0.5, `Same wrapped line must not move the camera: ${before} -> ${after}`);
+    assert.equal(await editor.inputValue(), text);
+    assert.equal(await editor.evaluate(e => e.selectionStart), word + 1);
+    assert.deepEqual(await scroll(page), [0, 0]);
+  });
+
   await check("deletion and keyboard focus cannot desynchronize canvas coordinates", async context => {
     const page = await seed(context, [note("a", 100, 200), note("far", 2600, 1800), note("c", 500, 300)]);
     await page.locator('.node[data-id="a"]').click();
