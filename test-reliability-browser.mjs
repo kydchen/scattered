@@ -37,6 +37,7 @@ const browser = await engines[engine].launch({ headless: true, ...(engine === "c
 const errors = [], failures = [];
 const note = (id, x, y, text = id) => ({ id, x, y, text, width: 218, color: "plain" });
 async function check(name, run, options = {}) {
+  if (process.env.TEST_FILTER && !name.includes(process.env.TEST_FILTER)) return;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block", locale: "en-US", ...options });
   await context.route("https://**/*", route => route.abort());
   context.on("page", page => page.on("pageerror", error => errors.push({ scenario: name, message: String(error), stack: error.stack })));
@@ -53,6 +54,12 @@ async function seed(context, nodes = [note("a", 100, 200)]) {
   return page;
 }
 const scroll = page => page.locator("#viewport").evaluate(v => [v.scrollLeft, v.scrollTop]);
+async function settleReveal(page) {
+  // A long caret journey now takes time proportional to distance rather than
+  // racing through the entire note in a fixed 300ms.
+  await page.waitForTimeout(50);
+  await page.waitForFunction(() => !document.querySelector("#viewport").matches(".following-caret, .revealing-note"), null, { timeout: 25000 });
+}
 const stored = page => page.evaluate(() => {
   const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
   return ws.boards.map(item => JSON.parse(localStorage.getItem(`scattered-document-v2:${item.id}`)));
@@ -64,6 +71,92 @@ async function edit(page, text, finish = true) {
   await page.waitForTimeout(300);
 }
 try {
+  await check("caret following saves typed text during motion and stops on editor exit or page hide", async context => {
+    const text = Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n");
+    const page = await seed(context, [note("a", 100, 200, text)]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    await page.waitForTimeout(350);
+    const editor = page.locator(".node.editing textarea");
+    await editor.evaluate(e => {
+      e.value = "新" + e.value;
+      e.setSelectionRange(1, 1);
+      e.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "新" }));
+    });
+    await page.waitForTimeout(650);
+    assert.equal(await page.locator("#viewport").evaluate(v => v.classList.contains("following-caret")), true);
+    assert.equal((await stored(page))[0].nodes[0].text, "新" + text, "Animation must not keep postponing the typing save");
+    await editor.press("Control+Enter");
+    const stopped = await page.locator("#world").getAttribute("style");
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator("#world").getAttribute("style"), stopped, "Finishing editing stops at the displayed view");
+    // Re-enter via the existing node API and trigger a new distant target.
+    await page.locator('.node[data-id="a"]').press("Enter");
+    await page.waitForTimeout(350);
+    await editor.evaluate(e => e.setSelectionRange(0, 0));
+    await page.waitForTimeout(80);
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    const hidden = await page.locator("#world").getAttribute("style");
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator("#world").getAttribute("style"), hidden);
+    assert.equal(await page.locator("#viewport").evaluate(v => v.classList.contains("following-caret")), false);
+  });
+
+  await check("caret follows respect reduced motion", async context => {
+    const page = await seed(context, [note("a", 100, 200, "中文 long note\n".repeat(150))]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    await page.waitForTimeout(350);
+    const editor = page.locator(".node.editing textarea");
+    await editor.evaluate(e => e.setSelectionRange(0, 0));
+    await page.waitForTimeout(100);
+    assert.ok((await editor.boundingBox()).y >= 0, "Reduced motion reveals the caret without a prolonged journey");
+    assert.equal(await page.locator("#viewport").evaluate(v => v.classList.contains("following-caret")), false);
+  }, { reducedMotion: "reduce" });
+
+  await check("large native caret jumps are speed-limited and retarget without a snap", async context => {
+    const text = Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n");
+    const page = await seed(context, [note("a", 100, 200, text)]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    await page.waitForTimeout(350);
+    const result = await page.locator(".node.editing textarea").evaluate(async e => {
+      const world = document.querySelector("#world");
+      const read = () => ({ t: performance.now(), y: new DOMMatrix(getComputedStyle(world).transform).m42 });
+      const samples = [read()];
+      e.setSelectionRange(0, 0);
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 60));
+        samples.push(read());
+        // Replace the destination mid-flight, as native keyboard trackpad
+        // updates do. This must not build a queue of stale destinations.
+        if (i === 2) e.setSelectionRange(100, 100);
+      }
+      const beforeReverse = read();
+      e.setSelectionRange(e.value.length, e.value.length);
+      await new Promise(r => setTimeout(r, 100));
+      const reversed = read();
+      // A new touch inside the editor cancels following at the displayed view,
+      // without jumping to the previously requested distant destination.
+      e.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 91 }));
+      const cancelled = read();
+      await new Promise(r => setTimeout(r, 100));
+      return { samples, beforeReverse, reversed, cancelled, settled: read(), start: e.selectionStart, end: e.selectionEnd, length: e.value.length };
+    });
+    const first = result.samples[0], last = result.samples.at(-1);
+    const speed = (last.y - first.y) / (last.t - first.t);
+    assert.ok(speed > 0.04 && speed <= 0.27, `Large jumps must stay at or below 240px/s (with sampling tolerance): ${JSON.stringify(result)}`);
+    for (let i = 1; i < result.samples.length; i++) {
+      const a = result.samples[i - 1], b = result.samples[i];
+      assert.ok(b.y >= a.y - 1 && b.y - a.y <= (b.t - a.t) * 0.27 + 3, "Retargeting must not jump or reverse while the caret is still above");
+    }
+    assert.ok(result.reversed.y <= result.beforeReverse.y + 5, "Returning the caret to the bottom must stop following the old upward target");
+    assert.ok(Math.abs(result.cancelled.y - result.reversed.y) < 2, "A fresh touch must not snap to the target");
+    assert.ok(Math.abs(result.settled.y - result.cancelled.y) < 2, "Cancelled following must stay stopped");
+    assert.deepEqual([result.start, result.end], [result.length, result.length]);
+    assert.deepEqual(await scroll(page), [0, 0]);
+  });
+
   await check("startup distinguishes loading from an empty canvas until local notes are painted", async context => {
     for (const theme of ["light", "dark"]) {
       const page = await context.newPage();
@@ -117,7 +210,7 @@ try {
     assert.equal(await page.locator("#app-loading").isVisible(), false);
   });
 
-  await check("caret following is slower and uniform without slowing entry into editing", async context => {
+  await check("short caret follows remain gradual without slowing entry into editing", async context => {
     const text = Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n");
     const page = await seed(context, [note("a", 100, 200, text)]);
     await page.setViewportSize({ width: 390, height: 500 });
@@ -127,18 +220,24 @@ try {
     const sample = await page.locator(".node.editing textarea").evaluate(async editor => {
       const world = document.querySelector("#world");
       const startY = new DOMMatrix(getComputedStyle(world).transform).m42;
-      const caret = editor.value.split("\n").slice(0, 130).join("\n").length + 1;
+      const caret = editor.value.split("\n").slice(0, 134).join("\n").length + 1;
       editor.setSelectionRange(caret, caret);
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const style = getComputedStyle(world);
-      const duration = style.transitionDuration, timing = style.transitionTimingFunction;
-      const targetY = new DOMMatrix(world.style.transform).m42;
+      const following = document.querySelector("#viewport").classList.contains("following-caret");
       await new Promise(resolve => setTimeout(resolve, 75));
       const currentY = new DOMMatrix(getComputedStyle(world).transform).m42;
-      return { duration, timing, fraction: (currentY - startY) / (targetY - startY), caret, actualCaret: editor.selectionStart };
+      for (let i = 0; i < 8; i++) {
+        editor.dispatchEvent(new Event("selectionchange"));
+        await new Promise(resolve => setTimeout(resolve, 45));
+      }
+      await new Promise(resolve => setTimeout(resolve, 90));
+      const targetY = new DOMMatrix(getComputedStyle(world).transform).m42;
+      const stillFollowing = document.querySelector("#viewport").classList.contains("following-caret");
+      return { following, stillFollowing, distance: targetY - startY, fraction: (currentY - startY) / (targetY - startY), caret, actualCaret: editor.selectionStart };
     });
-    assert.equal(sample.duration, "0.3s");
-    assert.equal(sample.timing, "linear");
+    assert.equal(sample.following, true);
+    assert.equal(sample.stillFollowing, false, "Repeated notifications of the same caret must not restart or prolong following");
+    assert.ok(sample.distance > 0 && sample.distance < 72, JSON.stringify(sample));
     assert.ok(sample.fraction > 0 && sample.fraction < 0.7, JSON.stringify(sample));
     assert.equal(sample.actualCaret, sample.caret);
     await page.waitForTimeout(400);
@@ -156,7 +255,7 @@ try {
     // The second "Some" wraps as a whole. Truncating its suffix during caret
     // measurement incorrectly places its first three letters on the prior line.
     await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 3);
-    await page.waitForTimeout(350);
+    await settleReveal(page);
     const before = await page.locator("#world").evaluate(w => new DOMMatrix(w.style.transform).m42);
     await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 1);
     await page.waitForTimeout(350);
@@ -195,13 +294,13 @@ try {
       const editor = page.locator(".node.editing textarea");
       await editor.press("Meta+ArrowDown");
       await editor.press("End");
-      await page.waitForTimeout(350);
+      await settleReveal(page);
       assert.deepEqual(await scroll(page), [0, 0]);
       let rect = await editor.boundingBox();
       assert.ok(rect.y + rect.height < size.height && rect.y + rect.height > 40, `End caret is in view: ${JSON.stringify(rect)}`);
       await editor.press("Meta+ArrowUp");
       assert.equal(await editor.evaluate(e => e.selectionStart), 0, "Home shortcut moves the actual caret");
-      await page.waitForTimeout(350);
+      await settleReveal(page);
       rect = await editor.boundingBox();
       assert.ok(rect.y >= 0 && rect.y < size.height - 40, `Start caret is in view: ${JSON.stringify(rect)}`);
       await editor.press("Control+Enter");
@@ -228,7 +327,7 @@ try {
     await page.setViewportSize({ width: 390, height: 500 });
     await edit(page, Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n"), false);
     const editor = page.locator(".node.editing textarea");
-    await page.waitForTimeout(350);
+    await settleReveal(page);
     assert.ok((await editor.boundingBox()).y < -100, "Fixture starts with the beginning off screen");
     await editor.evaluate(e => {
       // Native collapsed-caret movement can emit selectionchange alone. Do not
@@ -236,7 +335,7 @@ try {
       e.addEventListener("select", event => event.stopImmediatePropagation(), true);
       e.setSelectionRange(0, 0);
     });
-    await page.waitForTimeout(350);
+    await settleReveal(page);
     const rect = await editor.boundingBox();
     assert.ok(rect.y >= 0 && rect.y < 460, `Changed caret is visible: ${JSON.stringify(rect)}`);
     assert.equal(await editor.evaluate(e => e.selectionStart), 0, "Camera movement does not rewrite the caret");
@@ -247,7 +346,7 @@ try {
         e.setSelectionRange(start, start + 4, "backward");
         return start;
       }, line);
-      await page.waitForTimeout(300);
+      await settleReveal(page);
       const position = await editor.evaluate((e, line) => ({
         y: e.getBoundingClientRect().y + line * parseFloat(getComputedStyle(e).lineHeight),
         start: e.selectionStart, end: e.selectionEnd, direction: e.selectionDirection,
@@ -261,7 +360,7 @@ try {
       e.setSelectionRange(e.value.length, e.value.length);
       document.dispatchEvent(new Event("selectionchange"));
     });
-    await page.waitForTimeout(350);
+    await settleReveal(page);
     const endRect = await editor.boundingBox();
     assert.ok(endRect.y + endRect.height > 40 && endRect.y + endRect.height < 500);
     assert.deepEqual(await scroll(page), [0, 0]);

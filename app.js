@@ -14,6 +14,7 @@ const DEFAULT_NODE_WIDTH = 218;
 const DEFAULT_NODE_HEIGHT = 48;
 const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
+const CARET_FOLLOW_SPEED = 0.24; // Screen CSS pixels per millisecond, independent of zoom.
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
 const VIEWPORT_DEBUG_BUILD = "probe-f1";
@@ -115,6 +116,8 @@ let dragAutoPanAt = 0;
 let selectionPreviewFrame = 0;
 let revealMotionTimer = null;
 let revealViewportFrame = 0;
+let caretFollowFrame = 0;
+let caretFollow = null;
 let palmGuardUntil = 0;
 let lastPenUpAt = 0;
 let colorTargetIds = [];
@@ -238,12 +241,14 @@ window.addEventListener("blur", () => {
   disarmDeleteBoard();
 });
 window.addEventListener("pagehide", () => {
+  finishRevealMotion();
   recordViewportDebug("pagehide");
   stagePendingSave();
   void saveBoardNow();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
+    finishRevealMotion();
     chromeResumeRecoveryHandled = false;
     updateChromeResumeRecovery();
     recordViewportDebug("hidden");
@@ -1117,6 +1122,7 @@ function onPointerUp(event) {
 }
 
 function cancelGesture() {
+  finishRevealMotion();
   const autoPanned = mode?.autoPanned;
   const movedNode = mode?.type === "node" && mode.moved;
   if (movedNode) restoreDraggedNodes(mode);
@@ -1973,10 +1979,35 @@ function softlyRevealNode(id, followCaret = false) {
     bounds = editorCaretBounds(element.querySelector(".node-editor"), scale, { left, top });
   }
   const delta = minimumRevealDelta(bounds, visibleViewport, CREATION_SAFE_INSETS);
-  if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) return;
+  if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) {
+    if (caretFollow) finishRevealMotion();
+    return;
+  }
   // ponytail: preserve the user's zoom; if a note cannot fit, center it on that axis instead of auto-zooming.
-  const gentleFollow = followCaret && oversizedEditor;
-  viewport.classList.toggle("following-caret", gentleFollow);
+  if (followCaret && oversizedEditor && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    // If a native selection interrupts entry, continue from what is on screen,
+    // not from the unfinished CSS transition's destination.
+    if (viewport.classList.contains("revealing-note")) {
+      const current = new DOMMatrix(getComputedStyle(world).transform);
+      finishRevealMotion();
+      board.view = { x: current.m41, y: current.m42, scale: current.a };
+      applyView();
+      softlyRevealNode(id, true);
+      return;
+    }
+    const distance = Math.hypot(delta.x, delta.y);
+    const x = board.view.x + delta.x, y = board.view.y + delta.y;
+    if (caretFollow?.id === id && Math.hypot(caretFollow.x - x, caretFollow.y - y) < 0.5) return;
+    caretFollow = {
+      id, x, y,
+      speed: Math.min(CARET_FOLLOW_SPEED, distance / 300),
+      at: caretFollow?.at ?? performance.now(), moved: caretFollow?.moved || false,
+    };
+    viewport.classList.add("following-caret");
+    if (!caretFollowFrame) caretFollowFrame = requestAnimationFrame(advanceCaretFollow);
+    return;
+  }
+  finishRevealMotion();
   viewport.classList.add("revealing-note");
   board.view.x += delta.x;
   board.view.y += delta.y;
@@ -1984,7 +2015,36 @@ function softlyRevealNode(id, followCaret = false) {
   scheduleSave();
   updateHistoryControls();
   clearTimeout(revealMotionTimer);
-  revealMotionTimer = setTimeout(finishRevealMotion, gentleFollow ? 340 : 220);
+  revealMotionTimer = setTimeout(finishRevealMotion, 220);
+}
+
+function advanceCaretFollow(at) {
+  caretFollowFrame = 0;
+  const follow = caretFollow;
+  if (!follow) return;
+  if (document.hidden || !nodeElements.get(follow.id)?.classList.contains("editing")) {
+    finishRevealMotion();
+    return;
+  }
+  // Cap each frame as well as the velocity, so a stalled/background frame
+  // cannot catch up with a large jump. Only the latest caret target is kept.
+  const elapsed = clamp(at - follow.at, 0, 32);
+  follow.at = at;
+  const dx = follow.x - board.view.x, dy = follow.y - board.view.y;
+  const distance = Math.hypot(dx, dy);
+  const step = Math.min(distance, follow.speed * elapsed);
+  if (distance > 0 && step > 0) {
+    board.view.x += dx * step / distance;
+    board.view.y += dy * step / distance;
+    follow.moved = true;
+    boardDirty = true;
+    applyView();
+  }
+  if (distance <= step) {
+    finishRevealMotion();
+  } else {
+    caretFollowFrame = requestAnimationFrame(advanceCaretFollow);
+  }
 }
 
 function editorCaretBounds(editor, scale, nodeOrigin) {
@@ -2019,7 +2079,15 @@ function finishRevealMotion() {
   cancelAnimationFrame(revealViewportFrame);
   revealMotionTimer = null;
   revealViewportFrame = 0;
+  cancelAnimationFrame(caretFollowFrame);
+  caretFollowFrame = 0;
+  const moved = caretFollow?.moved;
+  caretFollow = null;
   viewport.classList.remove("revealing-note", "following-caret");
+  if (moved) {
+    scheduleSave();
+    updateHistoryControls();
+  }
 }
 
 function renderAll() {
@@ -2217,6 +2285,7 @@ function editNode(id, isNew = false, fromPen = false) {
 function finishEditing(onlyId = null, explicitCancel = false) {
   document.querySelectorAll(".node.editing").forEach((element) => {
     if (onlyId && element.dataset.id !== onlyId) return;
+    finishRevealMotion();
     const node = findNode(element.dataset.id);
     const editor = element.querySelector(".node-editor");
     const nextText = editor.value.slice(0, 20_000);
