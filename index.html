@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="app-loading">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -35,16 +35,44 @@
         }
       })();
     </script>
+    <!-- This small shell must work before cached styles and modules arrive. -->
+    <style>
+      html { background: #f2f4f7; }
+      html[data-theme="dark"] { background: #16150f; }
+      html.app-loading #viewport, html.app-loading #chrome-layer { visibility: hidden; }
+      #app-loading { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: var(--canvas, #f2f4f7); color: var(--thread, #5372a8); }
+      html[data-theme="dark"] #app-loading { background: var(--canvas, #16150f); color: var(--thread, #7fa2dc); }
+      html:not(.app-loading) #app-loading { display: none; }
+      .startup-logo { width: 64px; height: 52px; fill: currentColor; animation: startup-breathe 1.4s ease-in-out infinite alternate; }
+      #startup-retry { position: absolute; top: calc(50% + 56px); visibility: hidden; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid currentColor; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+      #startup-retry svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      html.app-load-delayed #startup-retry { visibility: visible; }
+      @keyframes startup-breathe { from { opacity: .6; } to { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .startup-logo { animation: none; } }
+    </style>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=86" />
+    <link rel="stylesheet" href="styles.css?v=86p2" />
     <link rel="stylesheet" href="sharing.css?v=78" />
     <title>Scattered</title>
   </head>
   <body>
-    <main id="viewport" aria-label="自由思考画布" data-i18n-aria="canvas">
+    <div id="app-loading" role="status" aria-label="正在载入画布 · Loading canvas">
+      <svg class="startup-logo" viewBox="0 0 30 24" aria-hidden="true">
+        <circle cx="5.2" cy="7" r="1.7" opacity=".45"></circle>
+        <circle cx="12.2" cy="4.8" r="2.2" opacity=".7"></circle>
+        <circle cx="14.7" cy="12.8" r="3.7"></circle>
+        <circle cx="24.2" cy="7" r="1.4" opacity=".35"></circle>
+        <circle cx="24" cy="17" r="2.4" opacity=".8"></circle>
+        <circle cx="8.2" cy="20" r="1.3" opacity=".6"></circle>
+      </svg>
+      <button id="startup-retry" type="button" aria-label="重新载入 · Reload">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V3m0 5h5M5.5 7A8 8 0 1 1 4 14"></path></svg>
+      </button>
+    </div>
+    <main id="viewport" inert aria-busy="true" aria-label="自由思考画布" data-i18n-aria="canvas">
       <div id="gesture-surface" aria-hidden="true"></div>
       <div id="world">
         <svg id="connections" role="group" aria-label="标签连线" data-i18n-aria="connections">
@@ -67,7 +95,7 @@
       </svg>
     </main>
 
-    <div id="chrome-layer">
+    <div id="chrome-layer" inert>
       <header class="app-mark" aria-label="画布标题" data-i18n-aria="appTitle">
         <button id="boards-button" class="boards-button" type="button" aria-label="打开画布列表" data-i18n-aria="openBoards" aria-controls="board-picker" aria-expanded="false">
           <svg class="app-logo" viewBox="0 0 30 24" aria-hidden="true">
@@ -397,7 +425,18 @@
       <div id="recovery-list"></div>
     </dialog>
 
-    <script type="module" src="app.js?v=86p1"></script>
+    <script type="module" src="app.js?v=86p2"></script>
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const offerRetry = () => {
+          if (root.classList.contains("app-loading")) root.classList.add("app-load-delayed");
+        };
+        document.querySelector("#startup-retry").addEventListener("click", () => location.reload());
+        document.querySelector('script[src^="app.js"]').addEventListener("error", offerRetry);
+        setTimeout(offerRetry, 8000);
+      })();
+    </script>
     <!-- Cloudflare Web Analytics -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "41d9c0c044944ad6b1bd274d2f27d9b7"}'></script>
     <!-- End Cloudflare Web Analytics -->

@@ -557,6 +557,14 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 
 driveSync.start();
 
+// Reveal the canvas only after its local notes, view, and queued edges exist.
+requestAnimationFrame(() => {
+  viewport.removeAttribute("inert");
+  chromeLayer.removeAttribute("inert");
+  viewport.setAttribute("aria-busy", "false");
+  document.documentElement.classList.remove("app-loading", "app-load-delayed");
+});
+
 if (new URLSearchParams(location.search).get("debug") === "1") {
   import("./debug-client.js")
     .then(({ startPointerDebug }) => startPointerDebug(viewport, pointerDebugState))
@@ -1935,11 +1943,11 @@ function revealEditingNode() {
   revealViewportFrame = requestAnimationFrame(() => {
     revealViewportFrame = 0;
     const id = document.querySelector(".node.editing")?.dataset.id;
-    if (id) softlyRevealNode(id);
+    if (id) softlyRevealNode(id, true);
   });
 }
 
-function softlyRevealNode(id) {
+function softlyRevealNode(id, followCaret = false) {
   const element = nodeElements.get(id);
   const node = findNode(id, false);
   if (!element || !node) return;
@@ -1959,13 +1967,16 @@ function softlyRevealNode(id) {
     right: left + element.offsetWidth * scale,
     bottom: top + element.offsetHeight * scale,
   };
-  if (element.classList.contains("editing")
-    && bounds.bottom - bounds.top > visibleViewport.height - CREATION_SAFE_INSETS.top - CREATION_SAFE_INSETS.bottom) {
+  const oversizedEditor = element.classList.contains("editing")
+    && bounds.bottom - bounds.top > visibleViewport.height - CREATION_SAFE_INSETS.top - CREATION_SAFE_INSETS.bottom;
+  if (oversizedEditor) {
     bounds = editorCaretBounds(element.querySelector(".node-editor"), scale, { left, top });
   }
   const delta = minimumRevealDelta(bounds, visibleViewport, CREATION_SAFE_INSETS);
   if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) return;
   // ponytail: preserve the user's zoom; if a note cannot fit, center it on that axis instead of auto-zooming.
+  const gentleFollow = followCaret && oversizedEditor;
+  viewport.classList.toggle("following-caret", gentleFollow);
   viewport.classList.add("revealing-note");
   board.view.x += delta.x;
   board.view.y += delta.y;
@@ -1973,7 +1984,7 @@ function softlyRevealNode(id) {
   scheduleSave();
   updateHistoryControls();
   clearTimeout(revealMotionTimer);
-  revealMotionTimer = setTimeout(finishRevealMotion, 220);
+  revealMotionTimer = setTimeout(finishRevealMotion, gentleFollow ? 340 : 220);
 }
 
 function editorCaretBounds(editor, scale, nodeOrigin) {
@@ -2006,7 +2017,7 @@ function finishRevealMotion() {
   cancelAnimationFrame(revealViewportFrame);
   revealMotionTimer = null;
   revealViewportFrame = 0;
-  viewport.classList.remove("revealing-note");
+  viewport.classList.remove("revealing-note", "following-caret");
 }
 
 function renderAll() {

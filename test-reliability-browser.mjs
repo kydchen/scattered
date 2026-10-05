@@ -64,6 +64,87 @@ async function edit(page, text, finish = true) {
   await page.waitForTimeout(300);
 }
 try {
+  await check("startup distinguishes loading from an empty canvas until local notes are painted", async context => {
+    for (const theme of ["light", "dark"]) {
+      const page = await context.newPage();
+      await page.goto(`${origin}/about.html`);
+      await page.evaluate(({ board, theme }) => {
+        localStorage.setItem("scattered-board-v1", JSON.stringify(board));
+        localStorage.setItem("scattered-theme", theme);
+      }, { board: { ...blankBoard(), nodes: [note("a", 100, 200)] }, theme });
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      await page.route("**/app.js?*", async route => { await gate; await route.continue(); });
+      try {
+        await page.goto(origin, { waitUntil: "commit" });
+        await page.locator("#viewport").waitFor({ state: "attached" });
+        assert.equal(await page.locator("#viewport").isVisible(), false, "The unpopulated canvas must not look like deleted notes");
+        assert.equal(await page.locator("#chrome-layer .app-mark").isVisible(), false);
+        assert.equal(await page.locator("#app-loading").isVisible(), true);
+        assert.equal(await page.locator("#startup-retry").isVisible(), false);
+        assert.equal(await page.locator("#node-layer .node").count(), 0, "Module loading is still paused");
+      } finally { release(); }
+      await page.locator('.node[data-id="a"]').waitFor();
+      assert.equal(await page.locator("#app-loading").isVisible(), false);
+      assert.equal(await page.locator("#viewport").getAttribute("aria-busy"), "false");
+      assert.equal(await page.locator("#viewport").getAttribute("inert"), null);
+      assert.equal(await page.locator("#chrome-layer").getAttribute("inert"), null);
+      assert.equal(await page.locator("#empty-state").isVisible(), false);
+      // Capture the shell's appearance only after the intentionally blocked
+      // document is complete (Playwright screenshots wait for fonts.ready).
+      await page.evaluate(() => document.documentElement.classList.add("app-loading"));
+      await page.screenshot({ path: `/tmp/scattered-startup-${theme}.png` });
+      await page.evaluate(() => document.documentElement.classList.remove("app-loading"));
+      await page.close();
+    }
+  });
+
+  await check("a failed app module offers retry without displaying an empty workspace or clearing notes", async context => {
+    const page = await context.newPage();
+    await page.goto(`${origin}/about.html`);
+    const backup = JSON.stringify({ ...blankBoard(), nodes: [note("a", 100, 200, "Keep this note")] });
+    await page.evaluate(backup => localStorage.setItem("scattered-board-v1", backup), backup);
+    let fail = true;
+    await page.route("**/app.js?*", route => fail ? route.abort() : route.continue());
+    await page.goto(origin, { waitUntil: "commit" });
+    await page.locator("#startup-retry").waitFor({ timeout: 3000 });
+    assert.equal(await page.locator("#viewport").isVisible(), false);
+    assert.equal(await page.evaluate(() => localStorage.getItem("scattered-board-v1")), backup);
+    fail = false;
+    await page.locator("#startup-retry").click();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal(await page.locator('.node[data-id="a"] .node-text').textContent(), "Keep this note");
+    assert.equal(await page.locator("#app-loading").isVisible(), false);
+  });
+
+  await check("caret following is slower and uniform without slowing entry into editing", async context => {
+    const text = Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n");
+    const page = await seed(context, [note("a", 100, 200, text)]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    assert.equal(await page.locator("#world").evaluate(w => getComputedStyle(w).transitionDuration), "0.18s", "Entry retains its original animation");
+    await page.waitForTimeout(350);
+    const sample = await page.locator(".node.editing textarea").evaluate(async editor => {
+      const world = document.querySelector("#world");
+      const startY = new DOMMatrix(getComputedStyle(world).transform).m42;
+      const caret = editor.value.split("\n").slice(0, 130).join("\n").length + 1;
+      editor.setSelectionRange(caret, caret);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const style = getComputedStyle(world);
+      const duration = style.transitionDuration, timing = style.transitionTimingFunction;
+      const targetY = new DOMMatrix(world.style.transform).m42;
+      await new Promise(resolve => setTimeout(resolve, 75));
+      const currentY = new DOMMatrix(getComputedStyle(world).transform).m42;
+      return { duration, timing, fraction: (currentY - startY) / (targetY - startY), caret, actualCaret: editor.selectionStart };
+    });
+    assert.equal(sample.duration, "0.3s");
+    assert.equal(sample.timing, "linear");
+    assert.ok(sample.fraction > 0 && sample.fraction < 0.7, JSON.stringify(sample));
+    assert.equal(sample.actualCaret, sample.caret);
+    await page.waitForTimeout(400);
+    assert.deepEqual(await scroll(page), [0, 0]);
+  });
+
   await check("deletion and keyboard focus cannot desynchronize canvas coordinates", async context => {
     const page = await seed(context, [note("a", 100, 200), note("far", 2600, 1800), note("c", 500, 300)]);
     await page.locator('.node[data-id="a"]').click();
@@ -253,7 +334,7 @@ try {
   else await check("the new offline cache loads all updated modules and keeps local saving available", async context => {
     const page = await seed(context);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p1"));
+    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p2"));
     await context.setOffline(true);
     await page.reload();
     await page.locator('.node[data-id="a"]').waitFor();
