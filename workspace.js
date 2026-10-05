@@ -55,6 +55,10 @@ export function createWorkspaceSlots(baseStorage) {
       if (scope !== LOCAL_SCOPE) return scope;
       return readStoredAccount(baseStorage, LOCAL_ACCOUNT_KEY);
     },
+    ownsStorageKey(key) {
+      return key === null || [WORKSPACE_KEY, WORKSPACE_BACKUP_KEY, BOARD_PREFIX, BACKUP_PREFIX]
+        .some((prefix) => key === scopedKey(prefix) || (prefix.endsWith(":") && key.startsWith(scopedKey(prefix))));
+    },
     bind(accountKey) {
       requireAccountKey(accountKey);
       if (scope === GUEST_SCOPE) throw new Error("sync.accountClaimRequired");
@@ -119,7 +123,7 @@ export function withWorkspaceLock(action) {
   return Promise.resolve().then(action);
 }
 
-export function stagePendingDocument(storage, workspace, board, now = Date.now) {
+export function stagePendingDocument(storage, workspace, board, now = Date.now, options = {}) {
   const boardId = workspace.activeId;
   const expectedRevision = workspace.boards.find((item) => item.id === boardId)?.revision ?? null;
   storage.setItem(PENDING_KEY, JSON.stringify({
@@ -129,6 +133,7 @@ export function stagePendingDocument(storage, workspace, board, now = Date.now) 
     sessionId: PENDING_SESSION_ID,
     boardId,
     expectedRevision,
+    viewOnly: options.viewOnly === true,
     board: normalizeBoard(board),
     savedAt: now(),
   }));
@@ -354,6 +359,18 @@ export function parseImportedWorkspace(encoded) {
   return { activeBoard: value.activeBoard, boards };
 }
 
+export function parseCanvasBackup(encoded) {
+  if (typeof encoded !== "string") throw new Error("import.invalid");
+  if (new TextEncoder().encode(encoded).byteLength > MAX_WORKSPACE_IMPORT_BYTES) {
+    throw new Error("import.workspaceTooLarge");
+  }
+  return parseImportedBoard(encoded, {
+    maxBytes: MAX_WORKSPACE_IMPORT_BYTES,
+    maxNodes: MAX_WORKSPACE_IMPORT_NODES,
+    maxEdges: MAX_WORKSPACE_IMPORT_EDGES,
+  });
+}
+
 export function addImportedWorkspace(storage, workspace, imported, now = Date.now) {
   if (!isPlainObject(imported)
     || !Array.isArray(imported.boards)
@@ -417,16 +434,22 @@ export function addImportedWorkspace(storage, workspace, imported, now = Date.no
 }
 
 export function saveDocument(storage, workspace, board, now = Date.now, options = {}) {
-  const normalized = normalizeBoard(board);
+  let normalized = normalizeBoard(board);
   const id = workspace.activeId;
   const expectedRevision = workspace.boards.find((item) => item.id === id)?.revision ?? null;
   const nextWorkspace = mergeWorkspace(storage, workspace);
   const stored = readDocument(storage, id);
+  const deleted = nextWorkspace.tombstones.some((item) => item.id === id);
+  // Only callers that compared content with their loaded baseline may opt in.
+  // Legacy journals and genuine content edits retain the conflict-copy protection.
+  if (options.viewOnly === true) {
+    if (deleted) return refreshWorkspace(storage, workspace);
+    if (stored.board) normalized = normalizeBoard({ ...stored.board, view: normalized.view });
+  }
   const actualRevision = stored.revision ?? null;
   const sameBoard = stored.board ? boardsMatch(stored.board, normalized) : false;
   const sameContent = stored.board ? boardContentMatches(stored.board, normalized) : false;
   const latestItem = nextWorkspace.boards.find((item) => item.id === id);
-  const deleted = nextWorkspace.tombstones.some((item) => item.id === id);
 
   const revisionConflict = expectedRevision !== actualRevision && !sameContent;
   if (deleted || (revisionConflict && (latestItem || options.forceConflictOnRevisionMismatch))) {
@@ -485,6 +508,19 @@ export function switchDocument(storage, workspace, id) {
   writeWorkspace(storage, nextWorkspace);
   applyWorkspace(workspace, nextWorkspace);
   return loaded;
+}
+
+export function refreshWorkspace(storage, workspace) {
+  const nextWorkspace = mergeWorkspace(storage, workspace);
+  // Each tab keeps its own canvas choice; the shared index is not navigation.
+  const id = nextWorkspace.boards.some((item) => item.id === workspace.activeId)
+    ? workspace.activeId : nextWorkspace.activeId;
+  const loaded = readDocument(storage, id);
+  if (!loaded.board) throw new Error("The active board is unavailable");
+  nextWorkspace.activeId = id;
+  updateMetadata(nextWorkspace, id, loaded.board.title, undefined, loaded.revision);
+  applyWorkspace(workspace, nextWorkspace);
+  return loaded.board;
 }
 
 export function duplicateDocument(storage, workspace, board, now = Date.now) {
@@ -799,6 +835,7 @@ function recoverPendingDocuments(storage, workspace, now) {
       saveDocument(storage, candidate, pending.board, () => pending.savedAt || now(), {
         forceConflictOnRevisionMismatch: true,
         pendingId: pending.id,
+        viewOnly: pending.viewOnly,
       });
       applyWorkspace(workspace, candidate);
       removePendingKey(storage, key);
@@ -826,6 +863,7 @@ function parsePendingDocument(encoded, keyId) {
       id: value.id,
       boardId: value.boardId,
       expectedRevision: value.expectedRevision,
+      viewOnly: value.viewOnly === true,
       board,
       savedAt: Number.isFinite(Number(value.savedAt)) ? Number(value.savedAt) : 0,
     };
@@ -1257,10 +1295,11 @@ function availableTitle(title, titles) {
 function copyTitle(title, titles) {
   const value = String(title || "Untitled").trim() || "Untitled";
   let number = 2;
-  let candidate = `${value} · ${number}`.slice(0, 120);
+  const numbered = () => `${value.slice(0, 120 - ` · ${number}`.length)} · ${number}`;
+  let candidate = numbered();
   while (titles.includes(candidate)) {
     number += 1;
-    candidate = `${value} · ${number}`.slice(0, 120);
+    candidate = numbered();
   }
   return candidate;
 }

@@ -17,8 +17,13 @@ export function parseSharedBoard(encoded) {
   }
   const value = JSON.parse(encoded);
   if (!value || !["straight", "curved"].includes(value.connectionStyle)) throw new Error("shareInvalid");
-  return {
-    board: parseImportedBoard(JSON.stringify(value.board), { maxBytes: MAX_SHARE_BYTES }),
-    connectionStyle: value.connectionStyle,
-  };
+  try {
+    return {
+      board: parseImportedBoard(JSON.stringify(value.board), { maxBytes: MAX_SHARE_BYTES }),
+      connectionStyle: value.connectionStyle,
+    };
+  } catch (error) {
+    if (["import.tooLarge", "import.tooMuchContent"].includes(error.message)) throw new Error("shareTooLarge");
+    throw error;
+  }
 }

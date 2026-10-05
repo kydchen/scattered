@@ -151,7 +151,7 @@ button {
 #viewport {
   position: fixed;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   user-select: none;
   -webkit-user-select: none;
   background-color: var(--canvas);

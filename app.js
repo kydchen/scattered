@@ -1,11 +1,11 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseImportedWorkspace, readRecovery, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=78";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, readRecovery, refreshWorkspace, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=86";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=85";
+import { createDriveSync } from "./drive-sync.js?v=86";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=82";
-import { mountLiveSharing } from "./share-ui.js?v=82";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=86";
+import { mountLiveSharing } from "./share-ui.js?v=86";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
@@ -96,6 +96,9 @@ const workspaceStorage = workspaceSlots.storage;
 const initialWorkspace = initializeWorkspace();
 let workspace = initialWorkspace.workspace;
 let board = initialWorkspace.board;
+let savedBoardContent = syncBoardContent(board);
+let workspaceRefreshTimer = null;
+let workspaceRefreshPending = false;
 let storageReady = initialWorkspace.storageReady;
 let selectionMode = false;
 let mode = null;
@@ -152,17 +155,9 @@ const driveSync = createDriveSync({
   onError: (error) => {
     driveErrorNotified = true;
     console.warn("Drive sync paused", error);
-    showToast(t("driveSyncFailed"));
+    showToast(t(error?.code === "auth" || error?.code === "account" ? "driveReconnect" : "driveSyncFailed"));
   },
 });
-
-if (!driveSync.connected && workspaceSlots.accountKey) {
-  workspaceSlots.switchToGuest();
-  const guestWorkspace = initializeWorkspace();
-  workspace = guestWorkspace.workspace;
-  board = guestWorkspace.board;
-  storageReady = guestWorkspace.storageReady;
-}
 
 const sharing = mountLiveSharing({
   storage: localStorage,
@@ -193,6 +188,12 @@ viewport.addEventListener("pointerup", onPointerUp);
 viewport.addEventListener("pointercancel", cancelGesture);
 viewport.addEventListener("dblclick", onDoubleClick);
 viewport.addEventListener("wheel", onWheel, { passive: false });
+viewport.addEventListener("focusin", (event) => {
+  const element = event.target.closest(".node");
+  if (element && !element.classList.contains("editing") && event.target.matches(":focus-visible")) {
+    softlyRevealNode(element.dataset.id);
+  }
+});
 viewport.addEventListener("contextmenu", (event) => {
   if (!event.target.closest(".node-editor")) event.preventDefault();
 });
@@ -219,6 +220,11 @@ window.addEventListener("resize", () => {
 window.addEventListener("pageshow", (event) => {
   viewportDebugPageShowPersisted = event.persisted;
   restoreVisibleViewport(`pageshow${event.persisted ? "P" : ""}`);
+  requestWorkspaceRefresh();
+});
+window.addEventListener("focus", requestWorkspaceRefresh);
+window.addEventListener("storage", (event) => {
+  if (event.storageArea === localStorage && workspaceSlots.ownsStorageKey(event.key)) requestWorkspaceRefresh();
 });
 window.visualViewport?.addEventListener("resize", handleVisualViewportChange);
 window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
@@ -247,8 +253,38 @@ document.addEventListener("visibilitychange", () => {
     void saveBoardNow();
   } else {
     restoreVisibleViewport("visible");
+    requestWorkspaceRefresh();
   }
 });
+
+function requestWorkspaceRefresh() {
+  workspaceRefreshPending = true;
+  if (workspaceRefreshTimer !== null) return;
+  workspaceRefreshTimer = setTimeout(() => { void refreshLocalWorkspace(); }, 100);
+}
+
+async function refreshLocalWorkspace() {
+  workspaceRefreshTimer = null;
+  if (!workspaceRefreshPending || !storageReady) return;
+  try {
+    await withWorkspaceLock(() => {
+      // Recheck after waiting for the lock. Never replace an in-progress edit.
+      if (!canApplyDriveWorkspace()) return;
+      const previousId = workspace.activeId;
+      const previousIndex = JSON.stringify(workspace);
+      const latest = refreshWorkspace(workspaceStorage, workspace);
+      workspaceRefreshPending = false;
+      if (workspace.activeId !== previousId || syncBoardContent(latest) !== savedBoardContent) {
+        const sameCanvas = workspace.activeId === previousId;
+        replaceBoard(sameCanvas ? { ...latest, view: board.view } : latest, false, sameCanvas);
+      } else if (JSON.stringify(workspace) !== previousIndex) renderBoardList();
+    });
+  } catch {
+    workspaceRefreshPending = false;
+    showToast(t("errorOpenBoard"));
+  }
+  if (workspaceRefreshPending) workspaceRefreshTimer = setTimeout(() => { void refreshLocalWorkspace(); }, 500);
+}
 
 function restoreVisibleViewport(reason = "resume") {
   if (document.visibilityState === "hidden") return;
@@ -393,7 +429,7 @@ deleteBoardButton.addEventListener("click", removeCurrentBoard);
 cancelDeleteBoardButton.addEventListener("click", (event) => {
   event.stopPropagation();
   disarmDeleteBoard();
-  deleteBoardButton.focus();
+  deleteBoardButton.focus({ preventScroll: true });
 });
 boardList.addEventListener("click", (event) => {
   const option = event.target.closest(".board-list-option");
@@ -419,20 +455,20 @@ document.querySelector("#recovery-close").addEventListener("click", () => recove
 recoveryDialog.addEventListener("close", () => {
   recoveryPreviewUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   recoveryList.replaceChildren();
-  boardsButton.focus();
+  boardsButton.focus({ preventScroll: true });
 });
 driveSyncButton.addEventListener("click", useDriveSync);
 cancelDriveButton.addEventListener("click", (event) => {
   event.stopPropagation();
   disarmDriveControls();
-  driveSyncButton.focus();
+  driveSyncButton.focus({ preventScroll: true });
 });
 disconnectDriveButton.addEventListener("click", (event) => { void disconnectDriveAccount(event); });
 clearButton.addEventListener("click", clearBoard);
 cancelClearButton.addEventListener("click", (event) => {
   event.stopPropagation();
   disarmClear();
-  clearButton.focus();
+  clearButton.focus({ preventScroll: true });
 });
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
@@ -484,12 +520,12 @@ boardTitleEditor.addEventListener("keydown", (event) => {
     event.preventDefault();
     event.stopPropagation();
     finishBoardTitle();
-    boardTitle.focus();
+    boardTitle.focus({ preventScroll: true });
   } else if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
     finishBoardTitle(true);
-    boardTitle.focus();
+    boardTitle.focus({ preventScroll: true });
   }
 });
 searchInput.addEventListener("input", updateSearch);
@@ -1135,7 +1171,7 @@ function setMenuOpen(open) {
   if (open) setBoardPickerOpen(false);
   menu.hidden = !open;
   menuButton.setAttribute("aria-expanded", String(open));
-  if (open) requestAnimationFrame(() => searchButton.focus());
+  if (open) requestAnimationFrame(() => searchButton.focus({ preventScroll: true }));
   if (!open) {
     disarmClear();
     disarmExport();
@@ -1149,7 +1185,7 @@ function setBoardPickerOpen(open) {
     setMenuOpen(false);
     renderBoardList();
     if (driveSync.connected) driveSync.schedule(0);
-    requestAnimationFrame(() => boardList.querySelector('[aria-current="true"]')?.focus() || newBoardButton.focus());
+    requestAnimationFrame(() => boardList.querySelector('[aria-current="true"]')?.focus({ preventScroll: true }) || newBoardButton.focus({ preventScroll: true }));
   } else {
     disarmDeleteBoard();
     disarmDriveControls();
@@ -1167,7 +1203,7 @@ async function useDriveSync(event) {
     document.querySelector("#drive-account").hidden = false;
     cancelDriveButton.hidden = false;
     disconnectDriveButton.hidden = false;
-    requestAnimationFrame(() => cancelDriveButton.focus());
+    requestAnimationFrame(() => cancelDriveButton.focus({ preventScroll: true }));
     return;
   }
   if (!await commitCurrentBoard()) return;
@@ -1185,10 +1221,11 @@ async function disconnectDriveAccount(event) {
     const loaded = await withWorkspaceLock(() => loadWorkspace(workspaceStorage));
     workspace = loaded.workspace;
     replaceBoard(loaded.board);
+    updateDriveSyncControl("disconnected");
     clearSaveFailure();
     updateRecoveryControl();
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     if (previousAccount) workspaceSlots.switchTo(previousAccount);
     showToast(t("driveSyncFailed"));
@@ -1205,8 +1242,9 @@ function disarmDriveControls() {
 }
 
 function updateDriveSyncControl(status) {
+  const needsReconnect = status !== "unavailable" && !driveSync.connected && Boolean(workspaceSlots.accountKey);
   driveSyncButton.hidden = status === "unavailable";
-  driveSyncButton.dataset.status = status;
+  driveSyncButton.dataset.status = needsReconnect ? "error" : status;
   driveSyncButton.setAttribute("aria-busy", String(status === "syncing"));
   const label = {
     unavailable: "connectDrive",
@@ -1219,9 +1257,9 @@ function updateDriveSyncControl(status) {
   }[status] || "connectDrive";
   const profile = driveSync.profile;
   const identity = profile?.email || profile?.name || "";
-  const description = identity ? `${identity} · ${t(label)}` : t(label);
+  const description = needsReconnect ? t("driveReconnect") : identity ? `${identity} · ${t(label)}` : t(label);
   driveSyncButton.setAttribute("aria-label", description);
-  driveSyncButton.dataset.account = String(driveSync.connected);
+  driveSyncButton.dataset.account = String(driveSync.connected || needsReconnect);
   document.querySelector("#drive-account-name").textContent = profile?.name || "Google Drive";
   document.querySelector("#drive-account-email").textContent = profile?.email || t("driveAccountPending");
   const avatar = driveSyncButton.querySelector(".drive-avatar");
@@ -1418,7 +1456,7 @@ async function newBoard(event) {
     replaceBoard(await withWorkspaceLock(() => createDocument(workspaceStorage, workspace)));
     driveSync.schedule();
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     showToast(t("errorCreateBoard"));
   } finally {
@@ -1434,7 +1472,7 @@ async function duplicateBoard(event) {
     replaceBoard(await withWorkspaceLock(() => duplicateDocument(workspaceStorage, workspace, board)));
     driveSync.schedule();
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     showToast(t("errorDuplicateBoard"));
   } finally {
@@ -1462,7 +1500,7 @@ async function removeCurrentBoard(event) {
     clearSaveFailure();
     updateRecoveryControl();
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     markSaveFailure(t("errorDeleteBoard"));
   } finally {
@@ -1473,7 +1511,7 @@ async function removeCurrentBoard(event) {
 async function openBoard(id) {
   if (id === workspace.activeId) {
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
     return;
   }
   if (!beginWorkspaceAction()) return;
@@ -1483,7 +1521,7 @@ async function openBoard(id) {
     if (!loaded) return;
     replaceBoard(loaded.board);
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     showToast(t("errorOpenBoard"));
   } finally {
@@ -1495,6 +1533,7 @@ function replaceBoard(nextBoard, fitIncoming = false, keepSelection = false) {
   const focusedNodeId = keepSelection ? document.activeElement?.closest(".node")?.dataset.id : null;
   cancelGesture();
   board = normalizeBoard(nextBoard);
+  savedBoardContent = syncBoardContent(board);
   boardDirty = false;
   for (const id of selectedIds) if (!keepSelection || !findNode(id, false)) selectedIds.delete(id);
   selectionMode = keepSelection && selectionMode && selectedIds.size > 0;
@@ -1603,7 +1642,7 @@ async function restoreRecentBoard(recoveryId) {
     recoveryDialog.close();
     setBoardPickerOpen(false);
     setMenuOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   } catch {
     showToast(t("errorRestoreBoard"));
   } finally {
@@ -1647,7 +1686,7 @@ function openSearch(event) {
   searchPanel.hidden = false;
   searchButton.setAttribute("aria-expanded", "true");
   updateSearch();
-  searchInput.focus();
+  searchInput.focus({ preventScroll: true });
   searchInput.select();
 }
 
@@ -1754,7 +1793,7 @@ function onPaste(event) {
   selectionMode = false;
   renderAll();
   scheduleSave();
-  requestAnimationFrame(() => nodeElements.get(node.id)?.focus());
+  requestAnimationFrame(() => nodeElements.get(node.id)?.focus({ preventScroll: true }));
 }
 
 function duplicateSelection(event) {
@@ -1791,7 +1830,7 @@ function pasteGraph(payload, origin) {
   selectedEdgeId = null;
   renderAll();
   scheduleSave();
-  requestAnimationFrame(() => nodeElements.get(pasted.nodes[0]?.id)?.focus());
+  requestAnimationFrame(() => nodeElements.get(pasted.nodes[0]?.id)?.focus({ preventScroll: true }));
 }
 
 function disarmClear() {
@@ -1810,7 +1849,7 @@ function showExportChoices(event) {
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = false;
   });
-  requestAnimationFrame(() => exportJsonButton.focus());
+  requestAnimationFrame(() => exportJsonButton.focus({ preventScroll: true }));
 }
 
 function disarmExport(event, restoreFocus = false) {
@@ -1821,7 +1860,7 @@ function disarmExport(event, restoreFocus = false) {
   [cancelExportButton, exportJsonButton, exportSvgButton, exportMermaidButton, exportShareButton].forEach((button) => {
     button.hidden = true;
   });
-  if (restoreFocus) exportButton.focus();
+  if (restoreFocus) exportButton.focus({ preventScroll: true });
 }
 
 function updateThemeControl() {
@@ -1907,12 +1946,17 @@ function softlyRevealNode(id) {
   const scale = board.view.scale;
   const left = board.view.x + node.x * scale;
   const top = board.view.y + node.y * scale;
-  const delta = minimumRevealDelta({
+  let bounds = {
     left,
     top,
     right: left + element.offsetWidth * scale,
     bottom: top + element.offsetHeight * scale,
-  }, visibleViewport, CREATION_SAFE_INSETS);
+  };
+  if (element.classList.contains("editing")
+    && bounds.bottom - bounds.top > visibleViewport.height - CREATION_SAFE_INSETS.top - CREATION_SAFE_INSETS.bottom) {
+    bounds = editorCaretBounds(element.querySelector(".node-editor"), scale, { left, top });
+  }
+  const delta = minimumRevealDelta(bounds, visibleViewport, CREATION_SAFE_INSETS);
   if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) return;
   // ponytail: preserve the user's zoom; if a note cannot fit, center it on that axis instead of auto-zooming.
   viewport.classList.add("revealing-note");
@@ -1923,6 +1967,31 @@ function softlyRevealNode(id) {
   updateHistoryControls();
   clearTimeout(revealMotionTimer);
   revealMotionTimer = setTimeout(finishRevealMotion, 220);
+}
+
+function editorCaretBounds(editor, scale, nodeOrigin) {
+  // Textareas do not expose a caret rect. Measure only oversized editing notes
+  // in an untransformed mirror, then move the camera (never the canvas scroller).
+  const style = getComputedStyle(editor);
+  const mirror = document.createElement("div");
+  mirror.setAttribute("aria-hidden", "true");
+  mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;";
+  for (const name of ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction"]) {
+    mirror.style[name] = style[name];
+  }
+  mirror.style.width = `${editor.clientWidth}px`;
+  const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
+  mirror.textContent = editor.value.slice(0, caret);
+  const marker = document.createElement("span");
+  marker.textContent = editor.value.slice(caret, caret + 1) || "\u200b";
+  mirror.append(marker);
+  document.body.append(mirror);
+  const origin = mirror.getBoundingClientRect();
+  const rect = marker.getBoundingClientRect();
+  const left = nodeOrigin.left + (editor.offsetLeft + rect.left - origin.left - editor.scrollLeft) * scale;
+  const top = nodeOrigin.top + (editor.offsetTop + rect.top - origin.top - editor.scrollTop) * scale;
+  mirror.remove();
+  return { left, top, right: left + Math.max(2, rect.width * scale), bottom: top + parseFloat(style.lineHeight) * scale };
 }
 
 function finishRevealMotion() {
@@ -1962,7 +2031,7 @@ function editBoardTitle() {
   boardTitleEditor.value = board.title || "Untitled";
   boardTitle.hidden = true;
   boardTitleEditor.hidden = false;
-  boardTitleEditor.focus();
+  boardTitleEditor.focus({ preventScroll: true });
   boardTitleEditor.select();
 }
 
@@ -2024,12 +2093,12 @@ function renderNode(node, isNew = false) {
         event.preventDefault();
         event.stopPropagation();
         finishEditing(node.id);
-        nodeElements.get(node.id)?.focus();
+        nodeElements.get(node.id)?.focus({ preventScroll: true });
       } else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         finishEditing(node.id, true);
-        nodeElements.get(node.id)?.focus();
+        nodeElements.get(node.id)?.focus({ preventScroll: true });
       }
       return;
     }
@@ -2074,6 +2143,8 @@ function renderNode(node, isNew = false) {
     scheduleSave();
   });
   editor.addEventListener("blur", () => finishEditing(node.id));
+  editor.addEventListener("select", revealEditingNode);
+  editor.addEventListener("keyup", revealEditingNode);
   nodeElements.set(node.id, element);
   nodeLayer.append(element);
   positionNode(node);
@@ -2116,7 +2187,7 @@ function editNode(id, isNew = false, fromPen = false) {
   element.querySelector(".node-text").hidden = true;
   editor.hidden = false;
   resizeEditor(element);
-  editor.focus();
+  editor.focus({ preventScroll: true });
   editor.setSelectionRange(editor.value.length, editor.value.length);
   softlyRevealNode(id);
 }
@@ -2180,6 +2251,7 @@ function resizeEditor(element) {
   editor.style.height = "0";
   editor.style.height = `${Math.max(24, editor.scrollHeight)}px`;
   queueEdgeRender();
+  if (element.classList.contains("editing")) revealEditingNode();
 }
 
 function selectNode(id) {
@@ -2222,7 +2294,7 @@ function connectKeyboardLinkTo(targetId) {
   renderEdges();
   scheduleSave();
   announce(t("connectionUpdated"));
-  nodeElements.get(targetId)?.focus();
+  nodeElements.get(targetId)?.focus({ preventScroll: true });
 }
 
 function finishKeyboardLink() {
@@ -2237,7 +2309,7 @@ function cancelKeyboardLink(shouldAnnounce = true) {
   const sourceId = keyboardLinkSourceIds[0];
   finishKeyboardLink();
   if (shouldAnnounce) announce(t("connectionCancelled"));
-  nodeElements.get(sourceId)?.focus();
+  nodeElements.get(sourceId)?.focus({ preventScroll: true });
   return true;
 }
 
@@ -2283,7 +2355,7 @@ function openEdgeLabelEditor(event) {
   edgeToolbar.hidden = true;
   edgeLabelEditor.hidden = false;
   positionEdgeControls();
-  edgeLabelEditor.focus();
+  edgeLabelEditor.focus({ preventScroll: true });
   edgeLabelEditor.select();
 }
 
@@ -2397,8 +2469,8 @@ function openColorPalette(ids, anchor, preferBelow = false) {
   colorPalette.classList.toggle("below", below);
   colorPalette.style.left = `${clamp(rect.left + rect.width / 2, 116, innerWidth - 116)}px`;
   colorPalette.style.top = `${below ? rect.bottom + 8 : rect.top - 8}px`;
-  requestAnimationFrame(() => colorPalette.querySelector('[aria-pressed="true"]')?.focus()
-    || colorPalette.querySelector(".color-swatch")?.focus());
+  requestAnimationFrame(() => colorPalette.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true })
+    || colorPalette.querySelector(".color-swatch")?.focus({ preventScroll: true }));
 }
 
 function hideColorPalette(restoreFocus = false) {
@@ -2461,8 +2533,8 @@ function deleteSelection() {
 
 function deleteNode(id, record = true) {
   const element = nodeElements.get(id);
+  const previousRect = element?.getBoundingClientRect();
   const restoreFocus = element?.contains(document.activeElement);
-  const index = board.nodes.findIndex((node) => node.id === id);
   if (record) checkpoint();
   board.nodes = board.nodes.filter((node) => node.id !== id);
   board.edges = board.edges.filter((edge) => edge.from !== id && edge.to !== id);
@@ -2476,14 +2548,23 @@ function deleteNode(id, record = true) {
   updateHistoryControls();
   scheduleSave();
   if (restoreFocus) {
-    const nextId = board.nodes[Math.min(Math.max(index, 0), board.nodes.length - 1)]?.id;
-    requestAnimationFrame(() => focusNoteOrBoards(nextId));
+    requestAnimationFrame(() => focusNoteOrBoards(null, previousRect));
   }
 }
 
-function focusNoteOrBoards(id) {
-  const target = id ? nodeElements.get(id) : nodeElements.values().next().value;
-  (target || boardsButton).focus();
+function focusNoteOrBoards(id, origin = null) {
+  const visible = [...nodeElements.values()].filter((element) => rectIntersectsViewport(
+    element.getBoundingClientRect(), { left: 0, top: 0, width: viewport.clientWidth, height: viewport.clientHeight },
+  ));
+  const x = origin ? origin.left + origin.width / 2 : viewport.clientWidth / 2;
+  const y = origin ? origin.top + origin.height / 2 : viewport.clientHeight / 2;
+  const distance = (element) => {
+    const rect = element.getBoundingClientRect();
+    return Math.hypot(rect.left + rect.width / 2 - x, rect.top + rect.height / 2 - y);
+  };
+  visible.sort((a, b) => distance(a) - distance(b));
+  const target = id ? nodeElements.get(id) : visible[0];
+  (target || boardsButton).focus({ preventScroll: true });
 }
 
 function renderEdges() {
@@ -2559,7 +2640,7 @@ function edgeAccessibleName(edge) {
 }
 
 function focusEdge(id) {
-  [...edgeLayer.querySelectorAll(".edge")].find((element) => element.dataset.id === id)?.focus();
+  [...edgeLayer.querySelectorAll(".edge")].find((element) => element.dataset.id === id)?.focus({ preventScroll: true });
 }
 
 function queueEdgeRender() {
@@ -2783,7 +2864,7 @@ function onKeyDown(event) {
   if (event.key === "Escape" && boardPicker.classList.contains("confirming-delete")) {
     event.preventDefault();
     disarmDeleteBoard();
-    deleteBoardButton.focus();
+    deleteBoardButton.focus({ preventScroll: true });
     return;
   }
   if (event.key === "Escape" && boardPicker.classList.contains("choosing-export")) {
@@ -2794,7 +2875,7 @@ function onKeyDown(event) {
   if (event.key === "Escape" && !boardPicker.hidden) {
     event.preventDefault();
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
     return;
   }
   if (event.key === "Escape" && !colorPalette.hidden) {
@@ -2805,13 +2886,13 @@ function onKeyDown(event) {
   if (event.key === "Escape" && menu.classList.contains("confirming-clear")) {
     event.preventDefault();
     disarmClear();
-    clearButton.focus();
+    clearButton.focus({ preventScroll: true });
     return;
   }
   if (event.key === "Escape" && !menu.hidden) {
     event.preventDefault();
     setMenuOpen(false);
-    menuButton.focus();
+    menuButton.focus({ preventScroll: true });
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
@@ -2876,7 +2957,8 @@ function stagePendingSave() {
   syncOpenInputs();
   if (!boardDirty) return;
   try {
-    stagePendingDocument(workspaceStorage, workspace, boardWithoutDragPreview());
+    const pending = boardWithoutDragPreview();
+    stagePendingDocument(workspaceStorage, workspace, pending, Date.now, { viewOnly: syncBoardContent(pending) === savedBoardContent });
   } catch {
     markSaveFailure(t("errorSave"));
   }
@@ -2893,21 +2975,30 @@ async function saveBoardNow() {
   if (!boardDirty) return true;
   try {
     const savedSuccessfully = await withWorkspaceLock(() => {
+      const candidate = boardWithoutDragPreview();
+      const viewOnly = syncBoardContent(candidate) === savedBoardContent;
+      if (viewOnly && (mode || document.querySelector(".node.editing") || !boardTitleEditor.hidden || !edgeLabelEditor.hidden)) {
+        saveTimer = setTimeout(() => { void saveBoardNow(); }, 500);
+        return false;
+      }
       const previousId = workspace.activeId;
-      const saved = saveDocument(workspaceStorage, workspace, boardWithoutDragPreview());
+      const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly });
       const conflicted = workspace.activeId !== previousId;
-      if (conflicted) {
+      if (viewOnly && (conflicted || syncBoardContent(saved) !== savedBoardContent)) {
+        replaceBoard(saved, false, !conflicted);
+      } else if (conflicted) {
         cancelGesture();
         closeSearch();
         board = saved;
         renderAll();
         applyView();
       }
+      savedBoardContent = syncBoardContent(saved);
       boardDirty = false;
       clearPendingDocument(workspaceStorage);
       clearSaveFailure();
       renderBoardList();
-      if (conflicted) showToast(t("conflictCopy"));
+      if (conflicted && !viewOnly) showToast(t("conflictCopy"));
       return true;
     });
     if (savedSuccessfully) driveSync.schedule();
@@ -2950,6 +3041,7 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
   closeSearch();
   if (previousBoard !== JSON.stringify(saved)) checkpoint();
   board = saved;
+  savedBoardContent = syncBoardContent(board);
   boardDirty = false;
   selectedIds.clear();
   selectionMode = false;
@@ -3039,7 +3131,7 @@ function applyHistory(source, target) {
   updateHistoryControls();
   if (focusedNodeId || focusedEdgeId) {
     requestAnimationFrame(() => {
-      if (focusedNodeId && nodeElements.has(focusedNodeId)) nodeElements.get(focusedNodeId).focus();
+      if (focusedNodeId && nodeElements.has(focusedNodeId)) nodeElements.get(focusedNodeId).focus({ preventScroll: true });
       else if (focusedEdgeId && findEdge(focusedEdgeId, false)) focusEdge(focusedEdgeId);
       else focusNoteOrBoards(selectedIds.values().next().value);
     });
@@ -3077,7 +3169,7 @@ async function exportBoard() {
   } catch {
     showToast(t("errorJsonExport"));
   } finally {
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   }
 }
 
@@ -3092,7 +3184,7 @@ async function exportMermaid() {
   } catch {
     showToast(t("errorMermaidExport"));
   } finally {
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   }
 }
 
@@ -3109,7 +3201,7 @@ async function exportSvg(event) {
   } catch {
     showToast(t("errorSvgExport"));
   } finally {
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   }
 }
 
@@ -3157,12 +3249,12 @@ async function importBoard(event) {
     const encoded = await file.text();
     const importedWorkspace = parseImportedWorkspace(encoded);
     if (importedWorkspace) await mergeImportedWorkspace(importedWorkspace);
-    else await mergeImportedWorkspace({ activeBoard: 0, boards: [parseImportedBoard(encoded)] });
+    else await mergeImportedWorkspace({ activeBoard: 0, boards: [parseCanvasBackup(encoded)] });
   } catch (error) {
     showToast(error instanceof Error && hasMessage(error.message) ? t(error.message) : t("errorImport"));
   } finally {
     setBoardPickerOpen(false);
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
   }
 }
 
@@ -3175,7 +3267,7 @@ async function mergeImportedWorkspace(imported) {
     driveSync.schedule();
     clearSaveFailure();
     announce(t("workspaceImported", { count: imported.boards.length }));
-    boardsButton.focus();
+    boardsButton.focus({ preventScroll: true });
     return true;
   } finally {
     endWorkspaceAction();
@@ -3192,7 +3284,7 @@ async function clearBoard() {
   const cleared = { ...blankBoard(), title: board.title || "Untitled" };
   if (await replaceCurrentBoard(cleared, "clear")) {
     setMenuOpen(false);
-    menuButton.focus();
+    menuButton.focus({ preventScroll: true });
   }
 }
 
