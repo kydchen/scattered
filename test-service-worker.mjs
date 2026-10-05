@@ -6,6 +6,18 @@ import { runInNewContext } from "node:vm";
 const source = await readFile(new URL("./sw.js", import.meta.url), "utf8");
 const origin = "https://preview.example";
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test("every cached page has its local script and stylesheet entry points precached", async () => {
+  const assets = JSON.parse(source.match(/const ASSETS = (\[[^\n]+\]);/)[1]);
+  for (const file of assets.filter(asset => asset.endsWith(".html"))) {
+    const html = await readFile(new URL(file, import.meta.url), "utf8");
+    for (const [, entry] of html.matchAll(/(?:src|href)="([^\"]+\.(?:css|js)(?:\?[^\"]*)?)"/g)) {
+      if (entry.startsWith("https:")) continue;
+      assert.ok(assets.includes(`./${entry}`), `${file} requires offline ${entry}`);
+    }
+  }
+});
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });

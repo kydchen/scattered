@@ -334,7 +334,7 @@ try {
   else await check("the new offline cache loads all updated modules and keeps local saving available", async context => {
     const page = await seed(context);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p2"));
+    await page.waitForFunction(async () => (await caches.keys()).includes("scattered-v86p2-1"));
     await context.setOffline(true);
     await page.reload();
     await page.locator('.node[data-id="a"]').waitFor();
