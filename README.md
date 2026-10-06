@@ -44,9 +44,13 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 Box and lasso selections highlight notes while you drag, using each note's center rather than requiring the whole card to fit inside. Mouse, touch, and Pencil use the same highlight; release to confirm, or cancel to keep the previous selection.
 
+Notes use a native plain-text editor, preserving line breaks and blank lines without importing rich-text formatting. Enter and Escape used to confirm or cancel an input-method candidate are protected from canvas shortcuts.
+
 ## Local data and privacy
 
 Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
+
+Autosave runs after a short pause; continuous typing triggers a save attempt after at most one second. Saves wait for any active workspace write instead of competing with it; storage errors can still prevent completion.
 
 If a write hits the browser's storage limit, Scattered may remove the oldest eligible recovery copies to make room and shows a notice when it does. If a required recovery copy cannot be saved, clearing or deleting the canvas stops, including deletions received through sync. These safeguards do not replace a JSON backup: if saving fails, export before closing, because the latest unsaved input can still be lost.
 

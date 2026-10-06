@@ -6,7 +6,7 @@ import { createDriveSync } from "./drive-sync.js?v=87";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=87";
 import { mountLiveSharing } from "./share-ui.js?v=87";
-import { mirroredEditorCaret, placeEditorCaretAtEnd, readEditorText, setEditorText } from "./note-editor.js?v=88p3";
+import { mirroredEditorCaret, placeEditorCaretAtEnd, readEditorText, setEditorText } from "./note-editor.js?v=88";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
