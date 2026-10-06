@@ -119,7 +119,7 @@ async function edit(page, text, finish = true) {
 }
 async function setRecoveryQuota(page) {
   await page.evaluate(async () => {
-    const w = await import("./workspace.js?v=87");
+    const w = await import("./workspace.js?v=89p1");
     const { board } = w.loadWorkspace(localStorage);
     for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
       ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
@@ -143,11 +143,229 @@ async function exportJson(page) {
   await page.locator("#export-json-button").click();
 }
 try {
+  await check("pending delta: real lifecycle stages only changed cards and recovers after closing the writer", async context => {
+    const nodes = [note("a", 100, 200), ...Array.from({ length: 100 }, (_, i) => note(`b${i}`, 800 + i * 300, 900, "Unchanged ".repeat(100)))];
+    const page = await seed(context, nodes, [{ id: "e", from: "a", to: "b0", arrow: false, label: "Context" }]);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    await page.evaluate(() => {
+      const native = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-document")) throw new DOMException("Full", "QuotaExceededError");
+        return native.call(this, key, value);
+      };
+      const editor = document.querySelector(".node.editing .node-editor");
+      setNoteText(editor, "最后未保存的文字\nLast words");
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    const pending = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find(k => k.startsWith("scattered-pending-delta-v1:"));
+      return JSON.parse(localStorage.getItem(key));
+    });
+    assert.equal(pending.delta.nodes.put.length, 1);
+    assert.equal(pending.delta.contextNodes.length, 1);
+    assert.equal((await stored(page))[0].nodes[0].text, "a", "The primary write really failed");
+    await page.close();
+    const reopened = await context.newPage(); await reopened.goto(origin);
+    await reopened.locator('.node[data-id="a"]').waitFor();
+    const documents = await stored(reopened);
+    assert.equal(documents.length, 1);
+    assert.equal(documents[0].nodes[0].text, "最后未保存的文字\nLast words");
+    assert.equal(documents[0].nodes.length, 101);
+    assert.equal(documents[0].edges[0].label, "Context");
+    assert.equal(await reopened.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending"))), false);
+  });
+
+  await check("pending delta: simultaneous startup waits for the native lock and replays a conflict only once", async context => {
+    const holder = await seed(context);
+    await holder.evaluate(async () => {
+      const w = await import("./workspace.js?v=89p1");
+      const { workspace, board } = w.loadWorkspace(localStorage);
+      const pending = structuredClone(board); pending.nodes[0].text = "Pending edit";
+      w.stagePendingDocument(localStorage, workspace, pending, Date.now, { baseBoard: board });
+      w.saveDocument(localStorage, workspace, { ...board, title: "Peer saved title" });
+      await new Promise(resolve => {
+        void navigator.locks.request("scattered-workspace-v2", async () => {
+          resolve(); await new Promise(release => { window.releaseStartupLock = release; });
+        });
+      });
+    });
+    const a = await context.newPage(), b = await context.newPage();
+    await Promise.all([a.goto(origin, { waitUntil: "commit" }), b.goto(origin, { waitUntil: "commit" })]);
+    await a.waitForTimeout(250);
+    assert.equal(await a.locator(".node").count(), 0);
+    assert.equal((await stored(holder)).length, 1);
+    await holder.evaluate(() => window.releaseStartupLock());
+    await Promise.all([a.locator('.node[data-id="a"]').waitFor(), b.locator('.node[data-id="a"]').waitFor()]);
+    const docs = await stored(a);
+    assert.equal(docs.length, 2);
+    assert.ok(docs.some(d => d.nodes[0].text === "Pending edit"));
+    assert.ok(docs.some(d => d.title === "Peer saved title" && d.nodes[0].text === "a"));
+  });
+
+  await check("pending delta: an ordinary save acknowledges a journal even when clearing it is denied", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    await page.evaluate(() => {
+      const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-pending") && value === "null") throw new DOMException("Denied", "SecurityError");
+        return set.call(this, key, value);
+      };
+      Storage.prototype.removeItem = function(key) {
+        if (this === localStorage && key.startsWith("scattered-pending")) throw new DOMException("Denied", "SecurityError");
+        return remove.call(this, key);
+      };
+      const editor = document.querySelector(".node.editing .node-editor");
+      setNoteText(editor, "First staged words"); editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("scattered-workspace-v2")).appliedPending?.length === 1);
+    await page.locator(".node.editing .node-editor").fill("Later saved words");
+    await page.locator(".node.editing .node-editor").press("Control+Enter");
+    await page.waitForTimeout(300);
+    assert.equal((await stored(page))[0].nodes[0].text, "Later saved words");
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    const docs = await stored(page);
+    assert.equal(docs.length, 1); assert.equal(docs[0].nodes[0].text, "Later saved words");
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending"))), false);
+  });
+
+  for (const locale of ["en-US", "zh-CN"]) {
+    await check(`pending delta: exporting corrupt data preserves a quarantine copy and clears the warning (${locale})`, async context => {
+      const page = await seed(context);
+      await page.evaluate(() => {
+        localStorage.setItem("scattered-pending-delta-v1:broken", '{"private":"unrecoverable test text"}');
+        localStorage.setItem("test-google-token", "never export this token");
+      });
+      await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+      const warning = page.locator('#toast[data-persistent="true"]');
+      assert.match(await warning.textContent(), locale === "zh-CN" ? /原始数据在本机单独保留/ : /set them aside locally/);
+      assert.equal(await warning.getAttribute("role"), "button");
+      await edit(page, "New safely saved words");
+      assert.equal(await warning.isVisible(), true, "Saving must not conceal the unrecovered edits");
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false });
+        const native = URL.createObjectURL;
+        URL.createObjectURL = function(blob) { window.pendingExport = blob.text(); return native.call(this, blob); };
+      });
+      await warning.focus(); await warning.press("Enter");
+      const exported = await page.evaluate(async () => JSON.parse(await window.pendingExport));
+      assert.equal(exported.format, "scattered-pending-recovery");
+      assert.ok(exported.pending.some(p => p.encoded.includes("unrecoverable test text")));
+      assert.ok(!JSON.stringify(exported).includes("never export this token"));
+      await page.waitForFunction(() => localStorage.getItem("scattered-pending-delta-v1:broken") === null);
+      assert.equal(await warning.isVisible(), false);
+      assert.ok(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-quarantined-pending") && localStorage.getItem(k) === '{"private":"unrecoverable test text"}')));
+      await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+      assert.equal(await warning.isVisible(), false);
+      assert.equal((await stored(page))[0].nodes[0].text, "New safely saved words");
+    }, { locale });
+  }
+
+  await check("pending delta: a newer format is retained across reload, then recovers when readable", async context => {
+    const page = await seed(context);
+    await page.evaluate(async () => {
+      const w = await import("./workspace.js?v=89p1"), { workspace, board } = w.loadWorkspace(localStorage);
+      w.stagePendingDocument(localStorage, workspace, { ...board, title: "Newer edits" }, Date.now, { baseBoard: board });
+      const key = Object.keys(localStorage).find(k => k.startsWith("scattered-pending"));
+      const p = JSON.parse(localStorage.getItem(key)); (p.board || p.delta).version += 1;
+      localStorage.setItem(key, JSON.stringify(p));
+    });
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    const warning = page.locator("#toast");
+    assert.match(await warning.textContent(), /newer app/);
+    await Promise.all([page.waitForEvent("load"), warning.click()]);
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.match(await warning.textContent(), /newer app/);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-quarantined"))), false);
+    await page.evaluate(() => {
+      const key = Object.keys(localStorage).find(k => k.startsWith("scattered-pending"));
+      const p = JSON.parse(localStorage.getItem(key)); (p.board || p.delta).version -= 1;
+      localStorage.setItem(key, JSON.stringify(p));
+    });
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal(await warning.isVisible(), false);
+    assert.equal((await stored(page))[0].title, "Newer edits");
+  });
+
+  await check("pending delta: cancelled export or failed quarantine keeps the raw journal and warning", async context => {
+    const page = await seed(context);
+    await page.evaluate(() => localStorage.setItem("scattered-pending-delta-v1:broken", "broken bytes"));
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+      Object.defineProperty(navigator, "share", { configurable: true, value: async () => { throw new DOMException("Cancelled", "AbortError"); } });
+    });
+    await page.locator("#toast").click(); await page.waitForTimeout(80);
+    assert.equal(await page.evaluate(() => localStorage.getItem("scattered-pending-delta-v1:broken")), "broken bytes");
+    assert.match(await page.locator("#toast").textContent(), /set them aside locally/);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "share", { configurable: true, value: async () => {} });
+      const set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-quarantined")) throw new DOMException("Full", "QuotaExceededError");
+        return set.call(this, key, value);
+      };
+    });
+    await page.locator("#toast").click();
+    await page.waitForFunction(() => document.querySelector("#toast").textContent.includes("safekeeping failed"));
+    assert.equal(await page.evaluate(() => localStorage.getItem("scattered-pending-delta-v1:broken")), "broken bytes");
+    assert.equal(await page.locator("#toast").getAttribute("role"), "button");
+  });
+
+  await check("pending delta: export cannot remove pending bytes changed while the share dialog was open", async context => {
+    const page = await seed(context);
+    await page.evaluate(() => localStorage.setItem("scattered-pending-delta-v1:broken", "old broken bytes"));
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+      Object.defineProperty(navigator, "share", { configurable: true, value: () => new Promise(resolve => { window.finishRecoveryExport = resolve; }) });
+    });
+    await page.locator("#toast").click();
+    await page.waitForFunction(() => window.finishRecoveryExport);
+    await page.evaluate(() => {
+      localStorage.setItem("scattered-pending-delta-v1:broken", "new pending bytes");
+      window.finishRecoveryExport();
+    });
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => localStorage.getItem("scattered-pending-delta-v1:broken")), "new pending bytes");
+    assert.equal(await page.locator("#toast").isVisible(), true);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-quarantined"))), false);
+  });
+
+  for (const locale of ["en-US", "zh-CN"]) {
+    await check(`pending delta: current save failure takes priority, then recovery warning returns (${locale})`, async context => {
+      const page = await seed(context);
+      await page.evaluate(() => localStorage.setItem("scattered-pending-delta-v1:broken", "broken bytes"));
+      await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+      await page.evaluate(() => {
+        const set = Storage.prototype.setItem;
+        window.blockDocumentSave = true;
+        Storage.prototype.setItem = function(key, value) {
+          if (this === localStorage && window.blockDocumentSave && key.startsWith("scattered-document")) throw new DOMException("Full", "QuotaExceededError");
+          return set.call(this, key, value);
+        };
+      });
+      await edit(page, "Must not hide my save failure");
+      const warning = page.locator("#toast");
+      assert.match(await warning.textContent(), locale === "zh-CN" ? /存储已满/ : /Storage is full/);
+      assert.equal(await warning.getAttribute("role"), null);
+      assert.equal(await warning.getAttribute("data-dismissible"), "false");
+      await page.evaluate(() => { window.blockDocumentSave = false; });
+      await edit(page, "Successfully saved now");
+      assert.match(await warning.textContent(), locale === "zh-CN" ? /原始数据在本机单独保留/ : /set them aside locally/);
+      assert.equal(await warning.getAttribute("role"), "button");
+    }, { locale });
+  }
+
   await check("plaintext editor: existing whitespace, blank lines and markup round-trip without changes", async context => {
     const page = await seed(context);
     for (const text of ["", "\n", "\n\n", "a\n", "a\n\n", "  spaces  \n\t中文🙂 e\u0301\n", '<img src=x onerror="alert(1)">\n<script>bad()</script>']) {
       await page.evaluate(async text => {
-        const w = await import("./workspace.js?v=87");
+        const w = await import("./workspace.js?v=89p1");
         const { workspace, board } = w.loadWorkspace(localStorage);
         board.nodes[0].text = text;
         w.saveDocument(localStorage, workspace, board);
@@ -360,7 +578,7 @@ try {
       return JSON.parse(localStorage.getItem(`scattered-document-v2:${w.activeId}`)).nodes[0].text === "Waiting 4";
     });
     assert.equal((await stored(page)).length, 1);
-    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending-document"))), false);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending"))), false);
     // Switching canvases awaits the same flush; no old deadline may write into the new canvas.
     await page.locator(".node.editing .node-editor").fill("Before switching");
     await page.locator("#boards-button").click();
@@ -548,7 +766,7 @@ try {
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
     await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=87");
+      const w = await import("./workspace.js?v=89p1");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
         ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
@@ -651,12 +869,12 @@ try {
     await page.evaluate(() => {
       const nativeSet = Storage.prototype.setItem;
       Storage.prototype.setItem = function(key, value) {
-        if (this === localStorage && key.startsWith("scattered-pending-document")) throw new DOMException("Full", "QuotaExceededError");
+        if (this === localStorage && key.startsWith("scattered-pending")) throw new DOMException("Full", "QuotaExceededError");
         return nativeSet.call(this, key, value);
       };
     });
     await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=87");
+      const w = await import("./workspace.js?v=89p1");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, board, "delete", () => i);
     });
@@ -790,7 +1008,7 @@ try {
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
     const filled = await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=87");
+      const w = await import("./workspace.js?v=89p1");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
         ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],

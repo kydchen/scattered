@@ -399,7 +399,7 @@ function syncLab() {
 // Use the actual app guards, not an always-idle approximation of the UI.
 const appSource = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const ui = {
-  storageReady: true, workspaceActionPending: false, boardDirty: false, mode: null,
+  storageReady: true, workspaceActionPending: false, boardDirty: false, mode: null, pendingRecoveryError: null,
   selectedIds: new Set(["note"]), selectedEdgeId: "edge", keyboardLinkSourceIds: null,
   menu: { hidden: true }, boardPicker: { classList: { contains: () => false } },
   searchPanel: { hidden: true }, boardTitleEditor: { hidden: true }, edgeLabelEditor: { hidden: true },
@@ -409,6 +409,10 @@ ui.document = { querySelector: (selector) => selector === ".node.editing" && ui.
 const guardSource = ["canSyncDriveWorkspace", "canApplyDriveWorkspace"].map((name) => appSource.match(new RegExp(`function ${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))[0]).join("\n");
 const appGuard = (name) => vm.runInNewContext(`${guardSource}; ${name}`, ui);
 assert.equal(appGuard("canApplyDriveWorkspace")(), true, "Selection alone must not indefinitely block receiving remote changes");
+ui.pendingRecoveryError = new Error("Recovery incomplete");
+assert.equal(appGuard("canSyncDriveWorkspace")(), false, "Do not upload a workspace before its pending recovery completes");
+assert.equal(appGuard("canApplyDriveWorkspace")(), false, "Keep the recovery baseline intact while recovery is incomplete");
+ui.pendingRecoveryError = null;
 ui.editing = true;
 assert.equal(appGuard("canApplyDriveWorkspace")(), false, "Applying still waits for the active editor");
 assert.equal(appGuard("canSyncDriveWorkspace")(), true, "Persisted input can upload while editing");

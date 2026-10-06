@@ -1,4 +1,4 @@
-import { BOARD_VERSION, blankBoard, createId, normalizeBoard, parseImportedBoard } from "./model.js";
+import { BOARD_VERSION, IMPORT_VERSIONS, blankBoard, createId, normalizeBoard, parseImportedBoard } from "./model.js?v=89p1";
 
 const LEGACY_BOARD_KEY = "scattered-board-v1";
 const LEGACY_WORKSPACE_KEY = "scattered-workspace-v1";
@@ -18,6 +18,10 @@ const PENDING_FORMAT = "scattered-pending-document";
 const PENDING_STORAGE_VERSION = 1;
 const PENDING_SESSION_ID = createId();
 const PENDING_KEY = `${PENDING_PREFIX}${PENDING_SESSION_ID}`;
+// A separate key prevents an older installed app from deleting an unknown format.
+const DELTA_PREFIX = "scattered-pending-delta-v1:";
+const DELTA_KEY = `${DELTA_PREFIX}${PENDING_SESSION_ID}`;
+const QUARANTINE_PREFIX = "scattered-quarantined-pending-v1:";
 const IMPORT_JOURNAL_PREFIX = "scattered-import-journal-v1:";
 const IMPORT_JOURNAL_STALE_MS = 2 * 60 * 1000;
 const ACCOUNT_SCOPE_PREFIX = "scattered-account-workspace-v1:";
@@ -82,7 +86,8 @@ export function createWorkspaceSlots(baseStorage) {
       const keys = [];
       for (let index = 0; index < baseStorage.length; index += 1) {
         const key = baseStorage.key(index);
-        if (typeof key === "string" && key.startsWith(GUEST_SCOPE_PREFIX) && key !== recoveryKey) keys.push(key);
+        if (typeof key === "string" && key.startsWith(GUEST_SCOPE_PREFIX) && key !== recoveryKey
+          && !key.startsWith(`${GUEST_SCOPE_PREFIX}${QUARANTINE_PREFIX}`)) keys.push(key);
       }
       keys.forEach((key) => {
         try { baseStorage.removeItem(key); } catch {}
@@ -197,7 +202,7 @@ function recoveryRetryStorage(storage, onRecoveryEvicted) {
 export function stagePendingDocument(storage, workspace, board, now = Date.now, options = {}) {
   const boardId = workspace.activeId;
   const expectedRevision = workspace.boards.find((item) => item.id === boardId)?.revision ?? null;
-  storage.setItem(PENDING_KEY, JSON.stringify({
+  const pending = {
     format: PENDING_FORMAT,
     storageVersion: PENDING_STORAGE_VERSION,
     id: createId(),
@@ -207,18 +212,32 @@ export function stagePendingDocument(storage, workspace, board, now = Date.now, 
     viewOnly: options.viewOnly === true,
     board: normalizeBoard(board),
     savedAt: now(),
-  }));
+  };
+  let key = PENDING_KEY;
+  if (options.baseBoard) {
+    key = DELTA_KEY;
+    pending.storageVersion = 2;
+    const delta = createPendingDelta(normalizeBoard(options.baseBoard), pending.board);
+    if (JSON.stringify(delta).length < JSON.stringify(pending.board).length) {
+      delete pending.board;
+      pending.delta = delta;
+    }
+  }
+  // Lifecycle writes stay raw: never evict recovery copies for a journal.
+  storage.setItem(key, JSON.stringify(pending));
+  return pending.id;
 }
 
 export function clearPendingDocument(storage = localStorage) {
   removePendingKey(storage, PENDING_KEY);
+  removePendingKey(storage, DELTA_KEY);
 }
 
 export function loadWorkspace(storage = localStorage, now = Date.now) {
   cleanupInterruptedImports(storage, now);
   const workspace = readWorkspace(storage) || initializeV2Storage(storage, now);
   markV2Ready(storage);
-  recoverPendingDocuments(storage, workspace, now);
+  const pendingError = recoverPendingDocuments(storage, workspace, now);
   if (workspace.boards.some((item) => !readDocument(storage, item.id).board)) {
     const repaired = reattachWorkspaceDocuments(storage, workspace)
       || createInitialWorkspace(storage, blankBoard(), now);
@@ -231,12 +250,15 @@ export function loadWorkspace(storage = localStorage, now = Date.now) {
   const loaded = readDocument(storage, activeId);
   if (loaded.board) {
     updateMetadata(workspace, activeId, loaded.board.title, undefined, loaded.revision);
-    writeWorkspace(storage, workspace);
-    return { workspace, board: loaded.board, recovered: loaded.recovered };
+    try { writeWorkspace(storage, workspace); } catch (error) {
+      // A failed replay/index repair must not hide an already durable canvas.
+      if (!pendingError) throw error;
+    }
+    return { workspace, board: loaded.board, recovered: loaded.recovered, pendingError };
   }
   const board = blankBoard();
   const saved = saveDocument(storage, workspace, board, now);
-  return { workspace, board: saved, recovered: false };
+  return { workspace, board: saved, recovered: false, pendingError };
 }
 
 export function createWorkspaceBackup(storage, workspace, currentBoard) {
@@ -350,6 +372,7 @@ export function applySyncWorkspace(storage, workspace, value, now = Date.now) {
       : targetBoards[0].id;
   const nextWorkspace = {
     version: 1,
+    ...(current.appliedPending?.length ? { appliedPending: current.appliedPending } : {}),
     activeId,
     boards: targetBoards.map((item) => ({
       id: item.id,
@@ -508,6 +531,7 @@ export function saveDocument(storage, workspace, board, now = Date.now, options 
   const id = workspace.activeId;
   const expectedRevision = workspace.boards.find((item) => item.id === id)?.revision ?? null;
   const nextWorkspace = mergeWorkspace(storage, workspace);
+  if (options.pendingId) nextWorkspace.appliedPending = [...new Set([...(nextWorkspace.appliedPending || []), options.pendingId])];
   const stored = readDocument(storage, id);
   const deleted = nextWorkspace.tombstones.some((item) => item.id === id);
   // Only callers that compared content with their loaded baseline may opt in.
@@ -809,7 +833,8 @@ function parseWorkspace(encoded) {
     const liveBoards = boards.filter((item) => !deletedIds.has(item.id));
     if (liveBoards.length === 0) return null;
     const activeId = liveBoards.some((item) => item.id === value.activeId) ? value.activeId : liveBoards[0].id;
-    return { version: 1, activeId, boards: liveBoards, tombstones };
+    const appliedPending = Array.isArray(value.appliedPending) ? value.appliedPending.filter(id => typeof id === "string" && id) : [];
+    return { version: 1, activeId, boards: liveBoards, tombstones, ...(appliedPending.length ? { appliedPending } : {}) };
   } catch {
     return null;
   }
@@ -887,16 +912,28 @@ function markV2Ready(storage) {
 }
 
 function recoverPendingDocuments(storage, workspace, now) {
-  listStorageKeys(storage, [PENDING_PREFIX]).forEach((key) => {
+  const failures = [];
+  listStorageKeys(storage, [PENDING_PREFIX, DELTA_PREFIX]).forEach((key) => {
+    let encoded;
     try {
-      const pending = parsePendingDocument(storage.getItem(key), key.slice(PENDING_PREFIX.length));
+      encoded = storage.getItem(key);
+      const pending = parsePendingDocument(encoded, key.slice(key.startsWith(DELTA_PREFIX) ? DELTA_PREFIX.length : PENDING_PREFIX.length));
       if (!pending) {
+        if (encoded !== "null" && encoded !== null) throw new Error("pending.invalid");
         removePendingKey(storage, key);
         return;
       }
       if (pendingAlreadyApplied(storage, workspace, pending)) {
+        // Persist the receipt before clearing: a crash may have written the
+        // document's pendingId but not its workspace index yet.
+        workspace.appliedPending = [...new Set([...(workspace.appliedPending || []), pending.id])];
+        writeWorkspace(storage, workspace);
         removePendingKey(storage, key);
         return;
+      }
+      if (pending.delta) {
+        const stored = readDocument(storage, pending.boardId);
+        pending.board = applyPendingDelta(stored.board || { ...blankBoard(), title: pending.delta.title }, pending.delta);
       }
       const candidate = cloneWorkspace(workspace);
       candidate.activeId = pending.boardId;
@@ -915,45 +952,198 @@ function recoverPendingDocuments(storage, workspace, now) {
       });
       applyWorkspace(workspace, candidate);
       removePendingKey(storage, key);
-    } catch {
-      // Keep the journal and the already-loaded workspace for the next startup attempt.
+    } catch (error) {
+      // Keep both the original bytes and the saved workspace; do not present an
+      // incomplete recovery as a successful save. The UI offers a recovery file.
+      failures.push({ key, encoded, code: ["pending.invalid", "pending.newer"].includes(error.message) ? error.message : "pending.retry" });
     }
   });
+  return pendingRecoveryFailure(failures);
+}
+
+function pendingRecoveryFailure(entries) {
+  if (!entries.length) return null;
+  const code = ["pending.newer", "pending.retry", "pending.invalid"].find(code => entries.some(entry => entry.code === code));
+  return Object.assign(new Error(code), { entries });
 }
 
 function parsePendingDocument(encoded, keyId) {
   try {
     const value = JSON.parse(encoded);
+    if (value?.format === PENDING_FORMAT && (value.storageVersion > 2 || (value.delta || value.board)?.version > BOARD_VERSION)) {
+      throw new Error("pending.newer");
+    }
     if (!isPlainObject(value)
       || value.format !== PENDING_FORMAT
-      || value.storageVersion !== PENDING_STORAGE_VERSION
+      || ![PENDING_STORAGE_VERSION, 2].includes(value.storageVersion)
       || typeof value.id !== "string"
       || !value.id
       || value.sessionId !== keyId
       || typeof value.boardId !== "string"
       || !value.boardId
       || (value.expectedRevision !== null && (typeof value.expectedRevision !== "string" || !value.expectedRevision))) return null;
-    const board = parseStoredBoard(value.board);
-    if (!board) return null;
+    const delta = value.storageVersion === 2 && value.delta ? parsePendingDelta(value.delta) : null;
+    const board = value.delta ? null : value.storageVersion === 2 ? parsePendingBoard(value.board) : parseStoredBoard(value.board);
+    if (!board && !delta) return null;
     return {
       id: value.id,
       boardId: value.boardId,
       expectedRevision: value.expectedRevision,
       viewOnly: value.viewOnly === true,
       board,
+      delta,
       savedAt: Number.isFinite(Number(value.savedAt)) ? Number(value.savedAt) : 0,
     };
-  } catch {
+  } catch (error) {
+    if (error.message === "pending.newer") throw error;
     return null;
   }
 }
 
+function parsePendingBoard(value) {
+  if (!isPlainObject(value) || !IMPORT_VERSIONS.has(value.version) || !Array.isArray(value.edges)) return null;
+  const board = normalizeBoard(value);
+  // Permit only the known format migration, not normalization that silently
+  // drops corrupt cards/edges or changes authored content.
+  const expected = { ...value, version: BOARD_VERSION, edges: value.edges.map(edge =>
+    value.version === 3 && edge?.arrow === true ? { ...edge, arrow: "forward" } : edge) };
+  return JSON.stringify(board) === JSON.stringify(expected) ? board : null;
+}
+
 function pendingAlreadyApplied(storage, workspace, pending) {
-  return workspace.boards.some((item) => {
-    const loaded = readDocument(storage, item.id);
-    return loaded.pendingId === pending.id
-      || (item.id === pending.boardId && loaded.board && boardsMatch(loaded.board, pending.board));
+  if (workspace.appliedPending?.includes(pending.id)) return true;
+  // A crash can leave a completed new document not yet listed in the index.
+  const ids = new Set([...workspace.boards.map(item => item.id), ...listDocumentIds(storage, BOARD_PREFIX, BACKUP_PREFIX)]);
+  return [...ids].some((id) => {
+    const loaded = readDocument(storage, id);
+    const applied = loaded.pendingId === pending.id
+      || (id === pending.boardId && loaded.board && pending.board && boardsMatch(loaded.board, pending.board));
+    if (applied && !workspace.boards.some(item => item.id === id) && !workspace.tombstones.some(item => item.id === id)) {
+      ensureMetadata(workspace, id, loaded.board.title, loaded.updatedAt, loaded.revision);
+      workspace.activeId = id;
+    }
+    return applied;
   });
+}
+
+function createPendingDelta(base, board) {
+  const changes = (before, after) => {
+    const previous = new Map(before.map(item => [item.id, item]));
+    const current = new Set(after.map(item => item.id));
+    const put = after.filter(item => JSON.stringify(previous.get(item.id)) !== JSON.stringify(item));
+    const remove = before.filter(item => !current.has(item.id)).map(item => item.id);
+    const natural = [...before.filter(item => current.has(item.id)).map(item => item.id), ...after.filter(item => !previous.has(item.id)).map(item => item.id)];
+    const order = after.map(item => item.id);
+    return { put, remove, ...(JSON.stringify(natural) === JSON.stringify(order) ? {} : { order }) };
+  };
+  const nodes = changes(base.nodes, board.nodes), edges = changes(base.edges, board.edges);
+  const changedIds = new Set(nodes.put.map(node => node.id));
+  const changedEdges = new Set(edges.put.map(edge => edge.id));
+  const contextEdges = board.edges.filter(edge => !changedEdges.has(edge.id) && (changedIds.has(edge.from) || changedIds.has(edge.to)));
+  const endpoints = new Set([...edges.put, ...contextEdges].flatMap(edge => [edge.from, edge.to]));
+  return {
+    version: BOARD_VERSION, title: board.title, titleChanged: base.title !== board.title, view: board.view,
+    nodes, edges, contextEdges,
+    contextNodes: board.nodes.filter(node => endpoints.has(node.id) && !changedIds.has(node.id)),
+  };
+}
+
+function parsePendingDelta(value) {
+  if (!isPlainObject(value) || !IMPORT_VERSIONS.has(value.version) || typeof value.titleChanged !== "boolean"
+    || !Array.isArray(value.contextNodes) || !Array.isArray(value.contextEdges)) return null;
+  for (const group of [value.nodes, value.edges]) {
+    if (!isPlainObject(group) || !Array.isArray(group.put) || !Array.isArray(group.remove)) return null;
+    const ids = group.put.map(item => item?.id);
+    for (const list of [ids, group.remove, ...(group.order === undefined ? [] : [group.order])]) {
+      if (!Array.isArray(list) || list.some(id => typeof id !== "string" || !id) || new Set(list).size !== list.length) return null;
+    }
+    const removed = new Set(group.remove), ordered = group.order && new Set(group.order);
+    if (ids.some(id => removed.has(id)) || group.order?.some(id => removed.has(id))
+      || (ordered && ids.some(id => !ordered.has(id)))) return null;
+  }
+  const removedNodes = new Set(value.nodes.remove), removedEdges = new Set(value.edges.remove);
+  if (value.contextNodes.some(node => removedNodes.has(node?.id)) || value.contextEdges.some(edge => removedEdges.has(edge?.id))) return null;
+  const board = { version: value.version, title: value.title, view: value.view, nodes: [...value.nodes.put, ...value.contextNodes], edges: [...value.edges.put, ...value.contextEdges] };
+  // Reject corrupt records instead of letting normalization silently drop a
+  // changed card or a dangling edge. All writers use this canonical shape.
+  const migrated = parsePendingBoard({ version: board.version, title: board.title, nodes: board.nodes, edges: board.edges, view: board.view });
+  if (!migrated) return null;
+  return { ...value, version: BOARD_VERSION,
+    nodes: { ...value.nodes, put: migrated.nodes.slice(0, value.nodes.put.length) },
+    edges: { ...value.edges, put: migrated.edges.slice(0, value.edges.put.length) },
+    contextNodes: migrated.nodes.slice(value.nodes.put.length), contextEdges: migrated.edges.slice(value.edges.put.length),
+  };
+}
+
+function applyPendingDelta(base, delta) {
+  const apply = (items, changes, context) => {
+    const deleted = new Set(changes.remove);
+    const merged = new Map(items.filter(item => !deleted.has(item.id)).map(item => [item.id, item]));
+    context.forEach(item => { if (!merged.has(item.id) && !deleted.has(item.id)) merged.set(item.id, item); });
+    changes.put.forEach(item => merged.set(item.id, item));
+    if (!changes.order) return [...merged.values()];
+    const ordered = changes.order.flatMap(id => merged.has(id) ? [merged.get(id)] : []);
+    const ids = new Set(changes.order);
+    return [...ordered, ...[...merged.values()].filter(item => !ids.has(item.id))];
+  };
+  const nodes = apply(base.nodes, delta.nodes, delta.contextNodes);
+  const pair = edge => JSON.stringify([edge.from, edge.to].sort());
+  const replacementPairs = new Set(delta.edges.put.map(pair));
+  const replacementIds = new Set(delta.edges.put.map(edge => edge.id));
+  const edges = apply(base.edges.filter(edge => replacementIds.has(edge.id) || !replacementPairs.has(pair(edge))), delta.edges, delta.contextEdges);
+  return normalizeBoard({ ...base, title: delta.titleChanged ? delta.title : base.title, nodes, edges, view: delta.view });
+}
+
+export function pendingRecoveryBackup(storage) {
+  const pending = listStorageKeys(storage, [PENDING_PREFIX, DELTA_PREFIX]).map(key => ({ key, encoded: storage.getItem(key) }));
+  const quarantined = listStorageKeys(storage, [QUARANTINE_PREFIX]).map(key => ({ key, encoded: storage.getItem(key) }));
+  const boardIds = new Set([...pending, ...quarantined].flatMap(entry => {
+    try {
+      const id = JSON.parse(entry.encoded)?.boardId;
+      return typeof id === "string" && id ? [id] : [];
+    } catch { return []; }
+  }));
+  return {
+    format: "scattered-pending-recovery", version: 1,
+    // Raw pending bytes plus only their source documents, never unrelated
+    // canvases, other accounts, authorization tokens or sharing credentials.
+    documents: [...boardIds].flatMap(id => [boardKey(id), backupKey(id)]).map(key => ({ key, encoded: storage.getItem(key) })),
+    pending, quarantined,
+  };
+}
+
+// Caller holds the workspace lock and has successfully requested an export of
+// this exact backup. Use raw scoped storage: quarantining must not evict history.
+export function quarantinePendingRecovery(storage, backup, error) {
+  const remaining = [];
+  for (const entry of error?.entries || []) {
+    const encoded = storage.getItem(entry.key);
+    if (encoded === null || encoded === "null") continue;
+    if (entry.code !== "pending.invalid" || encoded !== entry.encoded
+      || !backup.pending.some(item => item.key === entry.key && item.encoded === encoded)) {
+      remaining.push(entry);
+      continue;
+    }
+    // A completed copy is reusable after an interrupted removal. Never replace
+    // a different quarantined record from this tab's earlier recovery attempt.
+    let key = `${QUARANTINE_PREFIX}${entry.key}`, suffix = 0;
+    while (storage.getItem(key) !== null && storage.getItem(key) !== encoded) key = `${QUARANTINE_PREFIX}${entry.key}:${++suffix}`;
+    if (storage.getItem(key) !== encoded) storage.setItem(key, encoded);
+    if (storage.getItem(key) !== encoded) throw new Error("pending.quarantineFailed");
+    // A pagehide journal can change during the export dialog; do not remove it.
+    if (storage.getItem(entry.key) === encoded) storage.removeItem(entry.key);
+    if (storage.getItem(entry.key) !== null) remaining.push(entry);
+  }
+  return pendingRecoveryFailure(remaining);
+}
+
+function retainPendingReceipts(storage, workspace) {
+  if (!workspace.appliedPending?.length) return;
+  const pendingIds = new Set(listStorageKeys(storage, [PENDING_PREFIX, DELTA_PREFIX]).flatMap(key => {
+    try { return [JSON.parse(storage.getItem(key))?.id]; } catch { return []; }
+  }));
+  workspace.appliedPending = workspace.appliedPending.filter(id => pendingIds.has(id));
+  if (!workspace.appliedPending.length) delete workspace.appliedPending;
 }
 
 function removePendingKey(storage, key) {
@@ -1094,6 +1284,7 @@ function writeRecovery(storage, entries) {
 }
 
 function writeWorkspace(storage, workspace) {
+  retainPendingReceipts(storage, workspace);
   const previous = storage.getItem(WORKSPACE_KEY);
   const next = JSON.stringify(workspace);
   if (previous === next) return;
@@ -1102,6 +1293,7 @@ function writeWorkspace(storage, workspace) {
 }
 
 function writeWorkspaceCopies(storage, workspace) {
+  retainPendingReceipts(storage, workspace);
   const next = JSON.stringify(workspace);
   storage.setItem(WORKSPACE_KEY, next);
   storage.setItem(WORKSPACE_BACKUP_KEY, next);
@@ -1120,6 +1312,8 @@ function applyWorkspace(target, source) {
   target.activeId = source.activeId;
   target.boards = source.boards;
   target.tombstones = source.tombstones;
+  if (source.appliedPending?.length) target.appliedPending = [...source.appliedPending];
+  else delete target.appliedPending;
 }
 
 function updateMetadata(workspace, id, title, updatedAt, revision) {
@@ -1140,6 +1334,8 @@ function ensureMetadata(workspace, id, title, updatedAt, revision) {
 function mergeWorkspace(storage, workspace) {
   const latest = readWorkspace(storage);
   const next = latest ? cloneWorkspace(latest) : cloneWorkspace(workspace);
+  const appliedPending = [...new Set([...(next.appliedPending || []), ...(workspace.appliedPending || [])])];
+  if (appliedPending.length) next.appliedPending = appliedPending;
   next.tombstones = mergeTombstones(next.tombstones, workspace.tombstones || []);
   const deletedIds = new Set(next.tombstones.map((item) => item.id));
   next.boards = next.boards.filter((item) => !deletedIds.has(item.id));

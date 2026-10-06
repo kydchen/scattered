@@ -1,0 +1,79 @@
+{
+  "base": {
+    "version": 4,
+    "title": "Before",
+    "nodes": [
+      { "id": "a", "text": "Original", "x": 20, "y": 30, "color": "plain", "width": 218 },
+      { "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 }
+    ],
+    "edges": [{ "id": "ab", "from": "a", "to": "b", "arrow": false, "label": "Before" }],
+    "view": { "x": 0, "y": 0, "scale": 1 }
+  },
+  "expected": {
+    "version": 4,
+    "title": "Recovered · 恢复",
+    "nodes": [
+      { "id": "c", "text": "新增\nNew", "x": -40, "y": 360, "color": "yellow", "width": 218 },
+      { "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 },
+      { "id": "a", "text": "末尾输入\nLast words\n\n", "x": 32, "y": 48, "color": "rose", "width": 300 }
+    ],
+    "edges": [{ "id": "ab", "from": "a", "to": "b", "arrow": "forward", "label": "恢复线" }],
+    "view": { "x": 12, "y": -34, "scale": 0.5 }
+  },
+  "versions": {
+    "3": {
+      "board": {
+        "version": 3,
+        "title": "Recovered · 恢复",
+        "nodes": [
+          { "id": "c", "text": "新增\nNew", "x": -40, "y": 360, "color": "yellow", "width": 218 },
+          { "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 },
+          { "id": "a", "text": "末尾输入\nLast words\n\n", "x": 32, "y": 48, "color": "rose", "width": 300 }
+        ],
+        "edges": [{ "id": "ab", "from": "a", "to": "b", "arrow": true, "label": "恢复线" }],
+        "view": { "x": 12, "y": -34, "scale": 0.5 }
+      },
+      "delta": {
+        "version": 3, "title": "Recovered · 恢复", "titleChanged": true,
+        "view": { "x": 12, "y": -34, "scale": 0.5 },
+        "nodes": {
+          "put": [
+            { "id": "a", "text": "末尾输入\nLast words\n\n", "x": 32, "y": 48, "color": "rose", "width": 300 },
+            { "id": "c", "text": "新增\nNew", "x": -40, "y": 360, "color": "yellow", "width": 218 }
+          ],
+          "remove": [], "order": ["c", "b", "a"]
+        },
+        "edges": { "put": [{ "id": "ab", "from": "a", "to": "b", "arrow": true, "label": "恢复线" }], "remove": [] },
+        "contextNodes": [{ "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 }],
+        "contextEdges": []
+      }
+    },
+    "4": {
+      "board": {
+        "version": 4,
+        "title": "Recovered · 恢复",
+        "nodes": [
+          { "id": "c", "text": "新增\nNew", "x": -40, "y": 360, "color": "yellow", "width": 218 },
+          { "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 },
+          { "id": "a", "text": "末尾输入\nLast words\n\n", "x": 32, "y": 48, "color": "rose", "width": 300 }
+        ],
+        "edges": [{ "id": "ab", "from": "a", "to": "b", "arrow": "forward", "label": "恢复线" }],
+        "view": { "x": 12, "y": -34, "scale": 0.5 }
+      },
+      "delta": {
+        "version": 4, "title": "Recovered · 恢复", "titleChanged": true,
+        "view": { "x": 12, "y": -34, "scale": 0.5 },
+        "nodes": {
+          "put": [
+            { "id": "a", "text": "末尾输入\nLast words\n\n", "x": 32, "y": 48, "color": "rose", "width": 300 },
+            { "id": "c", "text": "新增\nNew", "x": -40, "y": 360, "color": "yellow", "width": 218 }
+          ],
+          "remove": [], "order": ["c", "b", "a"]
+        },
+        "edges": { "put": [{ "id": "ab", "from": "a", "to": "b", "arrow": "forward", "label": "恢复线" }], "remove": [] },
+        "contextNodes": [{ "id": "b", "text": "Endpoint", "x": 400, "y": 60, "color": "mint", "width": 260 }],
+        "contextEdges": []
+      }
+    }
+  }
+}

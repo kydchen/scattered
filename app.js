@@ -1,11 +1,11 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=87";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, pendingRecoveryBackup, quarantinePendingRecovery, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=89p1";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=87";
+import { createDriveSync } from "./drive-sync.js?v=89p1";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=87";
-import { mountLiveSharing } from "./share-ui.js?v=87";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=89p1";
+import { mountLiveSharing } from "./share-ui.js?v=89p1";
 import { mirroredEditorCaret, placeEditorCaretAtEnd, readEditorText, setEditorText } from "./note-editor.js?v=88";
 
 const THEME_KEY = "scattered-theme";
@@ -98,10 +98,12 @@ const duplicateSelectionButton = document.querySelector("#duplicate-selection");
 
 const workspaceSlots = createWorkspaceSlots(localStorage);
 const workspaceStorage = workspaceSlots.storage;
-const initialWorkspace = initializeWorkspace();
+const initialWorkspace = await initializeWorkspace();
 let workspace = initialWorkspace.workspace;
 let board = initialWorkspace.board;
 let savedBoardContent = syncBoardContent(board);
+let stagedPendingId = null;
+let pendingRecoveryError = initialWorkspace.pendingError || null;
 let workspaceRefreshTimer = null;
 let workspaceRefreshPending = false;
 let storageReady = initialWorkspace.storageReady;
@@ -1266,6 +1268,7 @@ async function disconnectDriveAccount(event) {
     workspaceSlots.switchToGuest();
     const loaded = await withWorkspaceLock((workspaceStorage) => loadWorkspace(workspaceStorage), workspaceStorage, reportRecoveryEviction);
     workspace = loaded.workspace;
+    pendingRecoveryError = loaded.pendingError || null;
     replaceBoard(loaded.board);
     updateDriveSyncControl("disconnected");
     clearSaveFailure();
@@ -1333,6 +1336,7 @@ function updateDriveSyncControl(status) {
 
 function canSyncDriveWorkspace() {
   return storageReady
+    && !pendingRecoveryError
     && !workspaceActionPending;
 }
 
@@ -1384,6 +1388,7 @@ async function switchDriveAccount(accountKey) {
       const guest = previousWasGuest ? createSyncWorkspace(workspaceStorage, workspace) : null;
       workspaceSlots.switchTo(accountKey);
       const account = loadWorkspace(workspaceStorage);
+      if (account.pendingError) return account; // Keep the guest workspace until recovery can complete.
       if (!guest || isDisposableSyncWorkspace(guest)) {
         if (guest) workspaceSlots.resetGuest();
         return account;
@@ -1394,9 +1399,10 @@ async function switchDriveAccount(accountKey) {
         : (await mergeSyncWorkspaces(guest, accountSnapshot, [])).workspace;
       const claimedBoard = applySyncWorkspace(workspaceStorage, account.workspace, claimed);
       workspaceSlots.resetGuest();
-      return { workspace: account.workspace, board: claimedBoard };
+      return { ...account, board: claimedBoard };
     }, workspaceStorage, reportRecoveryEviction);
     workspace = loaded.workspace;
+    pendingRecoveryError = loaded.pendingError || null;
     replaceBoard(loaded.board);
     clearSaveFailure();
     updateRecoveryControl();
@@ -3068,9 +3074,9 @@ function onKeyDown(event) {
 }
 
 function initializeWorkspace() {
-  try {
-    return { ...loadWorkspace(workspaceStorage), storageReady: true };
-  } catch {
+  // Replay changes documents too, so startup must use the same lock as saves.
+  // Do not evict recovery copies during startup before the UI can report it.
+  return withWorkspaceLock(() => ({ ...loadWorkspace(workspaceStorage), storageReady: true })).catch(() => {
     const id = createId();
     return {
       workspace: { version: 1, activeId: id, boards: [{ id, title: "Untitled", updatedAt: 0 }] },
@@ -3078,7 +3084,7 @@ function initializeWorkspace() {
       recovered: false,
       storageReady: false,
     };
-  }
+  });
 }
 
 function scheduleSave() {
@@ -3113,7 +3119,10 @@ function stagePendingSave() {
   if (!boardDirty) return;
   try {
     const pending = boardWithoutDragPreview();
-    stagePendingDocument(workspaceStorage, workspace, pending, Date.now, { viewOnly: syncBoardContent(pending) === savedBoardContent });
+    stagedPendingId = stagePendingDocument(workspaceStorage, workspace, pending, Date.now, {
+      baseBoard: JSON.parse(savedBoardContent),
+      viewOnly: syncBoardContent(pending) === savedBoardContent,
+    });
   } catch (error) {
     reportStorageFailure(error);
   }
@@ -3147,7 +3156,7 @@ async function saveDirtyBoard() {
         const previousId = workspace.activeId;
         // Save directly: retrying a disposable journal here can evict history
         // even when replacing the actual document already fits.
-        const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly });
+        const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly, pendingId: stagedPendingId });
         const conflicted = workspace.activeId !== previousId;
         if (viewOnly && (conflicted || syncBoardContent(saved) !== savedBoardContent)) {
           replaceBoard(saved, false, !conflicted);
@@ -3161,6 +3170,7 @@ async function saveDirtyBoard() {
         savedBoardContent = syncBoardContent(saved);
         boardDirty = false;
         clearPendingDocument(workspaceStorage);
+        stagedPendingId = null;
         clearSaveFailure();
         renderBoardList();
         if (conflicted && !viewOnly) showToast(t("conflictCopy"));
@@ -3485,17 +3495,52 @@ function acknowledgeRecoveryNotice(id = recoveryNoticeId) {
   if (toast?.dataset.dismissible === "true") refreshPersistentToast();
 }
 
-function dismissRecoveryNotice(event) {
+async function dismissRecoveryNotice(event) {
   if (toast.dataset.dismissible !== "true") return;
   event.preventDefault();
   event.stopPropagation();
+  if (pendingRecoveryError) {
+    if (pendingRecoveryError.message === "pending.newer") {
+      location.reload();
+      return;
+    }
+    const error = pendingRecoveryError;
+    const scope = workspaceSlots.accountKey || (workspaceSlots.isGuest ? "guest" : "local");
+    const unchanged = () => error === pendingRecoveryError && scope === (workspaceSlots.accountKey || (workspaceSlots.isGuest ? "guest" : "local"));
+    try {
+      const backup = pendingRecoveryBackup(workspaceStorage);
+      const exported = await shareOrDownloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }),
+        `Scattered-recovery-${new Date().toISOString().slice(0, 10)}.json`, "Scattered");
+      if (!exported || !unchanged()) return;
+      // Download APIs cannot confirm a disk write. Keep a verified local copy
+      // before removing any corrupt journal from the automatic replay queue.
+      await withWorkspaceLock(() => {
+        if (unchanged()) pendingRecoveryError = quarantinePendingRecovery(workspaceStorage, backup, error);
+      });
+      const hadFocus = document.activeElement === toast;
+      refreshPersistentToast();
+      if (!pendingRecoveryError) {
+        if (hadFocus) boardsButton.focus({ preventScroll: true });
+        driveSync.schedule(0);
+      }
+    } catch {
+      if (unchanged()) {
+        error.exportFailed = true;
+        refreshPersistentToast();
+      }
+    }
+    return;
+  }
   const hadFocus = document.activeElement === toast;
   acknowledgeRecoveryNotice();
   if (hadFocus) boardsButton.focus({ preventScroll: true });
 }
 
 function refreshPersistentToast() {
-  const message = saveFailureMessage || (recoveryNoticeId ? t("storageRecoveryTrimmed") : "");
+  const recoveryMessage = pendingRecoveryError && t(pendingRecoveryError.exportFailed ? "pendingRecoveryExportFailed"
+    : pendingRecoveryError.message === "pending.newer" ? "pendingRecoveryNewer"
+    : pendingRecoveryError.message === "pending.retry" ? "pendingRecoveryRetry" : "pendingRecoveryFailed");
+  const message = saveFailureMessage || recoveryMessage || (recoveryNoticeId ? t("storageRecoveryTrimmed") : "");
   if (message) {
     if (!toast.hidden && toast.textContent === message && toast.dataset.persistent === "true") return;
     showToast(message, true);
@@ -3511,7 +3556,7 @@ function setToastDismissible(dismissible) {
   if (dismissible) {
     toast.tabIndex = 0;
     toast.setAttribute("role", "button");
-    toast.setAttribute("aria-label", `${toast.textContent} ${t("dismissStorageNotice")}`);
+    toast.setAttribute("aria-label", pendingRecoveryError ? toast.textContent : `${toast.textContent} ${t("dismissStorageNotice")}`);
   } else {
     toast.removeAttribute("tabindex");
     toast.removeAttribute("role");
@@ -3521,7 +3566,7 @@ function setToastDismissible(dismissible) {
 
 function markSaveFailure(message) {
   saveFailureMessage = message;
-  showToast(message, true);
+  refreshPersistentToast();
 }
 
 function clearSaveFailure() {
@@ -3537,7 +3582,7 @@ function showToast(message, persistent = false, duration = 1_800) {
   toast.textContent = message;
   toast.hidden = false;
   toast.dataset.persistent = String(persistent);
-  setToastDismissible(persistent && !saveFailureMessage && Boolean(recoveryNoticeId));
+  setToastDismissible(persistent && !saveFailureMessage && (Boolean(pendingRecoveryError) || Boolean(recoveryNoticeId)));
   announce(message);
   if (!persistent) {
     toastTimer = setTimeout(refreshPersistentToast, duration);

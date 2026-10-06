@@ -16,7 +16,7 @@ export const EMPTY_NOTE_PROMPTS = [
 ];
 export const EMPTY_NOTE_PROMPT_LANGS = ["zh-Hans", "en", "es", "fr", "ja"];
 const NOTE_COLORS = new Set(["plain", "yellow", "mint", "blue", "rose"]);
-const IMPORT_VERSIONS = new Set([3, 4]);
+export const IMPORT_VERSIONS = new Set([3, 4]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const MAX_IMPORT_COORDINATE = 1_000_000;
 
