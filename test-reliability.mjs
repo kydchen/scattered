@@ -51,6 +51,177 @@ after(() => {
   else delete navigator.locks;
 });
 const locked = (s, action) => workspaceModel.withWorkspaceLock((safe = s) => action(safe), s);
+
+// Exercise the real app scheduler with a deterministic clock, not a second
+// implementation of the save policy. Browser tests cover the actual DOM/locks.
+function appSaveHarness(overrides = {}) {
+  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+  const source = app.slice(app.indexOf("function scheduleSave()"), app.indexOf("\nasync function commitCurrentBoard()"));
+  let now = 0, nextId = 0;
+  const timers = new Map(), saves = [], failures = [];
+  const context = vm.createContext({
+    SAVE_DELAY_MS: 180, SAVE_MAX_WAIT_MS: 1000,
+    saveTimer: null, saveMaxTimer: null, saveInFlight: null,
+    boardDirty: false, storageReady: true, mode: null,
+    board: fixture(), workspace: { activeId: "test" }, workspaceStorage: {},
+    savedBoardContent: JSON.stringify(fixture()), syncBoardContent: JSON.stringify,
+    syncOpenInputs() {}, clearPendingDocument() {}, clearSaveFailure() {}, renderBoardList() {},
+    reportRecoveryEviction() {}, reportStorageFailure(error) { failures.push(error); },
+    markSaveFailure() {}, t: key => key, driveSync: { schedule() {} },
+    document: { querySelector() { return null; } }, boardTitleEditor: { hidden: true }, edgeLabelEditor: { hidden: true },
+    setTimeout(callback, delay) { const id = ++nextId; timers.set(id, { at: now + delay, callback }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    withWorkspaceLock: async action => action({}),
+    saveDocument(_storage, _workspace, candidate) { saves.push({ at: now, board: structuredClone(candidate) }); return candidate; },
+    ...overrides,
+  });
+  vm.runInContext(source, context);
+  const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  return {
+    context, timers, saves, failures, drain,
+    input(text) { context.board.nodes[0].text = text; context.scheduleSave(); },
+    async advance(ms) {
+      const end = now + ms;
+      let ticks = 0;
+      while (true) {
+        await drain();
+        const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        assert.ok(++ticks < 100, "No unbounded timer retry loop");
+        now = next[1].at;
+        timers.delete(next[0]);
+        next[1].callback();
+      }
+      now = end;
+      await drain();
+    },
+  };
+}
+
+test("autosave: continuous 120ms input saves within each maximum wait without ending editing", async () => {
+  const h = appSaveHarness({ document: { querySelector() { return {}; } } });
+  for (let i = 0; i < 25; i++) { h.input(`text-${i}`); await h.advance(120); }
+  assert.ok(h.saves.length >= 2, "Typing must not postpone every save until the pause");
+  let last = 0;
+  for (const save of h.saves) { assert.ok(save.at - last <= 1120); last = save.at; }
+  assert.equal(h.saves[0].at, 1000);
+  await h.advance(180);
+  assert.equal(h.saves.at(-1).board.nodes[0].text, "text-24");
+  assert.equal(h.context.boardDirty, false);
+  assert.equal(h.timers.size, 0);
+});
+
+test("autosave: short bursts retain the trailing debounce and immediate flush cancels both timers", async () => {
+  const h = appSaveHarness();
+  h.input("one"); await h.advance(120); h.input("two");
+  await h.advance(179); assert.equal(h.saves.length, 0);
+  await h.advance(1); assert.equal(h.saves.length, 1);
+  h.input("flush");
+  assert.equal(await h.context.saveBoardNow(), true);
+  assert.equal(h.saves.at(-1).board.nodes[0].text, "flush");
+  await h.advance(2000);
+  assert.equal(h.saves.length, 2);
+  assert.equal(h.timers.size, 0);
+});
+
+test("autosave: waiting for a lock coalesces typing and explicit flushes into one writer", async () => {
+  let release, requests = 0;
+  const h = appSaveHarness({ withWorkspaceLock: action => {
+    requests++;
+    return new Promise(resolve => { release = () => resolve(action({})); });
+  } });
+  h.input("first"); await h.advance(180);
+  const waiters = [];
+  for (let i = 0; i < 30; i++) {
+    h.input(`waiting-${i}`);
+    waiters.push(h.context.saveBoardNow());
+    await h.advance(120);
+  }
+  assert.equal(requests, 1, "A held lock must not accumulate save requests");
+  assert.equal(h.saves.length, 0);
+  release();
+  assert.ok((await Promise.all(waiters)).every(Boolean));
+  assert.equal(h.saves.length, 1);
+  assert.equal(h.saves[0].board.nodes[0].text, "waiting-29");
+  assert.equal(h.context.boardDirty, false);
+  assert.equal(h.timers.size, 0);
+});
+
+test("autosave: edits after a write but before lock completion are saved before flush resolves", async () => {
+  let release, requests = 0;
+  const h = appSaveHarness({ withWorkspaceLock: action => {
+    requests++;
+    const result = action({});
+    return requests === 1 ? new Promise(resolve => { release = () => resolve(result); }) : Promise.resolve(result);
+  } });
+  h.input("first");
+  const flush = h.context.saveBoardNow();
+  h.input("after-write");
+  release();
+  assert.equal(await flush, true);
+  assert.equal(requests, 2);
+  assert.deepEqual(h.saves.map(save => save.board.nodes[0].text), ["first", "after-write"]);
+  assert.equal(h.context.boardDirty, false);
+  await h.advance(2000);
+  assert.equal(requests, 2);
+});
+
+test("autosave: a failed save stays dirty without a retry spin and later input can retry", async () => {
+  let fail = true, requests = 0;
+  const h = appSaveHarness({ withWorkspaceLock: async action => {
+    requests++;
+    if (fail) throw new DOMException("Full", "QuotaExceededError");
+    return action({});
+  } });
+  h.input("keep me"); await h.advance(1200);
+  assert.equal(h.context.boardDirty, true);
+  assert.equal(h.failures.length, 1);
+  await h.advance(5000); assert.equal(requests, 1);
+  fail = false;
+  h.input("retry latest"); await h.advance(180);
+  assert.equal(h.saves.at(-1).board.nodes[0].text, "retry latest");
+  assert.equal(h.context.boardDirty, false);
+});
+
+test("IME: actual text handlers ignore composing Enter/Escape and retain ordinary commands", () => {
+  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+  const guard = app.match(/function isComposingKeyEvent\(event\)[\s\S]*?\n}/)?.[0];
+  assert.ok(guard);
+  for (const name of ["edgeLabelEditor", "boardTitleEditor", "searchInput", "element"]) {
+    const calls = [], listeners = new Map();
+    const target = { dataset: { edgeId: "edge" }, focus() {}, addEventListener(type, handler) { listeners.set(type, handler); } };
+    const editor = name === "element" ? {} : target;
+    const composingInputs = new WeakSet();
+    const start = app.indexOf(`${name}.addEventListener("keydown", (event) => {`);
+    const end = app.indexOf(name === "element" ? '\n  editor.addEventListener("input"' : '\n});', start);
+    assert.ok(start >= 0 && end > start);
+    const source = app.slice(start, name === "element" ? end : end + 4);
+    const context = vm.createContext({
+      [name]: target, editor, composingInputs, node: { id: "note" }, nodeElements: new Map([["note", target]]),
+      boardTitle: { focus() {} }, requestAnimationFrame: run => run(), focusEdge() {},
+      finishEdgeLabel: cancel => calls.push(["finish", cancel]), finishBoardTitle: cancel => calls.push(["finish", cancel]),
+      finishEditing: (_id, cancel) => calls.push(["finish", cancel]),
+      moveSearch: direction => calls.push(["search", direction]), closeSearch: () => calls.push(["close"]),
+    });
+    vm.runInContext(`${guard}\n${source}`, context);
+    const send = (key, flags = {}) => listeners.get("keydown")({
+      target: editor, key, ctrlKey: name === "element" && key === "Enter",
+      preventDefault: () => calls.push(["prevent"]), stopPropagation() {}, ...flags,
+    });
+    for (const flags of [{ isComposing: true }, { keyCode: 229 }]) {
+      send("Enter", flags); send("Escape", flags);
+    }
+    composingInputs.add(editor);
+    send("Enter"); send("Escape");
+    assert.deepEqual(calls, [], `${name} leaves composition keys to the input method`);
+    composingInputs.delete(editor);
+    send("Enter"); send("Escape");
+    assert.equal(calls.filter(call => call[0] === "prevent").length, 2, `${name} still handles deliberate commands`);
+    if (name !== "searchInput") assert.deepEqual(calls.filter(call => call[0] === "finish"), [["finish", undefined], ["finish", true]]);
+    else assert.deepEqual(calls.filter(call => call[0] !== "prevent"), [["search", 1], ["close"]]);
+  }
+});
+
 function quotaFixture() {
   const s = new QuotaStorage(), loaded = loadWorkspace(s);
   const board = saveDocument(s, loaded.workspace, fixture());
@@ -96,10 +267,10 @@ test("quota: an app save does not sacrifice history for a disposable journal", a
   assert.equal(workspaceModel.readRecovery(control).length, 3, "The actual save fits without eviction");
   assert.throws(() => stagePendingDocument(s, workspace, candidate), { name: "QuotaExceededError" });
   const app = readFileSync(new URL("./app.js", import.meta.url), "utf8");
-  const source = app.slice(app.indexOf("async function saveBoardNow()"), app.indexOf("\nasync function commitCurrentBoard()"));
+  const source = `${app.match(/function clearScheduledSave\(\)[\s\S]*?\n}/)[0]}\n${app.slice(app.indexOf("async function saveBoardNow()"), app.indexOf("\nasync function commitCurrentBoard()"))}`;
   const context = vm.createContext({
     ...workspaceModel, Date, clearTimeout, setTimeout,
-    saveTimer: null, boardDirty: true, storageReady: true, pendingSaveNeeded: true,
+    saveTimer: null, saveMaxTimer: null, saveInFlight: null, boardDirty: true, storageReady: true,
     workspace, workspaceStorage: s, board: candidate, savedBoardContent: JSON.stringify(board),
     syncOpenInputs() {}, boardWithoutDragPreview: () => candidate, syncBoardContent: JSON.stringify,
     renderBoardList() {}, clearSaveFailure() {}, reportStorageFailure(error) { throw error; },

@@ -47,10 +47,10 @@ async function check(name, run, options = {}) {
   catch (error) { failures.push(name); console.error(`FAIL ${engine}: ${name}\n${error.stack}`); }
   finally { await context.close(); }
 }
-async function seed(context, nodes = [note("a", 100, 200)]) {
+async function seed(context, nodes = [note("a", 100, 200)], edges = []) {
   const page = await context.newPage();
   await page.goto(`${origin}/about.html`);
-  await page.evaluate(board => localStorage.setItem("scattered-board-v1", JSON.stringify(board)), { ...blankBoard(), title: "Test", nodes });
+  await page.evaluate(board => localStorage.setItem("scattered-board-v1", JSON.stringify(board)), { ...blankBoard(), title: "Test", nodes, edges });
   await page.goto(origin);
   await page.locator('.node[data-id="a"]').waitFor();
   return page;
@@ -98,6 +98,168 @@ async function exportJson(page) {
   await page.locator("#export-json-button").click();
 }
 try {
+  for (const cardCount of [1, 2000]) {
+    await check(`autosave: continuous typing reaches storage while the same editor remains open (${cardCount} cards)`, async context => {
+      const nodes = [note("a", 100, 200), ...Array.from({ length: cardCount - 1 }, (_, i) => note(`extra-${i}`, 500 + (i % 40) * 280, 200 + Math.floor(i / 40) * 140, `Card ${i}: ordinary canvas content.`))];
+      const page = await seed(context, nodes);
+      await page.locator('.node[data-id="a"]').dblclick();
+      await settleReveal(page);
+      await page.evaluate(() => {
+        window.typingStep = 0;
+        const editor = document.querySelector(".node.editing textarea");
+        window.typingEditor = editor;
+        window.typingTimer = setInterval(() => {
+          editor.value = `Continuous input ${++window.typingStep}`;
+          editor.setSelectionRange(editor.value.length, editor.value.length);
+          editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+          if (window.typingStep === 30) clearInterval(window.typingTimer);
+        }, 120);
+      });
+      await page.waitForTimeout(1600);
+      assert.match((await stored(page))[0].nodes[0].text, /^Continuous input /, "No blur or pause is needed to persist typing");
+      assert.ok(await page.evaluate(() => document.activeElement === window.typingEditor && window.typingEditor.closest(".node").classList.contains("editing")));
+      await page.waitForFunction(() => window.typingStep === 30);
+      await page.waitForTimeout(300);
+      assert.equal((await stored(page))[0].nodes[0].text, "Continuous input 30");
+      assert.equal((await stored(page))[0].nodes.length, cardCount);
+      assert.deepEqual(await page.evaluate(() => [window.typingEditor.selectionStart, window.typingEditor.selectionEnd]), [19, 19]);
+      await page.locator(".node.editing textarea").press("Control+Enter");
+      await page.locator("#undo-button").click();
+      await page.waitForTimeout(300);
+      assert.equal((await stored(page))[0].nodes[0].text, "a", "Periodic saves must not split one editing session into extra undo steps");
+      await page.locator("#redo-button").click();
+      await page.waitForTimeout(300);
+      await page.reload();
+      await page.locator('.node[data-id="a"]').waitFor();
+      assert.equal(await page.locator('.node[data-id="a"] .node-text').textContent(), "Continuous input 30");
+    });
+  }
+
+  await check("autosave: native lock contention coalesces lifecycle flushes and saves the latest input", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    await page.waitForTimeout(300);
+    await page.evaluate(async () => {
+      const request = navigator.locks.request.bind(navigator.locks);
+      await new Promise(ready => {
+        void request("scattered-workspace-v2", async () => {
+          ready();
+          await new Promise(resolve => { window.releaseSaveLock = resolve; });
+        });
+      });
+      window.saveLockRequests = 0;
+      window.saveLockStacks = [];
+      navigator.locks.request = (...args) => {
+        const stack = new Error().stack;
+        // Cross-tab refresh also uses this lock. Count only the save callers;
+        // a read-only refresh request is not an extra writer.
+        if (args[0] === "scattered-workspace-v2" && stack.includes("saveBoardNow")) {
+          window.saveLockRequests++;
+          window.saveLockStacks.push(stack);
+        }
+        return request(...args);
+      };
+    });
+    for (let i = 0; i < 5; i++) {
+      await page.locator(".node.editing textarea").fill(`Waiting ${i}`);
+      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+      await page.waitForTimeout(240);
+    }
+    assert.equal(await page.evaluate(() => window.saveLockRequests), 1, JSON.stringify(await page.evaluate(() => window.saveLockStacks)));
+    assert.equal((await stored(page))[0].nodes[0].text, "a");
+    await page.evaluate(() => window.releaseSaveLock());
+    await page.waitForFunction(() => {
+      const w = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
+      return JSON.parse(localStorage.getItem(`scattered-document-v2:${w.activeId}`)).nodes[0].text === "Waiting 4";
+    });
+    assert.equal((await stored(page)).length, 1);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending-document"))), false);
+    // Switching canvases awaits the same flush; no old deadline may write into the new canvas.
+    await page.locator(".node.editing textarea").fill("Before switching");
+    await page.locator("#boards-button").click();
+    await page.locator("#new-board-button").click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("scattered-workspace-v2")).boards.length === 2);
+    await page.waitForTimeout(1200);
+    const boards = await stored(page);
+    assert.equal(boards.find(b => b.title === "Test").nodes[0].text, "Before switching");
+    assert.equal(boards.find(b => b.title !== "Test").nodes.length, 0);
+  });
+
+  // Synthetic composition events verify our handlers, not an OS candidate UI.
+  // Real Chinese IME acceptance on iPhone/iPad/macOS is still required.
+  for (const kind of ["card", "title", "edge", "search"]) {
+    await check(`IME: ${kind} ignores composing shortcuts but keeps ordinary commands`, async context => {
+      const page = await seed(context, [note("a", 100, 200, "match one"), note("b", 500, 350, "match two")], [{ id: "ab", from: "a", to: "b", label: "Old label" }]);
+      let input;
+      if (kind === "card") {
+        await page.mouse.dblclick(900, 600);
+        input = page.locator(".node.editing textarea");
+      } else if (kind === "title") {
+        await page.locator("#board-title").dblclick();
+        input = page.locator("#board-title-editor");
+      } else if (kind === "edge") {
+        await page.locator('.edge[data-id="ab"]').press("Enter");
+        input = page.locator("#edge-label-editor");
+      } else {
+        await page.keyboard.press("Control+f");
+        input = page.locator("#search-input");
+        await input.fill("match");
+      }
+      await input.waitFor({ state: "visible" });
+      await input.focus();
+      const count = await page.locator(".node").count();
+      const beforeSearch = await page.locator("#search-count").textContent();
+      const blocked = await input.evaluate(element => {
+        const results = [];
+        const send = flags => {
+          for (const key of ["Enter", "Escape", "f"]) {
+            const event = new KeyboardEvent("keydown", { key, ctrlKey: key !== "Escape", bubbles: true, cancelable: true, ...flags });
+            element.dispatchEvent(event);
+            results.push(event.defaultPrevented);
+          }
+          const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...flags });
+          element.dispatchEvent(enter);
+          results.push(enter.defaultPrevented);
+        };
+        send({ isComposing: true });
+        send({ keyCode: 229 });
+        element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        send({});
+        element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        // Some engines finish composition before the confirming keydown.
+        send({ keyCode: 229 });
+        return results;
+      });
+      assert.ok(blocked.every(value => value === false), "IME keys must retain their native default action");
+      assert.equal(await input.isVisible(), true);
+      assert.equal(await page.locator(".node").count(), count);
+      assert.equal(await input.evaluate(element => document.activeElement === element), true);
+      assert.equal(await page.locator("#search-count").textContent(), beforeSearch);
+      if (kind !== "search") assert.equal(await page.locator("#search-panel").isVisible(), false);
+      if (kind === "card") {
+        await input.press("Escape");
+        assert.equal(await page.locator(".node").count(), count - 1, "An explicit non-IME Escape still cancels an empty draft");
+        await page.mouse.dblclick(900, 600);
+        await page.locator(".node.editing textarea").fill("中文正文");
+        await page.locator(".node.editing textarea").press("Control+Enter");
+      } else if (kind === "search") {
+        await input.press("Enter");
+        assert.notEqual(await page.locator("#search-count").textContent(), beforeSearch);
+        await input.press("Escape");
+      } else {
+        await input.fill(kind === "title" ? "中文标题" : "中文连线");
+        await input.press("Enter");
+      }
+      assert.equal(await page.locator(kind === "card" ? ".node.editing textarea" : kind === "title" ? "#board-title-editor" : kind === "edge" ? "#edge-label-editor" : "#search-input").isVisible(), false);
+      await page.waitForTimeout(300);
+      const saved = (await stored(page))[0];
+      if (kind === "title") assert.equal(saved.title, "中文标题");
+      if (kind === "edge") assert.equal(saved.edges[0].label, "中文连线");
+      if (kind === "card") assert.ok(saved.nodes.some(n => n.text === "中文正文"));
+    });
+  }
+
   await check("storage quota: lifecycle retry waits for the native lock and saves without losing history unnecessarily", async context => {
     const page = await seed(context);
     await page.locator('.node[data-id="a"]').dblclick();

@@ -16,6 +16,8 @@ const DEFAULT_NODE_HEIGHT = 48;
 const EDIT_VIEW_SCALE = 0.9;
 const CREATION_SAFE_INSETS = { left: 24, right: 24, top: 72, bottom: 72 };
 const CARET_FOLLOW_SPEED = 0.24; // Screen CSS pixels per millisecond, independent of zoom.
+const SAVE_DELAY_MS = 180;
+const SAVE_MAX_WAIT_MS = 1000;
 const viewportParams = new URLSearchParams(location.search);
 const viewportDebugEnabled = viewportParams.get("viewport-debug") === "1";
 const VIEWPORT_DEBUG_BUILD = "probe-f1";
@@ -105,6 +107,8 @@ let storageReady = initialWorkspace.storageReady;
 let selectionMode = false;
 let mode = null;
 let saveTimer = null;
+let saveMaxTimer = null;
+let saveInFlight = null;
 let toastTimer = null;
 let boardDirty = false;
 let saveFailureMessage = "";
@@ -144,6 +148,7 @@ const nodeElements = new Map();
 const selectedIds = new Set();
 const undoStack = [];
 const redoStack = [];
+const composingInputs = new WeakSet();
 const driveSync = createDriveSync({
   apiUrl: storageReady ? DRIVE_SYNC_API : "",
   storage: localStorage,
@@ -193,6 +198,7 @@ else refreshPersistentToast();
 
 toast.addEventListener("click", dismissRecoveryNotice);
 toast.addEventListener("keydown", (event) => {
+  if (isComposingKeyEvent(event)) return;
   if (event.key === "Enter" || event.key === " ") dismissRecoveryNotice(event);
 });
 
@@ -212,6 +218,9 @@ viewport.addEventListener("contextmenu", (event) => {
   if (!event.target.closest(".node-editor")) event.preventDefault();
 });
 document.addEventListener("keydown", onKeyDown);
+document.addEventListener("compositionstart", (event) => composingInputs.add(event.target), true);
+document.addEventListener("compositionend", (event) => composingInputs.delete(event.target), true);
+document.addEventListener("focusout", (event) => composingInputs.delete(event.target), true);
 document.addEventListener("copy", onCopy);
 document.addEventListener("paste", onPaste);
 ["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"]
@@ -508,6 +517,7 @@ edgeLabelButton.addEventListener("click", openEdgeLabelEditor);
 edgeDeleteButton.addEventListener("click", deleteSelectedEdge);
 edgeLabelEditor.addEventListener("blur", () => finishEdgeLabel());
 edgeLabelEditor.addEventListener("keydown", (event) => {
+  if (isComposingKeyEvent(event)) return;
   if (event.key === "Enter") {
     event.preventDefault();
     event.stopPropagation();
@@ -532,6 +542,7 @@ boardTitle.addEventListener("click", (event) => {
 });
 boardTitleEditor.addEventListener("blur", () => finishBoardTitle());
 boardTitleEditor.addEventListener("keydown", (event) => {
+  if (isComposingKeyEvent(event)) return;
   if (event.key === "Enter") {
     event.preventDefault();
     event.stopPropagation();
@@ -546,6 +557,7 @@ boardTitleEditor.addEventListener("keydown", (event) => {
 });
 searchInput.addEventListener("input", updateSearch);
 searchInput.addEventListener("keydown", (event) => {
+  if (isComposingKeyEvent(event)) return;
   if (event.key === "Enter") {
     event.preventDefault();
     event.stopPropagation();
@@ -1565,6 +1577,7 @@ async function openBoard(id) {
 function replaceBoard(nextBoard, fitIncoming = false, keepSelection = false) {
   const focusedNodeId = keepSelection ? document.activeElement?.closest(".node")?.dataset.id : null;
   cancelGesture();
+  clearScheduledSave();
   board = normalizeBoard(nextBoard);
   savedBoardContent = syncBoardContent(board);
   boardDirty = false;
@@ -2170,6 +2183,7 @@ function renderNode(node, isNew = false) {
     openColorPalette([node.id], event.currentTarget);
   });
   resizeHandle.addEventListener("keydown", (event) => {
+    if (isComposingKeyEvent(event)) return;
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     event.stopPropagation();
@@ -2188,6 +2202,7 @@ function renderNode(node, isNew = false) {
     startKeyboardLink(selectionMode ? [...selectedIds] : [node.id]);
   });
   element.addEventListener("keydown", (event) => {
+    if (isComposingKeyEvent(event)) return;
     if (event.target === editor) {
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
@@ -2712,6 +2727,7 @@ function renderEdges() {
       group.append(label);
     }
     group.addEventListener("keydown", (event) => {
+      if (isComposingKeyEvent(event)) return;
       if (!["Enter", " ", "Backspace", "Delete"].includes(event.key)) return;
       event.preventDefault();
       event.stopPropagation();
@@ -2920,7 +2936,14 @@ function boardBounds() {
   return Number.isFinite(bounds.left) ? bounds : null;
 }
 
+function isComposingKeyEvent(event) {
+  // The confirming key can arrive after compositionend (notably in WebKit).
+  // Keep the legacy IME key code as well as the event and lifecycle signals.
+  return event.isComposing || event.keyCode === 229 || composingInputs.has(event.target);
+}
+
 function onKeyDown(event) {
+  if (isComposingKeyEvent(event)) return;
   if (document.querySelector("dialog[open]")) return;
   if (["lasso", "marquee"].includes(mode?.type)) {
     // A preview is not committed: do not edit the old selection behind it.
@@ -3042,8 +3065,19 @@ function initializeWorkspace() {
 
 function scheduleSave() {
   boardDirty = true;
+  // The writer reads the latest board after acquiring the lock. While it is
+  // pending, new edits need no additional timers or lock requests.
+  if (saveInFlight) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { void saveBoardNow(); }, 180);
+  saveTimer = setTimeout(() => { void saveBoardNow(); }, SAVE_DELAY_MS);
+  if (saveMaxTimer === null) saveMaxTimer = setTimeout(() => { void saveBoardNow(); }, SAVE_MAX_WAIT_MS);
+}
+
+function clearScheduledSave() {
+  clearTimeout(saveTimer);
+  clearTimeout(saveMaxTimer);
+  saveTimer = null;
+  saveMaxTimer = null;
 }
 
 function boardWithoutDragPreview() {
@@ -3068,46 +3102,58 @@ function stagePendingSave() {
 }
 
 async function saveBoardNow() {
-  clearTimeout(saveTimer);
-  saveTimer = null;
+  clearScheduledSave();
   syncOpenInputs();
+  if (saveInFlight) return saveInFlight;
   if (!storageReady) {
     markSaveFailure(t("errorStorageUnavailable"));
     return false;
   }
   if (!boardDirty) return true;
+  saveInFlight = saveDirtyBoard().finally(() => { saveInFlight = null; });
+  return saveInFlight;
+}
+
+async function saveDirtyBoard() {
   try {
-    const savedSuccessfully = await withWorkspaceLock((workspaceStorage) => {
-      const candidate = boardWithoutDragPreview();
-      const viewOnly = syncBoardContent(candidate) === savedBoardContent;
-      if (viewOnly && (mode || document.querySelector(".node.editing") || !boardTitleEditor.hidden || !edgeLabelEditor.hidden)) {
-        saveTimer = setTimeout(() => { void saveBoardNow(); }, 500);
-        return false;
-      }
-      const previousId = workspace.activeId;
-      // Save directly: retrying a disposable journal here can evict history
-      // even when replacing the actual document already fits.
-      const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly });
-      const conflicted = workspace.activeId !== previousId;
-      if (viewOnly && (conflicted || syncBoardContent(saved) !== savedBoardContent)) {
-        replaceBoard(saved, false, !conflicted);
-      } else if (conflicted) {
-        cancelGesture();
-        closeSearch();
-        board = saved;
-        renderAll();
-        applyView();
-      }
-      savedBoardContent = syncBoardContent(saved);
-      boardDirty = false;
-      clearPendingDocument(workspaceStorage);
-      clearSaveFailure();
-      renderBoardList();
-      if (conflicted && !viewOnly) showToast(t("conflictCopy"));
-      return true;
-    }, workspaceStorage, reportRecoveryEviction);
-    if (savedSuccessfully) driveSync.schedule();
-    return savedSuccessfully;
+    do {
+      const savedSuccessfully = await withWorkspaceLock((workspaceStorage) => {
+        syncOpenInputs();
+        if (!boardDirty) return true;
+        const candidate = boardWithoutDragPreview();
+        const viewOnly = syncBoardContent(candidate) === savedBoardContent;
+        if (viewOnly && (mode || document.querySelector(".node.editing") || !boardTitleEditor.hidden || !edgeLabelEditor.hidden)) {
+          saveTimer = setTimeout(() => { void saveBoardNow(); }, 500);
+          return false;
+        }
+        const previousId = workspace.activeId;
+        // Save directly: retrying a disposable journal here can evict history
+        // even when replacing the actual document already fits.
+        const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly });
+        const conflicted = workspace.activeId !== previousId;
+        if (viewOnly && (conflicted || syncBoardContent(saved) !== savedBoardContent)) {
+          replaceBoard(saved, false, !conflicted);
+        } else if (conflicted) {
+          cancelGesture();
+          closeSearch();
+          board = saved;
+          renderAll();
+          applyView();
+        }
+        savedBoardContent = syncBoardContent(saved);
+        boardDirty = false;
+        clearPendingDocument(workspaceStorage);
+        clearSaveFailure();
+        renderBoardList();
+        if (conflicted && !viewOnly) showToast(t("conflictCopy"));
+        return true;
+      }, workspaceStorage, reportRecoveryEviction);
+      if (!savedSuccessfully) return false;
+      driveSync.schedule();
+      // A new edit can arrive after the synchronous write but before the lock
+      // promise resolves. Await its save too, especially before switching boards.
+    } while (boardDirty);
+    return true;
   } catch (error) {
     reportStorageFailure(error);
     return false;
