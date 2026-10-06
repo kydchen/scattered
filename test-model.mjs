@@ -1459,15 +1459,15 @@ assert.equal(messages.en.storageRecoveryTrimmed, "Some older recovery copies wer
 assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(html, /<script type="module" src="app\.js\?v=88p1"><\/script>/);
+assert.match(html, /<script type="module" src="app\.js\?v=88p2"><\/script>/);
 assert.match(app, /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/drive-sync\.js\?v=87"/);
 assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /const CACHE = "scattered-v88p1";/);
+assert.match(serviceWorker, /const CACHE = "scattered-v88p2";/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
-assert.match(serviceWorker, /\.\/app\.js\?v=88p1"/);
+assert.match(serviceWorker, /\.\/app\.js\?v=88p2"/);
 assert.match(serviceWorker, /\.\/styles\.css\?v=87"/);
 assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
 assert.match(serviceWorker, /\.\/workspace\.js/);

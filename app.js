@@ -2366,10 +2366,36 @@ function accessibleNoteText(node) {
 
 function resizeEditor(element) {
   const editor = element.querySelector(".node-editor");
-  editor.style.height = "0";
-  editor.style.height = `${Math.max(24, editor.scrollHeight)}px`;
+  if (composingInputs.has(editor)) {
+    // Do not collapse the focused native text control under an IME candidate.
+    // Measure offscreen, including wrapping/shrinking, and only apply real changes.
+    const height = `${measureComposingEditorHeight(editor)}px`;
+    if (editor.style.height !== height) editor.style.height = height;
+  } else {
+    editor.style.height = "0";
+    editor.style.height = `${Math.max(24, editor.scrollHeight)}px`;
+  }
   queueEdgeRender();
   if (element.classList.contains("editing")) revealEditingNode();
+}
+
+function measureComposingEditorHeight(editor) {
+  const style = getComputedStyle(editor);
+  const mirror = editor.cloneNode(false);
+  mirror.hidden = false;
+  mirror.tabIndex = -1;
+  mirror.setAttribute("aria-hidden", "true");
+  mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;height:0;";
+  for (const name of ["width", "boxSizing", "padding", "borderWidth", "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction"]) {
+    mirror.style[name] = style[name];
+  }
+  mirror.value = editor.value;
+  document.body.append(mirror);
+  try {
+    return Math.max(24, mirror.scrollHeight);
+  } finally {
+    mirror.remove();
+  }
 }
 
 function selectNode(id) {

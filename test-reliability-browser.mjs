@@ -188,6 +188,99 @@ try {
 
   // Synthetic composition events verify our handlers, not an OS candidate UI.
   // Real Chinese IME acceptance on iPhone/iPad/macOS is still required.
+  await check("IME sizing: same-line composition keeps the active editor height stable and still saves", async context => {
+    const page = await seed(context, [note("a", 100, 200, "ABC")]);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    const result = await page.locator(".node.editing textarea").evaluate(async editor => {
+      const beforeHeight = editor.style.height;
+      const writes = [];
+      const observer = new MutationObserver(records => writes.push(...records.map(r => r.oldValue)));
+      observer.observe(editor, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
+      window.compositionEditor = editor;
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      for (const text of ["w", "wo", "wod", "wode"]) {
+        editor.value = text;
+        editor.setSelectionRange(text.length, text.length);
+        editor.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: text }));
+        editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertCompositionText" }));
+        await new Promise(resolve => setTimeout(resolve, 80));
+      }
+      observer.disconnect();
+      return { beforeHeight, height: editor.style.height, writes, focused: document.activeElement === editor, selection: [editor.selectionStart, editor.selectionEnd] };
+    });
+    assert.deepEqual(result.writes, [], "Same-line preedit must not collapse or rewrite the active textarea height");
+    assert.equal(result.height, result.beforeHeight);
+    assert.equal(result.focused, true);
+    assert.deepEqual(result.selection, [4, 4]);
+    await page.waitForTimeout(1100);
+    assert.equal((await stored(page))[0].nodes[0].text, "wode", "Composition must retain the existing autosave path");
+    await page.evaluate(() => {
+      const editor = window.compositionEditor;
+      editor.value = "我的";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "我的" }));
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+    assert.equal(await page.evaluate(() => document.activeElement === window.compositionEditor), true);
+    await page.locator(".node.editing textarea").press("Control+Enter");
+    await page.waitForTimeout(300);
+    assert.equal((await stored(page))[0].nodes[0].text, "我的");
+    assert.equal(await page.locator("textarea.node-editor").count(), 1, "No measurement textarea may remain in the DOM");
+  });
+
+  await check("IME sizing: wrapped composition grows and shrinks like ordinary input without collapsing the editor", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    const results = await page.locator(".node.editing textarea").evaluate(editor => {
+      const results = [];
+      for (const width of [160, 218, 520]) {
+        editor.closest(".node").style.width = `${width}px`;
+        for (const text of ["中文输入换行测试".repeat(24), "第一行\n第二行\n", "averylongunbrokenword".repeat(8), "短", ""]) {
+          const observer = new MutationObserver(() => {});
+          observer.observe(editor, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
+          editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+          editor.value = text;
+          editor.setSelectionRange(text.length, text.length);
+          // The lifecycle alone must work even when an engine omits isComposing.
+          editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText" }));
+          const composingHeight = editor.offsetHeight;
+          const clipped = editor.scrollHeight > editor.clientHeight + 1;
+          const styles = [...observer.takeRecords().map(r => r.oldValue), editor.getAttribute("style")];
+          observer.disconnect();
+          const selection = [editor.selectionStart, editor.selectionEnd];
+          editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
+          editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+          results.push({ width, length: text.length, composingHeight, ordinaryHeight: editor.offsetHeight, clipped, styles, selection, focused: document.activeElement === editor });
+        }
+      }
+      return results;
+    });
+    for (const result of results) {
+      const label = `${result.width}px wide, ${result.length} characters`;
+      // scrollHeight is integer-rounded; Chromium can round the offscreen and
+      // transformed on-canvas controls one pixel apart. Neither may clip text.
+      assert.ok(Math.abs(result.composingHeight - result.ordinaryHeight) <= 1, label);
+      assert.equal(result.clipped, false, label);
+      assert.ok(result.styles.every(style => !/(?:^|;)\s*height:\s*0(?:px)?\s*(?:;|$)/.test(style || "")), label);
+      assert.deepEqual(result.selection, [result.length, result.length], label);
+      assert.equal(result.focused, true, label);
+    }
+    assert.equal(await page.locator("textarea.node-editor").count(), 1);
+    // Cancelling preedit back to the original value, then blurring, still commits
+    // that value. Ordinary English typing after a new edit keeps working too.
+    await page.locator(".node.editing textarea").evaluate(editor => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "a";
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+      editor.blur();
+    });
+    await page.waitForTimeout(300);
+    assert.equal((await stored(page))[0].nodes[0].text, "a");
+    await edit(page, "English after composition");
+    assert.equal((await stored(page))[0].nodes[0].text, "English after composition");
+  });
+
   for (const kind of ["card", "title", "edge", "search"]) {
     await check(`IME: ${kind} ignores composing shortcuts but keeps ordinary commands`, async context => {
       const page = await seed(context, [note("a", 100, 200, "match one"), note("b", 500, 350, "match two")], [{ id: "ab", from: "a", to: "b", label: "Old label" }]);
