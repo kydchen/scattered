@@ -1,14 +1,15 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, readRecovery, refreshWorkspace, replaceDocument, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=86";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=87";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=86";
+import { createDriveSync } from "./drive-sync.js?v=87";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=86";
-import { mountLiveSharing } from "./share-ui.js?v=86";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=87";
+import { mountLiveSharing } from "./share-ui.js?v=87";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
+const RECOVERY_NOTICE_KEY = "scattered-recovery-notice-v1";
 const CLIPBOARD_TYPE = "application/x-scattered-selection+json";
 const DEFAULT_NODE_WIDTH = 218;
 const DEFAULT_NODE_HEIGHT = 48;
@@ -107,6 +108,7 @@ let saveTimer = null;
 let toastTimer = null;
 let boardDirty = false;
 let saveFailureMessage = "";
+let recoveryNoticeId = readRecoveryNotice();
 let workspaceActionPending = false;
 let deleteBoardTargetId = null;
 let connectionStyle = readConnectionStyle();
@@ -158,7 +160,10 @@ const driveSync = createDriveSync({
   onError: (error) => {
     driveErrorNotified = true;
     console.warn("Drive sync paused", error);
-    showToast(t(error?.code === "auth" || error?.code === "account" ? "driveReconnect" : "driveSyncFailed"));
+    if (isStorageQuotaError(error)) markSaveFailure(t("errorStorageFull"));
+    else if (error?.code === "state-storage") markSaveFailure(t("errorSyncStorage"));
+    else if (error?.syncStage === "apply") markSaveFailure(t("errorSave"));
+    else if (!saveFailureMessage) showToast(t(error?.code === "auth" || error?.code === "account" ? "driveReconnect" : "driveSyncFailed"));
   },
 });
 
@@ -184,6 +189,12 @@ renderBoardList();
 updateRecoveryControl();
 setupViewportDebug();
 if (!storageReady) markSaveFailure(t("errorStorageUnavailable"));
+else refreshPersistentToast();
+
+toast.addEventListener("click", dismissRecoveryNotice);
+toast.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") dismissRecoveryNotice(event);
+});
 
 viewport.addEventListener("pointerdown", onPointerDown);
 viewport.addEventListener("pointermove", onPointerMove);
@@ -561,6 +572,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 }
 
 driveSync.start();
+if (storageReady) void requestPersistentStorage();
 
 // Reveal the canvas only after its local notes, view, and queued edges exist.
 requestAnimationFrame(() => {
@@ -1239,7 +1251,7 @@ async function disconnectDriveAccount(event) {
     if (!await commitCurrentBoard()) return;
     driveSync.disconnect();
     workspaceSlots.switchToGuest();
-    const loaded = await withWorkspaceLock(() => loadWorkspace(workspaceStorage));
+    const loaded = await withWorkspaceLock((workspaceStorage) => loadWorkspace(workspaceStorage), workspaceStorage, reportRecoveryEviction);
     workspace = loaded.workspace;
     replaceBoard(loaded.board);
     updateDriveSyncControl("disconnected");
@@ -1332,13 +1344,13 @@ async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
     const previousActiveId = workspace.activeId;
     const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
     const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
-    const applied = await withWorkspaceLock(async () => {
+    const applied = await withWorkspaceLock(async (workspaceStorage) => {
       const latest = createSyncWorkspace(workspaceStorage, workspace);
       if (await fingerprintSyncWorkspace(latest) !== expectedFingerprint) throw driveBusyError();
       const localIds = new Set(latest.boards.map((item) => item.id));
       const nextBoard = applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
       return { nextBoard, fitIncoming: !localIds.has(workspace.activeId) };
-    });
+    }, workspaceStorage, reportRecoveryEviction);
     if (activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming, workspace.activeId === previousActiveId);
     else renderBoardList();
     clearSaveFailure();
@@ -1355,7 +1367,7 @@ async function switchDriveAccount(accountKey) {
   const previousWorkspace = workspace;
   const previousBoard = board;
   try {
-    const loaded = await withWorkspaceLock(async () => {
+    const loaded = await withWorkspaceLock(async (workspaceStorage) => {
       const guest = previousWasGuest ? createSyncWorkspace(workspaceStorage, workspace) : null;
       workspaceSlots.switchTo(accountKey);
       const account = loadWorkspace(workspaceStorage);
@@ -1370,7 +1382,7 @@ async function switchDriveAccount(accountKey) {
       const claimedBoard = applySyncWorkspace(workspaceStorage, account.workspace, claimed);
       workspaceSlots.resetGuest();
       return { workspace: account.workspace, board: claimedBoard };
-    });
+    }, workspaceStorage, reportRecoveryEviction);
     workspace = loaded.workspace;
     replaceBoard(loaded.board);
     clearSaveFailure();
@@ -1474,12 +1486,12 @@ async function newBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    replaceBoard(await withWorkspaceLock(() => createDocument(workspaceStorage, workspace)));
+    replaceBoard(await withWorkspaceLock((workspaceStorage) => createDocument(workspaceStorage, workspace), workspaceStorage, reportRecoveryEviction));
     driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus({ preventScroll: true });
-  } catch {
-    showToast(t("errorCreateBoard"));
+  } catch (error) {
+    reportStorageFailure(error, "errorCreateBoard");
   } finally {
     endWorkspaceAction();
   }
@@ -1490,12 +1502,12 @@ async function duplicateBoard(event) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    replaceBoard(await withWorkspaceLock(() => duplicateDocument(workspaceStorage, workspace, board)));
+    replaceBoard(await withWorkspaceLock((workspaceStorage) => duplicateDocument(workspaceStorage, workspace, board), workspaceStorage, reportRecoveryEviction));
     driveSync.schedule();
     setBoardPickerOpen(false);
     boardsButton.focus({ preventScroll: true });
-  } catch {
-    showToast(t("errorDuplicateBoard"));
+  } catch (error) {
+    reportStorageFailure(error, "errorDuplicateBoard");
   } finally {
     endWorkspaceAction();
   }
@@ -1516,14 +1528,14 @@ async function removeCurrentBoard(event) {
       return;
     }
     if (!await sharing.stopCurrent()) return;
-    replaceBoard(await withWorkspaceLock(() => deleteDocument(workspaceStorage, workspace)));
+    replaceBoard(await withWorkspaceLock((workspaceStorage) => deleteDocument(workspaceStorage, workspace), workspaceStorage, reportRecoveryEviction));
     driveSync.schedule();
     clearSaveFailure();
     updateRecoveryControl();
     setBoardPickerOpen(false);
     boardsButton.focus({ preventScroll: true });
-  } catch {
-    markSaveFailure(t("errorDeleteBoard"));
+  } catch (error) {
+    reportStorageFailure(error, "errorDeleteBoard", "errorDeleteStorageFull");
   } finally {
     endWorkspaceAction();
   }
@@ -1538,7 +1550,7 @@ async function openBoard(id) {
   if (!beginWorkspaceAction()) return;
   try {
     if (!await commitCurrentBoard()) return;
-    const loaded = await withWorkspaceLock(() => switchDocument(workspaceStorage, workspace, id));
+    const loaded = await withWorkspaceLock((workspaceStorage) => switchDocument(workspaceStorage, workspace, id), workspaceStorage, reportRecoveryEviction);
     if (!loaded) return;
     replaceBoard(loaded.board);
     setBoardPickerOpen(false);
@@ -1654,7 +1666,7 @@ async function restoreRecentBoard(recoveryId) {
   recoveryList.querySelectorAll("button").forEach((button) => { button.disabled = true; });
   try {
     if (!await commitCurrentBoard()) return;
-    const restored = await withWorkspaceLock(() => restoreRecovery(workspaceStorage, workspace, recoveryId));
+    const restored = await withWorkspaceLock((workspaceStorage) => restoreRecovery(workspaceStorage, workspace, recoveryId), workspaceStorage, reportRecoveryEviction);
     if (restored) {
       replaceBoard(restored);
       driveSync.schedule();
@@ -1664,8 +1676,8 @@ async function restoreRecentBoard(recoveryId) {
     setBoardPickerOpen(false);
     setMenuOpen(false);
     boardsButton.focus({ preventScroll: true });
-  } catch {
-    showToast(t("errorRestoreBoard"));
+  } catch (error) {
+    reportStorageFailure(error, "errorRestoreBoard");
   } finally {
     recoveryList.querySelectorAll("button").forEach((button) => { button.disabled = false; });
     endWorkspaceAction();
@@ -3050,8 +3062,8 @@ function stagePendingSave() {
   try {
     const pending = boardWithoutDragPreview();
     stagePendingDocument(workspaceStorage, workspace, pending, Date.now, { viewOnly: syncBoardContent(pending) === savedBoardContent });
-  } catch {
-    markSaveFailure(t("errorSave"));
+  } catch (error) {
+    reportStorageFailure(error);
   }
 }
 
@@ -3065,7 +3077,7 @@ async function saveBoardNow() {
   }
   if (!boardDirty) return true;
   try {
-    const savedSuccessfully = await withWorkspaceLock(() => {
+    const savedSuccessfully = await withWorkspaceLock((workspaceStorage) => {
       const candidate = boardWithoutDragPreview();
       const viewOnly = syncBoardContent(candidate) === savedBoardContent;
       if (viewOnly && (mode || document.querySelector(".node.editing") || !boardTitleEditor.hidden || !edgeLabelEditor.hidden)) {
@@ -3073,6 +3085,8 @@ async function saveBoardNow() {
         return false;
       }
       const previousId = workspace.activeId;
+      // Save directly: retrying a disposable journal here can evict history
+      // even when replacing the actual document already fits.
       const saved = saveDocument(workspaceStorage, workspace, candidate, Date.now, { viewOnly });
       const conflicted = workspace.activeId !== previousId;
       if (viewOnly && (conflicted || syncBoardContent(saved) !== savedBoardContent)) {
@@ -3091,11 +3105,11 @@ async function saveBoardNow() {
       renderBoardList();
       if (conflicted && !viewOnly) showToast(t("conflictCopy"));
       return true;
-    });
+    }, workspaceStorage, reportRecoveryEviction);
     if (savedSuccessfully) driveSync.schedule();
     return savedSuccessfully;
-  } catch {
-    markSaveFailure(t("errorSave"));
+  } catch (error) {
+    reportStorageFailure(error);
     return false;
   }
 }
@@ -3113,11 +3127,11 @@ async function replaceCurrentBoard(nextBoard, recoveryReason) {
   try {
     if (!await commitCurrentBoard()) return false;
     previousBoard = JSON.stringify(normalizeBoard(board));
-    saved = await withWorkspaceLock(() => replaceDocument(workspaceStorage, workspace, nextBoard, recoveryReason));
+    saved = await withWorkspaceLock((workspaceStorage) => replaceDocument(workspaceStorage, workspace, nextBoard, recoveryReason), workspaceStorage, reportRecoveryEviction);
     clearSaveFailure();
     driveSync.schedule();
-  } catch {
-    markSaveFailure(t("errorSave"));
+  } catch (error) {
+    reportStorageFailure(error, "errorSave", recoveryReason === "clear" ? "errorClearStorageFull" : "errorStorageFull");
     return false;
   } finally {
     endWorkspaceAction();
@@ -3250,13 +3264,15 @@ function prepareExport(closeMenu = true) {
 
 async function exportBoard() {
   prepareExport();
+  const noticeId = recoveryNoticeId;
   try {
     const content = JSON.stringify(normalizeBoard(board), null, 2);
-    await shareOrDownloadBlob(
+    const exported = await shareOrDownloadBlob(
       new Blob([content], { type: "application/json" }),
       `${exportFileName()}.json`,
       board.title || "Scattered",
     );
+    if (exported) acknowledgeRecoveryNotice(noticeId);
   } catch {
     showToast(t("errorJsonExport"));
   } finally {
@@ -3304,12 +3320,14 @@ async function shareOrDownloadBlob(blob, filename, title) {
   if (canShare) {
     try {
       await navigator.share(shareData);
-      return;
+      return true;
     } catch (error) {
-      if (error?.name === "AbortError") return;
+      if (error?.name === "AbortError") return false;
     }
   }
   downloadBlob(file, filename);
+  // A browser download has no API to verify the eventual disk write.
+  return true;
 }
 
 function downloadBlob(blob, filename) {
@@ -3342,7 +3360,8 @@ async function importBoard(event) {
     if (importedWorkspace) await mergeImportedWorkspace(importedWorkspace);
     else await mergeImportedWorkspace({ activeBoard: 0, boards: [parseCanvasBackup(encoded)] });
   } catch (error) {
-    showToast(error instanceof Error && hasMessage(error.message) ? t(error.message) : t("errorImport"));
+    if (isStorageQuotaError(error)) reportStorageFailure(error);
+    else showToast(error instanceof Error && hasMessage(error.message) ? t(error.message) : t("errorImport"));
   } finally {
     setBoardPickerOpen(false);
     boardsButton.focus({ preventScroll: true });
@@ -3353,7 +3372,7 @@ async function mergeImportedWorkspace(imported) {
   if (!beginWorkspaceAction()) return false;
   try {
     if (!await commitCurrentBoard()) return false;
-    const importedBoard = await withWorkspaceLock(() => addImportedWorkspace(workspaceStorage, workspace, imported));
+    const importedBoard = await withWorkspaceLock((workspaceStorage) => addImportedWorkspace(workspaceStorage, workspace, imported), workspaceStorage, reportRecoveryEviction);
     replaceBoard(importedBoard);
     driveSync.schedule();
     clearSaveFailure();
@@ -3379,6 +3398,63 @@ async function clearBoard() {
   }
 }
 
+function reportStorageFailure(error, fallback = "errorSave", quotaMessage = "errorStorageFull") {
+  markSaveFailure(t(isStorageQuotaError(error) ? quotaMessage : fallback));
+}
+
+function readRecoveryNotice() {
+  try { return sessionStorage.getItem(RECOVERY_NOTICE_KEY) || ""; } catch { return ""; }
+}
+
+function reportRecoveryEviction() {
+  recoveryNoticeId = createId();
+  // Only UI acknowledgement lives here, never note content or a save fallback.
+  try { sessionStorage.setItem(RECOVERY_NOTICE_KEY, recoveryNoticeId); } catch {}
+  if (!saveFailureMessage) refreshPersistentToast();
+}
+
+function acknowledgeRecoveryNotice(id = recoveryNoticeId) {
+  // An export started before a later eviction cannot acknowledge that eviction.
+  if (!id || id !== recoveryNoticeId) return;
+  recoveryNoticeId = "";
+  try { sessionStorage.removeItem(RECOVERY_NOTICE_KEY); } catch {}
+  if (toast?.dataset.dismissible === "true") refreshPersistentToast();
+}
+
+function dismissRecoveryNotice(event) {
+  if (toast.dataset.dismissible !== "true") return;
+  event.preventDefault();
+  event.stopPropagation();
+  const hadFocus = document.activeElement === toast;
+  acknowledgeRecoveryNotice();
+  if (hadFocus) boardsButton.focus({ preventScroll: true });
+}
+
+function refreshPersistentToast() {
+  const message = saveFailureMessage || (recoveryNoticeId ? t("storageRecoveryTrimmed") : "");
+  if (message) {
+    if (!toast.hidden && toast.textContent === message && toast.dataset.persistent === "true") return;
+    showToast(message, true);
+  } else {
+    toast.hidden = true;
+    setToastDismissible(false);
+  }
+}
+
+function setToastDismissible(dismissible) {
+  toast.dataset.dismissible = String(dismissible);
+  toast.setAttribute("aria-hidden", String(!dismissible));
+  if (dismissible) {
+    toast.tabIndex = 0;
+    toast.setAttribute("role", "button");
+    toast.setAttribute("aria-label", `${toast.textContent} ${t("dismissStorageNotice")}`);
+  } else {
+    toast.removeAttribute("tabindex");
+    toast.removeAttribute("role");
+    toast.removeAttribute("aria-label");
+  }
+}
+
 function markSaveFailure(message) {
   saveFailureMessage = message;
   showToast(message, true);
@@ -3387,8 +3463,7 @@ function markSaveFailure(message) {
 function clearSaveFailure() {
   saveFailureMessage = "";
   if (toast?.dataset.persistent === "true") {
-    toast.hidden = true;
-    delete toast.dataset.persistent;
+    refreshPersistentToast();
   }
 }
 
@@ -3398,16 +3473,10 @@ function showToast(message, persistent = false, duration = 1_800) {
   toast.textContent = message;
   toast.hidden = false;
   toast.dataset.persistent = String(persistent);
+  setToastDismissible(persistent && !saveFailureMessage && Boolean(recoveryNoticeId));
   announce(message);
   if (!persistent) {
-    toastTimer = setTimeout(() => {
-      if (saveFailureMessage) {
-        toast.textContent = saveFailureMessage;
-        toast.dataset.persistent = "true";
-      } else {
-        toast.hidden = true;
-      }
-    }, duration);
+    toastTimer = setTimeout(refreshPersistentToast, duration);
   }
 }
 

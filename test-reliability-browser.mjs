@@ -72,7 +72,312 @@ async function edit(page, text, finish = true) {
   if (finish) await page.locator('.node[data-id="a"] textarea').press("Control+Enter");
   await page.waitForTimeout(300);
 }
+async function setRecoveryQuota(page) {
+  await page.evaluate(async () => {
+    const w = await import("./workspace.js?v=87");
+    const { board } = w.loadWorkspace(localStorage);
+    for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
+      ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
+    }, "delete", () => i);
+    window.quotaUsage = () => Object.keys(localStorage).reduce((n, key) => n + key.length + localStorage.getItem(key).length, 0);
+    window.quotaLimit = window.quotaUsage() + 20;
+    const nativeSet = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (this === localStorage) {
+        const old = this.getItem(key);
+        const size = window.quotaUsage() - (old === null ? 0 : key.length + old.length) + key.length + String(value).length;
+        if (size > window.quotaLimit) throw new DOMException("Full", "QuotaExceededError");
+      }
+      return nativeSet.call(this, key, value);
+    };
+  });
+}
+async function exportJson(page) {
+  await page.locator("#boards-button").click();
+  await page.locator("#export-button").click();
+  await page.locator("#export-json-button").click();
+}
 try {
+  await check("storage quota: lifecycle retry waits for the native lock and saves without losing history unnecessarily", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    await page.evaluate(async () => {
+      const w = await import("./workspace.js?v=87");
+      const { board } = w.loadWorkspace(localStorage);
+      for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
+        ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
+      }, "delete", () => i);
+      const usage = () => Object.keys(localStorage).reduce((n, k) => n + k.length + localStorage.getItem(k).length, 0);
+      window.quotaLimit = usage() + 20;
+      const nativeSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage) {
+          const old = this.getItem(key);
+          const nextUsage = usage() - (old === null ? 0 : key.length + old.length) + key.length + String(value).length;
+          if (nextUsage > window.quotaLimit) throw new DOMException("Full", "QuotaExceededError");
+        }
+        return nativeSet.call(this, key, value);
+      };
+      await new Promise(resolve => {
+        void navigator.locks.request("scattered-workspace-v2", async () => {
+          resolve();
+          await new Promise(release => { window.releaseTestLock = release; });
+        });
+      });
+    });
+    await page.locator(".node.editing textarea").fill("Lifecycle latest edit");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await page.locator('#toast[data-persistent="true"]').waitFor();
+    assert.match(await page.locator("#toast").textContent(), /Storage is full/);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("scattered-recovery-v2")).length), 3, "No unlocked eviction while a different writer holds the lock");
+    assert.equal((await stored(page))[0].nodes[0].text, "a");
+    await page.evaluate(() => window.releaseTestLock());
+    await page.waitForFunction(() => {
+      const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
+      return JSON.parse(localStorage.getItem(`scattered-document-v2:${ws.activeId}`)).nodes[0].text === "Lifecycle latest edit";
+    });
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("scattered-recovery-v2")).map(e => e.boardId)), ["old-3", "old-2"]);
+    assert.match(await page.locator("#toast").textContent(), /Some older recovery copies/);
+    assert.equal(await page.locator("#toast").getAttribute("data-dismissible"), "true");
+    await page.reload();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal((await stored(page))[0].nodes[0].text, "Lifecycle latest edit");
+    assert.match(await page.locator("#toast").textContent(), /Some older recovery copies/, "Reload does not silently acknowledge the notice");
+    await edit(page, "A later successful save");
+    assert.match(await page.locator("#toast").textContent(), /Some older recovery copies/);
+    await page.locator("#toast").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("#toast").isVisible(), false);
+    await edit(page, "A save after acknowledgement");
+    assert.equal(await page.locator("#toast").isVisible(), false);
+    await page.reload();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal(await page.locator("#toast").isVisible(), false);
+  });
+
+  await check("storage quota: unrecoverable write keeps the note visible and exportable with a persistent warning", async context => {
+    const page = await seed(context);
+    await page.evaluate(() => {
+      const nativeSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-")) throw new DOMException("Full", "QuotaExceededError");
+        return nativeSet.call(this, key, value);
+      };
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false });
+    });
+    await edit(page, "Unsaved but exportable");
+    await page.locator('#toast[data-persistent="true"]').waitFor();
+    assert.match(await page.locator("#toast").textContent(), /Storage is full/);
+    assert.equal((await stored(page))[0].nodes[0].text, "a");
+    assert.match(await page.locator('.node[data-id="a"]').textContent(), /Unsaved but exportable/);
+    await page.waitForTimeout(2000);
+    assert.equal(await page.locator("#toast").isVisible(), true);
+    await page.locator("#boards-button").click();
+    await page.locator("#export-button").click();
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#export-json-button").click();
+    const download = await downloadPromise;
+    const exported = JSON.parse(await readFile(await download.path(), "utf8"));
+    assert.equal(exported.nodes[0].text, "Unsaved but exportable", "Export must include the in-memory edit, not only the last saved file");
+    assert.equal(await page.locator("#toast").getAttribute("data-persistent"), "true");
+  });
+
+  await check("storage quota: persistence rejection never blocks startup, editing or subsequent saves", async context => {
+    await context.addInitScript(() => {
+      window.persistenceCalls = 0;
+      if (!navigator.storage) return; // The initial about:blank is not a secure origin.
+      Object.defineProperty(navigator.storage, "persisted", { configurable: true, value: async () => false });
+      Object.defineProperty(navigator.storage, "persist", { configurable: true, value: async () => { window.persistenceCalls++; throw new Error("Denied"); } });
+    });
+    const page = await seed(context);
+    assert.equal(await page.evaluate(() => window.persistenceCalls), 1);
+    await edit(page, "Saved even without persistence");
+    await edit(page, "Second saved edit");
+    assert.equal((await stored(page))[0].nodes[0].text, "Second saved edit");
+    assert.equal(await page.evaluate(() => window.persistenceCalls), 1);
+    assert.equal(await page.locator("#toast").isVisible(), false);
+  });
+
+  await check("storage quota: a failed extra journal does not block a document replacement that still fits", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    await page.evaluate(() => {
+      const nativeSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-pending-document")) throw new DOMException("Full", "QuotaExceededError");
+        return nativeSet.call(this, key, value);
+      };
+    });
+    await page.evaluate(async () => {
+      const w = await import("./workspace.js?v=87");
+      const { board } = w.loadWorkspace(localStorage);
+      for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, board, "delete", () => i);
+    });
+    await page.locator(".node.editing textarea").fill("Committed even when the journal cannot fit");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await page.waitForFunction(() => {
+      const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
+      return JSON.parse(localStorage.getItem(`scattered-document-v2:${ws.activeId}`)).nodes[0].text === "Committed even when the journal cannot fit";
+    });
+    assert.equal(await page.locator("#toast").isVisible(), false);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("scattered-recovery-v2")).length), 3, "A disposable failed journal must not evict any history");
+    await page.reload();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal((await stored(page))[0].nodes[0].text, "Committed even when the journal cannot fit");
+  });
+
+  await check("storage quota: notices dismiss on click or JSON export, not cancellation, failure or an older export", async context => {
+    const page = await seed(context);
+    await setRecoveryQuota(page);
+    await edit(page, "First saved edit ".repeat(20));
+    const toast = page.locator("#toast");
+    assert.equal(await toast.getAttribute("data-dismissible"), "true");
+    await toast.click();
+    assert.equal(await toast.isVisible(), false);
+    await page.evaluate(() => { window.quotaLimit = window.quotaUsage(); });
+    await edit(page, "Next saved edit ".repeat(80));
+    assert.equal(await toast.isVisible(), true, "Only a new actual eviction reopens the notice");
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+      Object.defineProperty(navigator, "share", { configurable: true, value: async () => { throw new DOMException("Cancelled", "AbortError"); } });
+    });
+    await exportJson(page);
+    assert.equal(await toast.getAttribute("data-dismissible"), "true");
+    // A failed file handoff must not acknowledge the earlier eviction either.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false });
+      window.originalCreateObjectURL = URL.createObjectURL;
+      URL.createObjectURL = () => { throw new Error("Synthetic export failure"); };
+    });
+    await exportJson(page);
+    await page.waitForTimeout(2000);
+    assert.equal(await toast.getAttribute("data-dismissible"), "true");
+    await page.evaluate(() => {
+      URL.createObjectURL = window.originalCreateObjectURL;
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+      Object.defineProperty(navigator, "share", { configurable: true, value: () => new Promise(resolve => { window.finishSyntheticShare = resolve; }) });
+    });
+    await exportJson(page);
+    await page.waitForFunction(() => Boolean(window.finishSyntheticShare));
+    await page.evaluate(() => { window.quotaLimit = window.quotaUsage(); });
+    await edit(page, "Newest saved edit ".repeat(150));
+    await page.evaluate(() => window.finishSyntheticShare());
+    await page.waitForTimeout(50);
+    assert.equal(await toast.getAttribute("data-dismissible"), "true", "Completing an older export must not clear a newer eviction");
+    await page.evaluate(() => Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false }));
+    const downloaded = page.waitForEvent("download");
+    await exportJson(page);
+    assert.equal((await downloaded).suggestedFilename().endsWith(".json"), true);
+    assert.equal(await toast.isVisible(), false);
+  });
+
+  await check("storage quota: eviction acknowledgement never dismisses a failed save", async context => {
+    const page = await seed(context);
+    await setRecoveryQuota(page);
+    await edit(page, "First saved edit ".repeat(20));
+    // Exceed this fixture's storage quota, not the existing 20,000-character note limit.
+    await edit(page, "Unsaved ".repeat(2000));
+    const toast = page.locator("#toast");
+    assert.match(await toast.textContent(), /Changes may not be saved/);
+    assert.equal(await toast.getAttribute("data-dismissible"), "false");
+    await toast.dispatchEvent("click");
+    assert.equal(await toast.isVisible(), true);
+    await page.evaluate(() => Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false }));
+    const downloaded = page.waitForEvent("download");
+    await exportJson(page);
+    const exported = JSON.parse(await readFile(await (await downloaded).path(), "utf8"));
+    assert.equal(exported.nodes[0].text, "Unsaved ".repeat(2000));
+    assert.match(await toast.textContent(), /Changes may not be saved/);
+    await page.evaluate(() => { window.quotaLimit = Infinity; });
+    await page.locator('.node[data-id="a"]').press("Enter");
+    await page.locator('.node[data-id="a"] textarea').fill("Storage available again");
+    await page.locator('.node[data-id="a"] textarea').press("Control+Enter");
+    await page.waitForFunction(() => document.querySelector("#toast").hidden);
+    assert.equal(await toast.isVisible(), false, "The export acknowledged eviction only; a successful save cleared the failure later");
+  });
+
+  for (const locale of ["en-US", "zh-CN"]) await check(`storage quota: failed delete and clear report the action accurately (${locale})`, async context => {
+    const page = await seed(context);
+    await page.waitForTimeout(350);
+    const before = await stored(page);
+    await page.evaluate(() => {
+      const nativeSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (this === localStorage && key.startsWith("scattered-")) throw new DOMException("Full", "QuotaExceededError");
+        return nativeSet.call(this, key, value);
+      };
+    });
+    await page.locator("#boards-button").click();
+    await page.locator("#delete-board-button").click();
+    await page.locator("#delete-board-button").click();
+    await page.waitForFunction(text => document.querySelector("#toast").textContent.includes(text), locale === "en-US" ? "canvas was not deleted" : "未删除画布");
+    assert.match(await page.locator("#toast").textContent(), locale === "en-US" ? /canvas was not deleted/ : /未删除画布/);
+    assert.deepEqual(await stored(page), before);
+    await page.locator("#boards-button").click();
+    await page.locator("#menu-button").click();
+    await page.locator("#clear-button").click();
+    await page.locator("#clear-button").click();
+    await page.waitForFunction(text => document.querySelector("#toast").textContent.includes(text), locale === "en-US" ? "canvas was not cleared" : "未清空画布");
+    assert.match(await page.locator("#toast").textContent(), locale === "en-US" ? /canvas was not cleared/ : /未清空画布/);
+    assert.deepEqual(await stored(page), before);
+  }, { locale });
+
+  for (const [userAgent, calls] of [["Mozilla/5.0 Gecko/20100101 Firefox/140.0", 0], ["Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 FxiOS/140.0 Mobile/15E148 Safari/605.1.15", 1]]) {
+    await check(`storage quota: persistence respects the ${calls ? "FxiOS" : "Firefox"} user agent across reload`, async context => {
+      await context.addInitScript(() => {
+        window.persistenceCalls = 0;
+        if (!navigator.storage) return;
+        Object.defineProperty(navigator.storage, "persisted", { configurable: true, value: async () => false });
+        Object.defineProperty(navigator.storage, "persist", { configurable: true, value: async () => { window.persistenceCalls++; return false; } });
+      });
+      const page = await seed(context);
+      assert.equal(await page.evaluate(() => window.persistenceCalls), calls);
+      await page.reload();
+      await page.locator('.node[data-id="a"]').waitFor();
+      assert.equal(await page.evaluate(() => window.persistenceCalls), calls);
+    }, { userAgent });
+  }
+
+  await check("storage quota: a real browser capacity limit is recovered without deleting unrelated storage", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await settleReveal(page);
+    const filled = await page.evaluate(async () => {
+      const w = await import("./workspace.js?v=87");
+      const { board } = w.loadWorkspace(localStorage);
+      for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
+        ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
+      }, "delete", () => i);
+      let reached = false, count = 0;
+      const chunk = "x".repeat(64 * 1024);
+      for (; count < 128; count++) {
+        try { localStorage.setItem(`quota-padding-${count}`, chunk); }
+        catch (error) { if (error.name !== "QuotaExceededError") throw error; reached = true; break; }
+      }
+      if (!reached) throw new Error("No capacity error within the bounded synthetic fixture");
+      let low = 0, high = chunk.length;
+      while (high - low > 1) {
+        const size = Math.floor((low + high) / 2);
+        try { localStorage.setItem("quota-tail", "x".repeat(size)); low = size; }
+        catch (error) { if (error.name !== "QuotaExceededError") throw error; high = size; }
+      }
+      return { count, tail: low };
+    });
+    await page.locator(".node.editing textarea").fill("Saved at the real capacity limit");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await page.waitForFunction(() => {
+      const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
+      return JSON.parse(localStorage.getItem(`scattered-document-v2:${ws.activeId}`)).nodes[0].text === "Saved at the real capacity limit";
+    });
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("scattered-recovery-v2")).map(e => e.boardId)), ["old-3", "old-2"]);
+    assert.deepEqual(await page.evaluate(() => ({ count: Object.keys(localStorage).filter(k => k.startsWith("quota-padding-")).length, tail: localStorage.getItem("quota-tail").length })), filled);
+    await page.reload();
+    await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal((await stored(page))[0].nodes[0].text, "Saved at the real capacity limit");
+  });
+
   await check("caret following saves typed text during motion and stops on editor exit or page hide", async context => {
     const text = Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n");
     const page = await seed(context, [note("a", 100, 200, text)]);

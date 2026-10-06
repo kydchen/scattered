@@ -1543,6 +1543,16 @@ html[data-theme="dark"] .theme-sun {
   z-index: 4;
 }
 
+.toast[data-dismissible="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.toast[data-dismissible="true"]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
 .chrome-resume-prompt {
   position: fixed;
   top: 50%;

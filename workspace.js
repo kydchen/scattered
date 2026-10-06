@@ -116,11 +116,82 @@ export function createWorkspaceSlots(baseStorage) {
   }
 }
 
-export function withWorkspaceLock(action) {
+export function isStorageQuotaError(error) {
+  return error?.name === "QuotaExceededError" || error?.name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
+const persistenceRequests = new WeakMap();
+export function requestPersistentStorage(manager = globalThis.navigator?.storage, userAgent = globalThis.navigator?.userAgent || "") {
+  if (!manager?.persisted) return Promise.resolve(false);
+  if (!persistenceRequests.has(manager)) persistenceRequests.set(manager, (async () => {
+    try {
+      if (await manager.persisted()) return true;
+      // Gecko Firefox can prompt. FxiOS is WebKit and is intentionally allowed.
+      if (/\bFirefox\//.test(userAgent)) return false;
+      if (!manager.persist) return false;
+      await manager.persist();
+      return Boolean(await manager.persisted());
+    } catch { return false; }
+  })());
+  return persistenceRequests.get(manager);
+}
+
+export function withWorkspaceLock(action, storage, onRecoveryEvicted) {
   const locks = globalThis.navigator?.locks;
-  if (locks?.request) return locks.request(WORKSPACE_LOCK_NAME, action);
+  if (locks?.request) return locks.request(WORKSPACE_LOCK_NAME, () => action(storage ? recoveryRetryStorage(storage, onRecoveryEvicted) : undefined));
   // ponytail: Without native locks, cross-tab safety relies on revision checks and conflict copies.
-  return Promise.resolve().then(action);
+  // Do not add a cross-tab read/evict/write race in the no-lock fallback.
+  return Promise.resolve().then(() => action(storage));
+}
+
+function recoveryRetryStorage(storage, onRecoveryEvicted) {
+  let eligibleIds;
+  const removedIds = new Set();
+  const protectedIds = new Set();
+  const recoveryEntries = () => {
+    try {
+      const entries = JSON.parse(storage.getItem(RECOVERY_KEY));
+      return Array.isArray(entries) ? entries : [];
+    } catch { return []; }
+  };
+  const withoutEvicted = (key, value) => {
+    if (key !== RECOVERY_KEY || !removedIds.size) return value;
+    // Transaction rollback must not resurrect history evicted to make space.
+    const entries = JSON.parse(value);
+    return JSON.stringify(entries.filter(entry => !removedIds.has(entry?.id)));
+  };
+  return {
+    get length() { return storage.length; },
+    key(index) { return storage.key(index); },
+    getItem(key) { return storage.getItem(key); },
+    removeItem(key) { storage.removeItem(key); },
+    protectRecovery(id) { protectedIds.add(id); },
+    setItem(key, value) {
+      for (;;) {
+        const next = withoutEvicted(key, value);
+        try { storage.setItem(key, next); return; }
+        catch (error) {
+          if (!isStorageQuotaError(error)) throw error;
+          // Do not parse potentially large recovery boards on ordinary saves.
+          // New delete/clear backups are protected even if an earlier write fit.
+          eligibleIds ??= new Set(readRecovery(storage).map(entry => entry.id));
+          const entries = recoveryEntries();
+          const requestedIds = key === RECOVERY_KEY ? new Set(JSON.parse(next).map(entry => entry?.id)) : null;
+          const candidate = entries.map((entry, index) => ({ entry, index }))
+            .filter(({ entry }) => eligibleIds.has(entry?.id) && !protectedIds.has(entry.id)
+              && (!requestedIds || requestedIds.has(entry.id)))
+            .sort((a, b) => Number(a.entry.savedAt) - Number(b.entry.savedAt) || b.index - a.index)[0];
+          if (!candidate) throw error;
+          // Reducing recovery is itself atomic. If even that fails, stop.
+          storage.setItem(RECOVERY_KEY, JSON.stringify(entries.filter((_, index) => index !== candidate.index)));
+          removedIds.add(candidate.entry.id);
+          eligibleIds.delete(candidate.entry.id);
+          // Notification must not turn a successful storage write into failure.
+          try { onRecoveryEvicted?.(); } catch {}
+        }
+      }
+    },
+  };
 }
 
 export function stagePendingDocument(storage, workspace, board, now = Date.now, options = {}) {
@@ -312,13 +383,12 @@ export function applySyncWorkspace(storage, workspace, value, now = Date.now) {
     });
     writeWorkspaceCopies(storage, nextWorkspace);
   } catch (error) {
-    previousDocuments.forEach(({ id, primary, backup }) => {
-      restoreStorageItem(storage, boardKey(id), primary);
-      restoreStorageItem(storage, backupKey(id), backup);
-    });
-    restoreStorageItem(storage, WORKSPACE_KEY, previousWorkspace);
-    restoreStorageItem(storage, WORKSPACE_BACKUP_KEY, previousWorkspaceBackup);
-    restoreStorageItem(storage, RECOVERY_KEY, previousRecovery);
+    restoreStorageItems(storage, [
+      ...previousDocuments.flatMap(({ id, primary, backup }) => [[boardKey(id), primary], [backupKey(id), backup]]),
+      [WORKSPACE_KEY, previousWorkspace],
+      [WORKSPACE_BACKUP_KEY, previousWorkspaceBackup],
+      [RECOVERY_KEY, previousRecovery],
+    ]);
     throw error;
   }
 
@@ -599,8 +669,13 @@ export function captureRecovery(storage, boardId, board, reason, now = Date.now)
   if (entries[0]
     && entries[0].boardId === boardId
     && entries[0].reason === reason
-    && boardsMatch(entries[0].board, normalized)) return;
-  entries.unshift({ id: createId(), boardId, board: normalized, reason, savedAt: now() });
+    && boardsMatch(entries[0].board, normalized)) {
+    storage.protectRecovery?.(entries[0].id);
+    return;
+  }
+  const id = createId();
+  storage.protectRecovery?.(id);
+  entries.unshift({ id, boardId, board: normalized, reason, savedAt: now() });
   writeRecovery(storage, entries.slice(0, MAX_RECOVERY));
 }
 
@@ -612,6 +687,7 @@ export function restoreRecovery(storage, workspace, recoveryId, now = Date.now) 
   const entries = readRecovery(storage);
   const entry = entries.find((candidate) => candidate.id === recoveryId);
   if (!entry) return null;
+  storage.protectRecovery?.(entry.id);
   const nextWorkspace = mergeWorkspace(storage, workspace);
   const id = createId();
   const savedAt = now();
@@ -1117,8 +1193,7 @@ function persistDocument(storage, id, board, revision, updatedAt, workspace, pen
     storage.setItem(key, next);
     writeWorkspace(storage, workspace);
   } catch (error) {
-    restoreStorageItem(storage, key, previous);
-    restoreStorageItem(storage, backup, previousBackup);
+    restoreStorageItems(storage, [[key, previous], [backup, previousBackup]]);
     throw error;
   }
 }
@@ -1133,6 +1208,15 @@ function persistNewDocument(storage, id, board, revision, updatedAt, workspace, 
     restoreStorageItem(storage, key, previous);
     throw error;
   }
+}
+
+function restoreStorageItems(storage, entries) {
+  // Apply shrinking/removal rollbacks before restoring larger originals.
+  // Otherwise rollback can hit quota too, even though the old state fitted.
+  const size = (key, value) => value === null ? 0 : key.length + value.length;
+  entries.map(([key, value]) => ({ key, value, growth: size(key, value) - size(key, storage.getItem(key)) }))
+    .sort((a, b) => a.growth - b.growth)
+    .forEach(({ key, value }) => restoreStorageItem(storage, key, value));
 }
 
 function restoreStorageItem(storage, key, value) {
