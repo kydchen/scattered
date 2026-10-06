@@ -533,7 +533,7 @@ button {
 }
 
 .node.empty-note .node-text,
-.node-editor::placeholder {
+.node-editor[data-empty="true"]::before {
   color: var(--placeholder);
   font-style: italic;
   font-weight: 400;
@@ -544,11 +544,16 @@ button {
 .node-editor {
   display: block;
   min-height: 24px;
-  resize: none;
   overflow: hidden;
   touch-action: auto;
   user-select: text;
   -webkit-user-select: text;
+}
+
+.node-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  pointer-events: none;
 }
 
 .node-actions,

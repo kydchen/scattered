@@ -6,6 +6,7 @@ import { createDriveSync } from "./drive-sync.js?v=87";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=87";
 import { mountLiveSharing } from "./share-ui.js?v=87";
+import { mirroredEditorCaret, placeEditorCaretAtEnd, readEditorText, setEditorText } from "./note-editor.js?v=88p3";
 
 const THEME_KEY = "scattered-theme";
 const CONNECTION_STYLE_KEY = "scattered-connection-style";
@@ -573,7 +574,7 @@ searchNextButton.addEventListener("click", () => moveSearch(1));
 searchCloseButton.addEventListener("click", () => closeSearch(true));
 
 document.addEventListener("selectionchange", (event) => {
-  // Older WebKit reports native textarea caret movement on the document.
+  // Native contenteditable selection changes are reported on the document.
   if (event.target === document && document.activeElement?.matches(".node.editing .node-editor")) {
     revealEditingNode();
   }
@@ -1800,8 +1801,12 @@ function revealSearchResult() {
   scheduleSave();
 }
 
+function isTextInput(element) {
+  return element?.matches("textarea, input") || element?.isContentEditable;
+}
+
 function onCopy(event) {
-  if (document.activeElement?.matches("textarea, input") || selectedIds.size === 0) return;
+  if (isTextInput(document.activeElement) || selectedIds.size === 0) return;
   const payload = copySelectedGraph(board, selectedIds);
   if (!payload) return;
   clipboardPayload = payload;
@@ -1815,7 +1820,7 @@ function onCopy(event) {
 
 function onPaste(event) {
   if (document.querySelector("#share-dialog[open]")) return;
-  if (document.activeElement?.matches("textarea, input")) return;
+  if (isTextInput(document.activeElement)) return;
   const text = event.clipboardData.getData("text/plain");
   let payload = null;
   try {
@@ -2073,26 +2078,33 @@ function advanceCaretFollow(at) {
 }
 
 function editorCaretBounds(editor, scale, nodeOrigin) {
-  // Textareas do not expose a caret rect. Measure only oversized editing notes
-  // in an untransformed mirror, then move the camera (never the canvas scroller).
+  // Measure only oversized editing notes in an untransformed mirror. Native
+  // ranges can have no rect on empty lines, and entry transitions change their
+  // screen coordinates. Keep the existing camera-relative caret-follow model.
   const style = getComputedStyle(editor);
-  const mirror = document.createElement("div");
+  const mirror = editor.cloneNode(true);
+  mirror.className = "";
+  mirror.hidden = false;
+  mirror.removeAttribute("contenteditable");
+  mirror.removeAttribute("tabindex");
   mirror.setAttribute("aria-hidden", "true");
   mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;";
   for (const name of ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction"]) {
     mirror.style[name] = style[name];
   }
   mirror.style.width = `${editor.clientWidth}px`;
-  const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
-  mirror.textContent = editor.value.slice(0, caret);
-  const marker = document.createElement("span");
-  // Keep the suffix so words wrap exactly as in the editor. A truncated word
-  // can fit on the previous line and make caret following jump by a full row.
-  marker.textContent = editor.value.slice(caret) || "\u200b";
-  mirror.append(marker);
+  const caret = mirroredEditorCaret(editor, mirror);
   document.body.append(mirror);
   const origin = mirror.getBoundingClientRect();
-  const rect = marker.getClientRects()[0];
+  let rect = [...caret.getClientRects()].find(rect => rect.height > 0);
+  if (!rect) {
+    // Empty-line ranges can have no rect. This marker touches only the offscreen
+    // measurement copy, never the focused editor or the live native selection.
+    const marker = document.createElement("span");
+    marker.textContent = "\u200b";
+    caret.insertNode(marker);
+    rect = marker.getBoundingClientRect();
+  }
   const left = nodeOrigin.left + (editor.offsetLeft + rect.left - origin.left - editor.scrollLeft) * scale;
   const top = nodeOrigin.top + (editor.offsetTop + rect.top - origin.top - editor.scrollTop) * scale;
   mirror.remove();
@@ -2169,9 +2181,10 @@ function renderNode(node, isNew = false) {
   element.dataset.new = String(isNew);
   element.dataset.color = node.color || "plain";
   element.style.setProperty("--node-width", `${node.width || 218}px`);
-  element.querySelector(".node-editor").value = node.text;
+  setEditorText(element.querySelector(".node-editor"), node.text);
   syncNodeContent(element, node);
   const editor = element.querySelector(".node-editor");
+  editor.contentEditable = "false";
   const resizeHandle = element.querySelector(".resize-handle");
   const linkHandle = element.querySelector(".link-handle");
   element.querySelector(".node-delete").addEventListener("click", (event) => {
@@ -2248,12 +2261,13 @@ function renderNode(node, isNew = false) {
     }
   });
   editor.addEventListener("input", (event) => {
-    const nextText = event.currentTarget.value.slice(0, 20_000);
+    const nextText = readEditorText(event.currentTarget).slice(0, 20_000);
     if (node.text !== nextText && element.dataset.editCheckpointed !== "true") {
       checkpoint();
       element.dataset.editCheckpointed = "true";
     }
     node.text = nextText;
+    editor.dataset.empty = String(nextText.length === 0);
     resizeEditor(element);
     scheduleSave();
   });
@@ -2297,6 +2311,8 @@ function editNode(id, isNew = false, fromPen = false) {
     revealMotionTimer = setTimeout(finishRevealMotion, 220);
   }
   const editor = element.querySelector(".node-editor");
+  setEditorText(editor, node.text);
+  editor.contentEditable = "plaintext-only";
   element.classList.add("editing");
   element.dataset.new = String(isNew);
   element.dataset.editCheckpointed = String(isNew);
@@ -2305,7 +2321,7 @@ function editNode(id, isNew = false, fromPen = false) {
   editor.hidden = false;
   resizeEditor(element);
   editor.focus({ preventScroll: true });
-  editor.setSelectionRange(editor.value.length, editor.value.length);
+  placeEditorCaretAtEnd(editor);
   softlyRevealNode(id);
 }
 
@@ -2315,11 +2331,14 @@ function finishEditing(onlyId = null, explicitCancel = false) {
     finishRevealMotion();
     const node = findNode(element.dataset.id);
     const editor = element.querySelector(".node-editor");
-    const nextText = editor.value.slice(0, 20_000);
+    const nextText = readEditorText(editor).slice(0, 20_000);
     if (node.text !== nextText) checkpoint();
     node.text = nextText;
     element.classList.remove("editing");
     editor.blur();
+    // WebKit can group native undo across editable hosts. A finished card must
+    // no longer be an undo target while another card owns the text selection.
+    editor.contentEditable = "false";
     if (shouldDiscardDraft(node.text, element.dataset.new === "true", explicitCancel)) {
       deleteNode(node.id);
       return;
@@ -2347,7 +2366,7 @@ function syncNodeContent(element, node) {
   element.dataset.overviewLabel = (empty ? prompt : node.text).trim().replace(/\s+/g, " ").slice(0, 80);
   if (empty) text.lang = promptLanguage;
   else text.removeAttribute("lang");
-  editor.placeholder = prompt;
+  editor.dataset.placeholder = prompt;
   updateNodeAccessibility(element, node);
 }
 
@@ -2365,37 +2384,10 @@ function accessibleNoteText(node) {
 }
 
 function resizeEditor(element) {
-  const editor = element.querySelector(".node-editor");
-  if (composingInputs.has(editor)) {
-    // Do not collapse the focused native text control under an IME candidate.
-    // Measure offscreen, including wrapping/shrinking, and only apply real changes.
-    const height = `${measureComposingEditorHeight(editor)}px`;
-    if (editor.style.height !== height) editor.style.height = height;
-  } else {
-    editor.style.height = "0";
-    editor.style.height = `${Math.max(24, editor.scrollHeight)}px`;
-  }
+  // The native plaintext editor grows with its content, without height writes
+  // or DOM replacement under a live IME candidate/selection.
   queueEdgeRender();
   if (element.classList.contains("editing")) revealEditingNode();
-}
-
-function measureComposingEditorHeight(editor) {
-  const style = getComputedStyle(editor);
-  const mirror = editor.cloneNode(false);
-  mirror.hidden = false;
-  mirror.tabIndex = -1;
-  mirror.setAttribute("aria-hidden", "true");
-  mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;height:0;";
-  for (const name of ["width", "boxSizing", "padding", "borderWidth", "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction"]) {
-    mirror.style[name] = style[name];
-  }
-  mirror.value = editor.value;
-  document.body.append(mirror);
-  try {
-    return Math.max(24, mirror.scrollHeight);
-  } finally {
-    mirror.remove();
-  }
 }
 
 function selectNode(id) {
@@ -2997,13 +2989,13 @@ function onKeyDown(event) {
     announce(t(sourceIds.length ? "linkedNoteCreated" : "noteCreated"));
     return;
   }
-  if (!activeElement?.matches("textarea, input, button, a, [role=button]") && event.code === "Space") {
+  if (!isTextInput(activeElement) && !activeElement?.matches("button, a, [role=button]") && event.code === "Space") {
     event.preventDefault();
     spacePressed = true;
     viewport.classList.add("pan-ready");
     return;
   }
-  if (activeElement?.matches("textarea, input")) return;
+  if (isTextInput(activeElement)) return;
   if (event.key === "Escape" && cancelKeyboardLink()) {
     event.preventDefault();
     return;
@@ -3243,7 +3235,7 @@ function syncOpenInputs() {
   document.querySelectorAll(".node.editing").forEach((element) => {
     const node = findNode(element.dataset.id, false);
     if (!node) return;
-    const nextText = element.querySelector(".node-editor").value.slice(0, 20_000);
+    const nextText = readEditorText(element.querySelector(".node-editor")).slice(0, 20_000);
     if (node.text !== nextText) changed = true;
     node.text = nextText;
   });

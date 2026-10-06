@@ -54,7 +54,7 @@
     <link rel="canonical" href="https://scatterednote.space/" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
-    <link rel="stylesheet" href="styles.css?v=87" />
+    <link rel="stylesheet" href="styles.css?v=88p3" />
     <link rel="stylesheet" href="sharing.css?v=78" />
     <title>Scattered</title>
   </head>
@@ -404,7 +404,7 @@
           </button>
         </div>
         <div class="node-text"></div>
-        <textarea class="node-editor" rows="1" aria-label="想法内容" data-i18n-aria="noteContent" spellcheck="true" hidden></textarea>
+        <div class="node-editor" contenteditable="plaintext-only" role="textbox" aria-multiline="true" tabindex="0" aria-label="想法内容" data-i18n-aria="noteContent" spellcheck="false" hidden></div>
         <button class="resize-handle" type="button" aria-label="调整标签宽度" data-i18n-aria="resizeNode" aria-keyshortcuts="ArrowLeft ArrowRight">
           <svg viewBox="0 0 36 18" aria-hidden="true">
             <path d="M2 9h32M7 4 2 9l5 5M29 4l5 5-5 5"></path>
@@ -425,7 +425,7 @@
       <div id="recovery-list"></div>
     </dialog>
 
-    <script type="module" src="app.js?v=88p2"></script>
+    <script type="module" src="app.js?v=88p3"></script>
     <script>
       (() => {
         const root = document.documentElement;

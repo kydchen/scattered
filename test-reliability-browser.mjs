@@ -41,6 +41,51 @@ const note = (id, x, y, text = id) => ({ id, x, y, text, width: 218, color: "pla
 async function check(name, run, options = {}) {
   if (process.env.TEST_FILTER && !name.includes(process.env.TEST_FILTER)) return;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block", locale: "en-US", ...options });
+  await context.addInitScript(() => {
+    // Explicit test helpers use real DOM Selection; no textarea-like properties
+    // are installed on the production editor. Native typing is tested below too.
+    window.noteText = e => e.innerText.replace(/\n$/, "");
+    window.setNoteText = (e, text) => {
+      e.textContent = text;
+      if (text.endsWith("\n")) e.append(document.createElement("br"));
+    };
+    window.setNoteSelection = (e, start, end = start, direction = "forward") => {
+      const point = offset => {
+        const walker = document.createTreeWalker(e, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const base = noteOffset(e, node, 0);
+            if (offset >= base && offset <= base + node.length) return [node, offset - base];
+          } else if (node.nodeName === "BR") {
+            const index = [...node.parentNode.childNodes].indexOf(node);
+            if (offset === noteOffset(e, node.parentNode, index)) return [node.parentNode, index];
+          }
+        }
+        return [e, e.childNodes.length];
+      };
+      const anchor = point(direction === "backward" ? end : start);
+      const focus = point(direction === "backward" ? start : end);
+      getSelection().setBaseAndExtent(...anchor, ...focus);
+    };
+    window.noteOffset = (e, node, offset) => {
+      const probe = e.cloneNode(true);
+      probe.className = ""; probe.removeAttribute("contenteditable"); probe.hidden = false;
+      probe.style.cssText = "position:fixed;left:-100000px;white-space:pre-wrap;opacity:0;pointer-events:none";
+      probe.setAttribute("aria-hidden", "true");
+      const path = [];
+      for (let n = node; n !== e; n = n.parentNode) path.unshift([...n.parentNode.childNodes].indexOf(n));
+      let point = probe; for (const index of path) point = point.childNodes[index];
+      const r = document.createRange(); r.setStart(point, offset); r.collapse(true);
+      r.insertNode(document.createTextNode("\ue000")); document.body.append(probe);
+      const length = probe.innerText.indexOf("\ue000"); probe.remove();
+      return Math.min(length, noteText(e).length);
+    };
+    window.noteSelection = e => {
+      const s = getSelection();
+      const anchor = noteOffset(e, s.anchorNode, s.anchorOffset), focus = noteOffset(e, s.focusNode, s.focusOffset);
+      return { start: Math.min(anchor, focus), end: Math.max(anchor, focus), direction: focus < anchor ? "backward" : "forward" };
+    };
+  });
   await context.route("https://**/*", route => route.abort());
   context.on("page", page => page.on("pageerror", error => errors.push({ scenario: name, message: String(error), stack: error.stack })));
   try { await run(context); console.log(`PASS ${engine}: ${name}`); }
@@ -68,8 +113,8 @@ const stored = page => page.evaluate(() => {
 });
 async function edit(page, text, finish = true) {
   await page.locator('.node[data-id="a"]').dblclick();
-  await page.locator('.node[data-id="a"] textarea').fill(text);
-  if (finish) await page.locator('.node[data-id="a"] textarea').press("Control+Enter");
+  await page.locator('.node[data-id="a"] .node-editor').fill(text);
+  if (finish) await page.locator('.node[data-id="a"] .node-editor').press("Control+Enter");
   await page.waitForTimeout(300);
 }
 async function setRecoveryQuota(page) {
@@ -98,6 +143,147 @@ async function exportJson(page) {
   await page.locator("#export-json-button").click();
 }
 try {
+  await check("plaintext editor: existing whitespace, blank lines and markup round-trip without changes", async context => {
+    const page = await seed(context);
+    for (const text of ["", "\n", "\n\n", "a\n", "a\n\n", "  spaces  \n\t中文🙂 e\u0301\n", '<img src=x onerror="alert(1)">\n<script>bad()</script>']) {
+      await page.evaluate(async text => {
+        const w = await import("./workspace.js?v=87");
+        const { workspace, board } = w.loadWorkspace(localStorage);
+        board.nodes[0].text = text;
+        w.saveDocument(localStorage, workspace, board);
+      }, text);
+      await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+      await page.locator('.node[data-id="a"]').dblclick();
+      const editor = page.locator(".node.editing .node-editor");
+      assert.equal(await editor.getAttribute("contenteditable"), "plaintext-only");
+      assert.equal(await editor.getAttribute("aria-multiline"), "true");
+      assert.equal(await editor.evaluate(e => noteText(e)), text);
+      assert.equal(await editor.locator("img, script").count(), 0, "Stored markup must remain literal text");
+      assert.equal(await editor.evaluate(e => noteSelection(e).end), text.length);
+      await editor.press("Control+Enter");
+      await page.waitForTimeout(250);
+      assert.equal((await stored(page))[0].nodes[0].text, text, "Merely editing must not add/remove authored whitespace");
+      await page.locator('.node[data-id="a"]').dblclick();
+      await editor.fill(text);
+      await editor.press("Control+Enter"); await page.waitForTimeout(250);
+      assert.equal((await stored(page))[0].nodes[0].text, text, "Native multiline insertion preserves the same whitespace");
+    }
+  });
+
+  await check("plaintext editor: native Enter, blank lines, Shift+Enter and deletion persist exactly", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    const editor = page.locator(".node.editing .node-editor");
+    for (const [key, expected] of [["Enter", "a\n"], ["Enter", "a\n\n"], ["b", "a\n\nb"], ["Shift+Enter", "a\n\nb\n"], ["Backspace", "a\n\nb"], ["Backspace", "a\n\n"]]) {
+      await editor.press(key);
+      await page.waitForTimeout(250);
+      assert.equal((await stored(page))[0].nodes[0].text, expected, key);
+      assert.deepEqual(await scroll(page), [0, 0]);
+    }
+    await editor.press("Control+Enter");
+    await page.reload(); await page.locator('.node[data-id="a"]').waitFor();
+    assert.equal((await stored(page))[0].nodes[0].text, "a\n\n");
+  });
+
+  await check("plaintext editor: native text undo and shortcuts stay inside the editor", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    const editor = page.locator(".node.editing .node-editor");
+    await editor.press("Space"); await page.keyboard.type("native typing");
+    assert.equal(await editor.evaluate(e => noteText(e)), "a native typing");
+    assert.equal(await page.locator("#viewport.pan-ready").count(), 0);
+    await editor.press("Meta+z");
+    assert.equal(await editor.evaluate(e => noteText(e)), "a", "Native undo must not delete/re-render the card");
+    assert.equal(await editor.evaluate(e => e === document.activeElement), true);
+    await editor.press("Meta+Shift+z");
+    assert.equal(await editor.evaluate(e => noteText(e)), "a native typing");
+    await editor.press("Control+Enter");
+    await page.locator("#undo-button").click(); await page.waitForTimeout(250);
+    assert.equal((await stored(page))[0].nodes[0].text, "a", "App undo still treats the edit session as one change");
+  });
+
+  await check("plaintext editor: native undo cannot edit a different closed card", async context => {
+    const page = await seed(context, [note("a", 100, 200), note("b", 500, 300)]);
+    await page.locator('.node[data-id="a"]').dblclick();
+    await page.keyboard.type(" alpha"); await page.keyboard.press("Control+Enter");
+    await page.locator('.node[data-id="b"]').dblclick();
+    await page.keyboard.type(" beta");
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press("Meta+z");
+      assert.equal(await page.locator('.node[data-id="a"] .node-editor').textContent(), "a alpha");
+      assert.equal(await page.locator('.node[data-id="a"] .node-text').textContent(), "a alpha");
+      assert.equal(await page.locator('.node[data-id="b"] .node-editor').evaluate(e => document.activeElement === e), true);
+    }
+    assert.equal(await page.locator('.node[data-id="b"] .node-editor').innerText(), "b");
+    await page.keyboard.press("Control+Enter"); await page.waitForTimeout(250);
+    assert.deepEqual((await stored(page))[0].nodes.map(n => n.text), ["a alpha", "b"]);
+  });
+
+  await check("plaintext editor: browser rich insertion is plain text and clipboard handlers do not create cards", async context => {
+    const page = await seed(context);
+    await page.locator('.node[data-id="a"]').dblclick();
+    const editor = page.locator(".node.editing .node-editor");
+    const result = await editor.evaluate(e => {
+      setNoteSelection(e, 0, 1);
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "中文\nSecond line");
+      clipboardData.setData("text/html", "<b>中文</b><div>Second line</div>");
+      const paste = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData });
+      e.dispatchEvent(paste);
+      // Synthetic paste cannot run a native default action. Exercise the native
+      // plaintext insertion engine separately, without touching the OS clipboard.
+      document.execCommand("insertHTML", false, '<b>中文</b><div>Second line</div>');
+      const copy = new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: new DataTransfer() });
+      e.dispatchEvent(copy);
+      return { pasteBlocked: paste.defaultPrevented, copyBlocked: copy.defaultPrevented, html: e.innerHTML, text: noteText(e) };
+    });
+    assert.equal(result.pasteBlocked, false); assert.equal(result.copyBlocked, false);
+    assert.equal(await page.locator(".node").count(), 1);
+    assert.equal(await editor.locator("b, div, span, img").count(), 0, result.html);
+    assert.equal(result.text, "中文\nSecond line");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await page.waitForTimeout(250);
+    assert.equal((await stored(page))[0].nodes[0].text, "中文\nSecond line");
+  });
+
+  await check("plaintext editor: card typography and dimensions stay consistent in both themes and sizes", async context => {
+    const page = await seed(context, [note("a", 50, 200, "中文卡片\nEnglish notes\n第三行")]);
+    for (const width of [744, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        const before = await page.locator('.node[data-id="a"] .node-text').evaluate(e => {
+          const s = getComputedStyle(e);
+          return [s.fontFamily, s.fontSize, s.fontWeight, s.lineHeight, e.getBoundingClientRect().height];
+        });
+        await page.locator('.node[data-id="a"]').dblclick(); await settleReveal(page);
+        const editor = page.locator(".node.editing .node-editor");
+        const after = await editor.evaluate(e => {
+          const s = getComputedStyle(e);
+          return [s.fontFamily, s.fontSize, s.fontWeight, s.lineHeight, e.getBoundingClientRect().height];
+        });
+        assert.deepEqual(after, before, `${theme}, ${width}px: entering editing must not restyle the text`);
+        await page.screenshot({ path: `/tmp/scattered-editor-${engine}-${theme}-${width}.png` });
+        await editor.press("Control+Enter");
+      }
+    }
+  });
+
+  await check("plaintext editor: new trailing lines follow their visible caret without a phantom row", async context => {
+    const text = Array.from({ length: 50 }, (_, i) => `Line ${i}`).join("\n");
+    const page = await seed(context, [note("a", 50, 200, text)]);
+    await page.setViewportSize({ width: 390, height: 500 });
+    await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
+    await settleReveal(page);
+    const editor = page.locator(".node.editing .node-editor");
+    for (let i = 1; i <= 3; i++) {
+      await editor.press("Enter"); await settleReveal(page);
+      assert.equal((await stored(page))[0].nodes[0].text, text + "\n".repeat(i));
+      const box = await editor.boundingBox();
+      assert.ok(box.y + box.height > 418 && box.y + box.height < 432, JSON.stringify({ i, box }));
+    }
+  });
+
   for (const cardCount of [1, 2000]) {
     await check(`autosave: continuous typing reaches storage while the same editor remains open (${cardCount} cards)`, async context => {
       const nodes = [note("a", 100, 200), ...Array.from({ length: cardCount - 1 }, (_, i) => note(`extra-${i}`, 500 + (i % 40) * 280, 200 + Math.floor(i / 40) * 140, `Card ${i}: ordinary canvas content.`))];
@@ -106,11 +292,11 @@ try {
       await settleReveal(page);
       await page.evaluate(() => {
         window.typingStep = 0;
-        const editor = document.querySelector(".node.editing textarea");
+        const editor = document.querySelector(".node.editing .node-editor");
         window.typingEditor = editor;
         window.typingTimer = setInterval(() => {
-          editor.value = `Continuous input ${++window.typingStep}`;
-          editor.setSelectionRange(editor.value.length, editor.value.length);
+          setNoteText(editor, `Continuous input ${++window.typingStep}`);
+          setNoteSelection(editor, noteText(editor).length, noteText(editor).length);
           editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
           if (window.typingStep === 30) clearInterval(window.typingTimer);
         }, 120);
@@ -122,8 +308,8 @@ try {
       await page.waitForTimeout(300);
       assert.equal((await stored(page))[0].nodes[0].text, "Continuous input 30");
       assert.equal((await stored(page))[0].nodes.length, cardCount);
-      assert.deepEqual(await page.evaluate(() => [window.typingEditor.selectionStart, window.typingEditor.selectionEnd]), [19, 19]);
-      await page.locator(".node.editing textarea").press("Control+Enter");
+      assert.deepEqual(await page.evaluate(() => [noteSelection(window.typingEditor).start, noteSelection(window.typingEditor).end]), [19, 19]);
+      await page.locator(".node.editing .node-editor").press("Control+Enter");
       await page.locator("#undo-button").click();
       await page.waitForTimeout(300);
       assert.equal((await stored(page))[0].nodes[0].text, "a", "Periodic saves must not split one editing session into extra undo steps");
@@ -162,7 +348,7 @@ try {
       };
     });
     for (let i = 0; i < 5; i++) {
-      await page.locator(".node.editing textarea").fill(`Waiting ${i}`);
+      await page.locator(".node.editing .node-editor").fill(`Waiting ${i}`);
       await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
       await page.waitForTimeout(240);
     }
@@ -176,7 +362,7 @@ try {
     assert.equal((await stored(page)).length, 1);
     assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith("scattered-pending-document"))), false);
     // Switching canvases awaits the same flush; no old deadline may write into the new canvas.
-    await page.locator(".node.editing textarea").fill("Before switching");
+    await page.locator(".node.editing .node-editor").fill("Before switching");
     await page.locator("#boards-button").click();
     await page.locator("#new-board-button").click();
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("scattered-workspace-v2")).boards.length === 2);
@@ -192,7 +378,7 @@ try {
     const page = await seed(context, [note("a", 100, 200, "ABC")]);
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
-    const result = await page.locator(".node.editing textarea").evaluate(async editor => {
+    const result = await page.locator(".node.editing .node-editor").evaluate(async editor => {
       const beforeHeight = editor.style.height;
       const writes = [];
       const observer = new MutationObserver(records => writes.push(...records.map(r => r.oldValue)));
@@ -200,16 +386,20 @@ try {
       window.compositionEditor = editor;
       editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
       for (const text of ["w", "wo", "wod", "wode"]) {
-        editor.value = text;
-        editor.setSelectionRange(text.length, text.length);
+        setNoteText(editor, text);
+        setNoteSelection(editor, text.length, text.length);
+        const dom = new MutationObserver(() => {});
+        dom.observe(editor, { childList: true, characterData: true, subtree: true });
         editor.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: text }));
         editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertCompositionText" }));
         await new Promise(resolve => setTimeout(resolve, 80));
+        if (dom.takeRecords().length) throw new Error("Input handlers must not normalize the live composition DOM");
+        dom.disconnect();
       }
       observer.disconnect();
-      return { beforeHeight, height: editor.style.height, writes, focused: document.activeElement === editor, selection: [editor.selectionStart, editor.selectionEnd] };
+      return { beforeHeight, height: editor.style.height, writes, focused: document.activeElement === editor, selection: [noteSelection(editor).start, noteSelection(editor).end] };
     });
-    assert.deepEqual(result.writes, [], "Same-line preedit must not collapse or rewrite the active textarea height");
+    assert.deepEqual(result.writes, [], "Same-line preedit must not collapse or rewrite the active editor height");
     assert.equal(result.height, result.beforeHeight);
     assert.equal(result.focused, true);
     assert.deepEqual(result.selection, [4, 4]);
@@ -217,22 +407,22 @@ try {
     assert.equal((await stored(page))[0].nodes[0].text, "wode", "Composition must retain the existing autosave path");
     await page.evaluate(() => {
       const editor = window.compositionEditor;
-      editor.value = "我的";
+      setNoteText(editor, "我的");
       editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "我的" }));
       editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
     });
     assert.equal(await page.evaluate(() => document.activeElement === window.compositionEditor), true);
-    await page.locator(".node.editing textarea").press("Control+Enter");
+    await page.locator(".node.editing .node-editor").press("Control+Enter");
     await page.waitForTimeout(300);
     assert.equal((await stored(page))[0].nodes[0].text, "我的");
-    assert.equal(await page.locator("textarea.node-editor").count(), 1, "No measurement textarea may remain in the DOM");
+    assert.equal(await page.locator("[contenteditable].node-editor").count(), 1, "Only the real editing host may remain in the DOM");
   });
 
   await check("IME sizing: wrapped composition grows and shrinks like ordinary input without collapsing the editor", async context => {
     const page = await seed(context);
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
-    const results = await page.locator(".node.editing textarea").evaluate(editor => {
+    const results = await page.locator(".node.editing .node-editor").evaluate(editor => {
       const results = [];
       for (const width of [160, 218, 520]) {
         editor.closest(".node").style.width = `${width}px`;
@@ -240,15 +430,15 @@ try {
           const observer = new MutationObserver(() => {});
           observer.observe(editor, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
           editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-          editor.value = text;
-          editor.setSelectionRange(text.length, text.length);
+          setNoteText(editor, text);
+          setNoteSelection(editor, text.length, text.length);
           // The lifecycle alone must work even when an engine omits isComposing.
           editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText" }));
           const composingHeight = editor.offsetHeight;
           const clipped = editor.scrollHeight > editor.clientHeight + 1;
           const styles = [...observer.takeRecords().map(r => r.oldValue), editor.getAttribute("style")];
           observer.disconnect();
-          const selection = [editor.selectionStart, editor.selectionEnd];
+          const selection = [noteSelection(editor).start, noteSelection(editor).end];
           editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
           editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
           results.push({ width, length: text.length, composingHeight, ordinaryHeight: editor.offsetHeight, clipped, styles, selection, focused: document.activeElement === editor });
@@ -266,12 +456,12 @@ try {
       assert.deepEqual(result.selection, [result.length, result.length], label);
       assert.equal(result.focused, true, label);
     }
-    assert.equal(await page.locator("textarea.node-editor").count(), 1);
+    assert.equal(await page.locator("[contenteditable].node-editor").count(), 1);
     // Cancelling preedit back to the original value, then blurring, still commits
     // that value. Ordinary English typing after a new edit keeps working too.
-    await page.locator(".node.editing textarea").evaluate(editor => {
+    await page.locator(".node.editing .node-editor").evaluate(editor => {
       editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-      editor.value = "a";
+      setNoteText(editor, "a");
       editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
       editor.blur();
     });
@@ -287,7 +477,7 @@ try {
       let input;
       if (kind === "card") {
         await page.mouse.dblclick(900, 600);
-        input = page.locator(".node.editing textarea");
+        input = page.locator(".node.editing .node-editor");
       } else if (kind === "title") {
         await page.locator("#board-title").dblclick();
         input = page.locator("#board-title-editor");
@@ -334,8 +524,8 @@ try {
         await input.press("Escape");
         assert.equal(await page.locator(".node").count(), count - 1, "An explicit non-IME Escape still cancels an empty draft");
         await page.mouse.dblclick(900, 600);
-        await page.locator(".node.editing textarea").fill("中文正文");
-        await page.locator(".node.editing textarea").press("Control+Enter");
+        await page.locator(".node.editing .node-editor").fill("中文正文");
+        await page.locator(".node.editing .node-editor").press("Control+Enter");
       } else if (kind === "search") {
         await input.press("Enter");
         assert.notEqual(await page.locator("#search-count").textContent(), beforeSearch);
@@ -344,7 +534,7 @@ try {
         await input.fill(kind === "title" ? "中文标题" : "中文连线");
         await input.press("Enter");
       }
-      assert.equal(await page.locator(kind === "card" ? ".node.editing textarea" : kind === "title" ? "#board-title-editor" : kind === "edge" ? "#edge-label-editor" : "#search-input").isVisible(), false);
+      assert.equal(await page.locator(kind === "card" ? ".node.editing .node-editor" : kind === "title" ? "#board-title-editor" : kind === "edge" ? "#edge-label-editor" : "#search-input").isVisible(), false);
       await page.waitForTimeout(300);
       const saved = (await stored(page))[0];
       if (kind === "title") assert.equal(saved.title, "中文标题");
@@ -381,7 +571,7 @@ try {
         });
       });
     });
-    await page.locator(".node.editing textarea").fill("Lifecycle latest edit");
+    await page.locator(".node.editing .node-editor").fill("Lifecycle latest edit");
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
     await page.locator('#toast[data-persistent="true"]').waitFor();
     assert.match(await page.locator("#toast").textContent(), /Storage is full/);
@@ -470,7 +660,7 @@ try {
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, board, "delete", () => i);
     });
-    await page.locator(".node.editing textarea").fill("Committed even when the journal cannot fit");
+    await page.locator(".node.editing .node-editor").fill("Committed even when the journal cannot fit");
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
     await page.waitForFunction(() => {
       const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
@@ -547,8 +737,8 @@ try {
     assert.match(await toast.textContent(), /Changes may not be saved/);
     await page.evaluate(() => { window.quotaLimit = Infinity; });
     await page.locator('.node[data-id="a"]').press("Enter");
-    await page.locator('.node[data-id="a"] textarea').fill("Storage available again");
-    await page.locator('.node[data-id="a"] textarea').press("Control+Enter");
+    await page.locator('.node[data-id="a"] .node-editor').fill("Storage available again");
+    await page.locator('.node[data-id="a"] .node-editor').press("Control+Enter");
     await page.waitForFunction(() => document.querySelector("#toast").hidden);
     assert.equal(await toast.isVisible(), false, "The export acknowledged eviction only; a successful save cleared the failure later");
   });
@@ -620,7 +810,7 @@ try {
       }
       return { count, tail: low };
     });
-    await page.locator(".node.editing textarea").fill("Saved at the real capacity limit");
+    await page.locator(".node.editing .node-editor").fill("Saved at the real capacity limit");
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
     await page.waitForFunction(() => {
       const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
@@ -639,10 +829,10 @@ try {
     await page.setViewportSize({ width: 390, height: 500 });
     await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
     await page.waitForTimeout(350);
-    const editor = page.locator(".node.editing textarea");
+    const editor = page.locator(".node.editing .node-editor");
     await editor.evaluate(e => {
-      e.value = "新" + e.value;
-      e.setSelectionRange(1, 1);
+      setNoteText(e, "新" + noteText(e));
+      setNoteSelection(e, 1, 1);
       e.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "新" }));
     });
     await page.waitForTimeout(650);
@@ -655,7 +845,7 @@ try {
     // Re-enter via the existing node API and trigger a new distant target.
     await page.locator('.node[data-id="a"]').press("Enter");
     await page.waitForTimeout(350);
-    await editor.evaluate(e => e.setSelectionRange(0, 0));
+    await editor.evaluate(e => setNoteSelection(e, 0, 0));
     await page.waitForTimeout(80);
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
     const hidden = await page.locator("#world").getAttribute("style");
@@ -669,8 +859,8 @@ try {
     await page.setViewportSize({ width: 390, height: 500 });
     await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
     await page.waitForTimeout(350);
-    const editor = page.locator(".node.editing textarea");
-    await editor.evaluate(e => e.setSelectionRange(0, 0));
+    const editor = page.locator(".node.editing .node-editor");
+    await editor.evaluate(e => setNoteSelection(e, 0, 0));
     await page.waitForTimeout(100);
     assert.ok((await editor.boundingBox()).y >= 0, "Reduced motion reveals the caret without a prolonged journey");
     assert.equal(await page.locator("#viewport").evaluate(v => v.classList.contains("following-caret")), false);
@@ -682,20 +872,20 @@ try {
     await page.setViewportSize({ width: 390, height: 500 });
     await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
     await page.waitForTimeout(350);
-    const result = await page.locator(".node.editing textarea").evaluate(async e => {
+    const result = await page.locator(".node.editing .node-editor").evaluate(async e => {
       const world = document.querySelector("#world");
       const read = () => ({ t: performance.now(), y: new DOMMatrix(getComputedStyle(world).transform).m42 });
       const samples = [read()];
-      e.setSelectionRange(0, 0);
+      setNoteSelection(e, 0, 0);
       for (let i = 0; i < 6; i++) {
         await new Promise(r => setTimeout(r, 60));
         samples.push(read());
         // Replace the destination mid-flight, as native keyboard trackpad
         // updates do. This must not build a queue of stale destinations.
-        if (i === 2) e.setSelectionRange(100, 100);
+        if (i === 2) setNoteSelection(e, 100, 100);
       }
       const beforeReverse = read();
-      e.setSelectionRange(e.value.length, e.value.length);
+      setNoteSelection(e, noteText(e).length, noteText(e).length);
       await new Promise(r => setTimeout(r, 100));
       const reversed = read();
       // A new touch inside the editor cancels following at the displayed view,
@@ -703,7 +893,7 @@ try {
       e.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 91 }));
       const cancelled = read();
       await new Promise(r => setTimeout(r, 100));
-      return { samples, beforeReverse, reversed, cancelled, settled: read(), start: e.selectionStart, end: e.selectionEnd, length: e.value.length };
+      return { samples, beforeReverse, reversed, cancelled, settled: read(), start: noteSelection(e).start, end: noteSelection(e).end, length: noteText(e).length };
     });
     const first = result.samples[0], last = result.samples.at(-1);
     const speed = (last.y - first.y) / (last.t - first.t);
@@ -779,12 +969,16 @@ try {
     await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
     assert.equal(await page.locator("#world").evaluate(w => getComputedStyle(w).transitionDuration), "0.18s", "Entry retains its original animation");
     await page.waitForTimeout(350);
-    const sample = await page.locator(".node.editing textarea").evaluate(async editor => {
+    const sample = await page.locator(".node.editing .node-editor").evaluate(async editor => {
       const world = document.querySelector("#world");
       const startY = new DOMMatrix(getComputedStyle(world).transform).m42;
-      const caret = editor.value.split("\n").slice(0, 134).join("\n").length + 1;
-      editor.setSelectionRange(caret, caret);
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const caret = noteText(editor).split("\n").slice(0, 134).join("\n").length + 1;
+      setNoteSelection(editor, caret, caret);
+      // Document selectionchange is queued separately from rendering. Wait for
+      // its bounded delivery instead of assuming textarea's two-frame timing.
+      for (let i = 0; i < 15 && !document.querySelector("#viewport").classList.contains("following-caret"); i++) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
       const following = document.querySelector("#viewport").classList.contains("following-caret");
       await new Promise(resolve => setTimeout(resolve, 75));
       const currentY = new DOMMatrix(getComputedStyle(world).transform).m42;
@@ -795,9 +989,9 @@ try {
       await new Promise(resolve => setTimeout(resolve, 90));
       const targetY = new DOMMatrix(getComputedStyle(world).transform).m42;
       const stillFollowing = document.querySelector("#viewport").classList.contains("following-caret");
-      return { following, stillFollowing, distance: targetY - startY, fraction: (currentY - startY) / (targetY - startY), caret, actualCaret: editor.selectionStart };
+      return { following, stillFollowing, distance: targetY - startY, fraction: (currentY - startY) / (targetY - startY), caret, actualCaret: noteSelection(editor).start };
     });
-    assert.equal(sample.following, true);
+    assert.equal(sample.following, true, JSON.stringify(sample));
     assert.equal(sample.stillFollowing, false, "Repeated notifications of the same caret must not restart or prolong following");
     assert.ok(sample.distance > 0 && sample.distance < 72, JSON.stringify(sample));
     assert.ok(sample.fraction > 0 && sample.fraction < 0.7, JSON.stringify(sample));
@@ -812,19 +1006,19 @@ try {
     await page.setViewportSize({ width: 390, height: 500 });
     await page.locator('.node[data-id="a"]').dblclick({ position: { x: 24, y: 24 } });
     await page.waitForTimeout(350);
-    const editor = page.locator(".node.editing textarea");
+    const editor = page.locator(".node.editing .node-editor");
     const word = text.indexOf("Some", 1);
     // The second "Some" wraps as a whole. Truncating its suffix during caret
     // measurement incorrectly places its first three letters on the prior line.
-    await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 3);
+    await editor.evaluate((e, caret) => setNoteSelection(e, caret, caret), word + 3);
     await settleReveal(page);
     const before = await page.locator("#world").evaluate(w => new DOMMatrix(w.style.transform).m42);
-    await editor.evaluate((e, caret) => e.setSelectionRange(caret, caret), word + 1);
+    await editor.evaluate((e, caret) => setNoteSelection(e, caret, caret), word + 1);
     await page.waitForTimeout(350);
     const after = await page.locator("#world").evaluate(w => new DOMMatrix(w.style.transform).m42);
     assert.ok(Math.abs(after - before) < 0.5, `Same wrapped line must not move the camera: ${before} -> ${after}`);
-    assert.equal(await editor.inputValue(), text);
-    assert.equal(await editor.evaluate(e => e.selectionStart), word + 1);
+    assert.equal(await editor.evaluate(e => noteText(e)), text);
+    assert.equal(await editor.evaluate(e => noteSelection(e).start), word + 1);
     assert.deepEqual(await scroll(page), [0, 0]);
   });
 
@@ -853,15 +1047,16 @@ try {
     for (const size of [{ width: 1280, height: 800 }, { width: 390, height: 500 }]) {
       await page.setViewportSize(size);
       await edit(page, Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n"), false);
-      const editor = page.locator(".node.editing textarea");
+      const editor = page.locator(".node.editing .node-editor");
       await editor.press("Meta+ArrowDown");
       await editor.press("End");
       await settleReveal(page);
       assert.deepEqual(await scroll(page), [0, 0]);
       let rect = await editor.boundingBox();
-      assert.ok(rect.y + rect.height < size.height && rect.y + rect.height > 40, `End caret is in view: ${JSON.stringify(rect)}`);
+      const endState = await editor.evaluate(e => ({ selection: noteSelection(e), length: noteText(e).length, scroll: [e.scrollLeft, e.scrollTop], world: document.querySelector("#world").getAttribute("style"), documentScroll: [scrollX, scrollY], lineHeight: getComputedStyle(e).lineHeight }));
+      assert.ok(rect.y + rect.height < size.height && rect.y + rect.height > 40, `End caret is in view: ${JSON.stringify({ rect, endState })}`);
       await editor.press("Meta+ArrowUp");
-      assert.equal(await editor.evaluate(e => e.selectionStart), 0, "Home shortcut moves the actual caret");
+      assert.equal(await editor.evaluate(e => noteSelection(e).start), 0, "Home shortcut moves the actual caret");
       await settleReveal(page);
       rect = await editor.boundingBox();
       assert.ok(rect.y >= 0 && rect.y < size.height - 40, `Start caret is in view: ${JSON.stringify(rect)}`);
@@ -888,38 +1083,38 @@ try {
     const page = await seed(context);
     await page.setViewportSize({ width: 390, height: 500 });
     await edit(page, Array.from({ length: 150 }, (_, i) => `Line ${i} 中文`).join("\n"), false);
-    const editor = page.locator(".node.editing textarea");
+    const editor = page.locator(".node.editing .node-editor");
     await settleReveal(page);
     assert.ok((await editor.boundingBox()).y < -100, "Fixture starts with the beginning off screen");
     await editor.evaluate(e => {
       // Native collapsed-caret movement can emit selectionchange alone. Do not
       // let the extra select event from the script API mask the missing handler.
       e.addEventListener("select", event => event.stopImmediatePropagation(), true);
-      e.setSelectionRange(0, 0);
+      setNoteSelection(e, 0, 0);
     });
     await settleReveal(page);
     const rect = await editor.boundingBox();
     assert.ok(rect.y >= 0 && rect.y < 460, `Changed caret is visible: ${JSON.stringify(rect)}`);
-    assert.equal(await editor.evaluate(e => e.selectionStart), 0, "Camera movement does not rewrite the caret");
+    assert.equal(await editor.evaluate(e => noteSelection(e).start), 0, "Camera movement does not rewrite the caret");
     // Follow multiple incremental movements as well, including backward selection.
     for (const line of [15, 30, 45, 30, 15, 0]) {
       const caret = await editor.evaluate((e, line) => {
-        const start = e.value.split("\n").slice(0, line).join("\n").length + (line ? 1 : 0);
-        e.setSelectionRange(start, start + 4, "backward");
+        const start = noteText(e).split("\n").slice(0, line).join("\n").length + (line ? 1 : 0);
+        setNoteSelection(e, start, start + 4, "backward");
         return start;
       }, line);
       await settleReveal(page);
       const position = await editor.evaluate((e, line) => ({
         y: e.getBoundingClientRect().y + line * parseFloat(getComputedStyle(e).lineHeight),
-        start: e.selectionStart, end: e.selectionEnd, direction: e.selectionDirection,
+        start: noteSelection(e).start, end: noteSelection(e).end, direction: noteSelection(e).direction,
       }), line);
       assert.ok(position.y >= 40 && position.y < 460, JSON.stringify(position));
       assert.deepEqual([position.start, position.end, position.direction], [caret, caret + 4, "backward"]);
     }
-    // Older WebKit can notify on document instead of on the textarea.
+    // Older WebKit can notify on document instead of on the editing host.
     await editor.evaluate(e => {
       e.addEventListener("selectionchange", event => event.stopImmediatePropagation(), true);
-      e.setSelectionRange(e.value.length, e.value.length);
+      setNoteSelection(e, noteText(e).length, noteText(e).length);
       document.dispatchEvent(new Event("selectionchange"));
     });
     await settleReveal(page);
@@ -934,9 +1129,9 @@ try {
     await b.locator('.node[data-id="a"]').dblclick();
     await edit(a, "Peer edit");
     await b.waitForTimeout(600);
-    assert.equal(await b.locator(".node.editing textarea").inputValue(), "a", "Do not replace an open editor");
-    await b.locator(".node.editing textarea").fill("Local edit");
-    await b.locator(".node.editing textarea").press("Control+Enter");
+    assert.equal(await b.locator(".node.editing .node-editor").evaluate(e => noteText(e)), "a", "Do not replace an open editor");
+    await b.locator(".node.editing .node-editor").fill("Local edit");
+    await b.locator(".node.editing .node-editor").press("Control+Enter");
     await b.waitForTimeout(500);
     const docs = await stored(b);
     assert.equal(docs.length, 2);

@@ -301,7 +301,7 @@ try {
   await ui.locator(".node.editing .node-editor").fill("Saved without opening the logo");
   await backgroundUpload;
   assert.equal(await ui.locator("#board-picker").isVisible(), false);
-  assert.equal(await ui.locator(".node.editing .node-editor").inputValue(), "Saved without opening the logo");
+  assert.equal(await ui.locator(".node.editing .node-editor").innerText(), "Saved without opening the logo");
   assert.equal(await ui.locator(".node.editing .node-editor").evaluate((element) => element === document.activeElement), true);
   await ui.locator(".node.editing .node-editor").press("Meta+Enter");
   await ui.waitForFunction(() => document.querySelector('#drive-sync-button[data-status="synced"]'));
