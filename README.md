@@ -48,6 +48,8 @@ Box and lasso selections highlight notes while you drag, using each note's cente
 
 Boards, recovery copies, and preferences are stored locally in the browser. Scattered works fully without an account or network connection. Clearing site data or browser storage can remove local boards, so export important canvases as JSON when moving them to another browser or device.
 
+If a write hits the browser's storage limit, Scattered may remove the oldest eligible recovery copies to make room and shows a notice when it does. If a required recovery copy cannot be saved, clearing or deleting the canvas stops, including deletions received through sync. These safeguards do not replace a JSON backup: if saving fails, export before closing, because the latest unsaved input can still be lost.
+
 When optional Google Drive sync is enabled and the user connects it, workspace snapshots go directly from the browser to that user's hidden Drive app-data folder. The first connected account claims any previously unsynced local workspace. Connecting a different account switches the browser to that account's separate local workspace instead of merging or copying the previous account's boards. Disconnecting removes the credential but keeps that account's local workspace available offline. OAuth endpoints only exchange credentials; explicitly enabled presentation links use a separate Cloudflare D1 share table, not public Google Drive files.
 
 Cloudflare Web Analytics is enabled for basic traffic measurement. Scattered's application code does not send note text, board structure, or exported files to an analytics service.

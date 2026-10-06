@@ -8,7 +8,7 @@ Each browser installation keeps its own Drive file. This avoids two devices over
 
 The Google account is the workspace boundary. The first account connected on a browser claims any existing workspace that has never belonged to an account. Connecting another account switches the visible app to that account's isolated local workspace before any Drive data is read or written; it never copies the previous account's boards. Switching back restores the earlier account's local workspace and then reconciles it with that account's Drive data. Disconnecting removes only the credential, not the local workspace or its sync ancestry.
 
-Cloud snapshots are validated before merging. If any listed Drive snapshot cannot be read or parsed, sync pauses without uploading, while local saving continues. Browsers with the native Web Locks API also serialize same-installation sync attempts across tabs.
+Cloud snapshots are validated before merging. If any listed Drive snapshot cannot be read or parsed, sync pauses without uploading. Local editing remains available, and local save failures are reported separately. If a recovery copy required for a remote deletion cannot be saved, sync stops before applying the deletion. Browsers with the native Web Locks API also serialize same-installation sync attempts across tabs.
 
 ## Deploy
 
@@ -55,6 +55,6 @@ Google 账号是工作区的上一级边界。浏览器首次连接账号时，�
 
 登录后的云端按钮显示 Google 头像（缺失或加载失败时使用账号图标），外围转圈表示同步中，右下角小云表示同步完成；离线和失败使用不同角标。点击可查看当前账号邮箱。资料通过现有 `about.get` 请求读取，不增加 OAuth scope；只用于当前浏览器会话的账号显示，不写入画布、同步快照或分享内容。
 
-云端快照会先经过验证再参与合并。只要列出的任一 Drive 快照无法读取或解析，同步就会暂停且不会上传覆盖，但本地保存仍然继续。支持原生 Web Locks API 的浏览器还会把同一安装中多个标签页的同步依次执行。
+云端快照会先经过验证再参与合并。只要列出的任一 Drive 快照无法读取或解析，同步就会暂停且不会上传覆盖。本地仍可编辑，本地保存失败会另行提示。如果远端删除所需的恢复副本无法保存，同步会在执行删除前中止。支持原生 Web Locks API 的浏览器还会把同一安装中多个标签页的同步依次执行。
 
 部署步骤与上方一致。正式开启前尤其要注意：建议使用独立域名或自定义域名。GitHub Pages 中同一个 `username.github.io` 下的不同项目路径属于同一浏览器 origin，也会共享 `localStorage`；路径本身不能形成安全隔离。
