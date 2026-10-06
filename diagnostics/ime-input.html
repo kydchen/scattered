@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; connect-src 'none'" />
+    <title>Scattered · IME comparison P1</title>
+    <style>
+      :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; color: #202733; background: #f1f3f8; }
+      * { box-sizing: border-box; }
+      body { max-width: 820px; margin: 0 auto; padding: 24px; }
+      h1 { margin: 0 0 12px; font-size: 22px; }
+      p { margin: 8px 0; line-height: 1.5; }
+      .secondary { color: #667080; font-size: 14px; }
+      .cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 24px 0; }
+      section { min-width: 0; padding: 16px; border: 1px solid #d9e1ed; border-radius: 16px; background: #fafbfe; }
+      label { display: block; font-weight: 600; line-height: 1.5; }
+      label span { display: block; font-size: 14px; font-weight: 400; color: #667080; }
+      .stage { position: relative; height: 124px; margin-top: 16px; overflow: clip; user-select: none; -webkit-user-select: none; }
+      .world { position: absolute; top: 4px; left: 4px; width: 0; height: 0; transform-origin: 0 0; }
+      .card { position: absolute; width: 218px; min-height: 48px; padding: 13px 15px; border: 1px solid #d9e1ed; border-radius: 9px; background: #fafbfe; box-shadow: 0 4px 14px #2027330d; }
+      input, textarea { display: block; width: 100%; height: 72px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font-family: inherit; font-size: 17px; font-weight: 430; font-style: normal; line-height: 1.42; letter-spacing: -0.01em; white-space: pre-wrap; overflow-wrap: anywhere; touch-action: auto; user-select: text; -webkit-user-select: text; }
+      textarea { resize: none; overflow: auto; }
+      input:focus-visible, textarea:focus-visible { outline: 2px solid #5579b4; outline-offset: 4px; }
+      /* Match the app's nested composited containers, without importing its code. */
+      .transformed .world { transform: translate3d(0, 0, 0) scale(0.9); will-change: transform; }
+      .transformed .card { transform: translate3d(0, 0, 0); will-change: transform; }
+      @media (max-width: 639px) {
+        body { padding: 20px; }
+        .cases { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>输入对照 · Input comparison <small>P1</small></h1>
+    <p>用同一套中文输入法，在 A–D 分别输入 <strong>wodeshuruyoudianyanchi</strong>，先不选词。记下哪些跟手、哪些慢。</p>
+    <p class="secondary" lang="en">Use the same Chinese IME in A–D. Type the phrase above without choosing a candidate, and compare responsiveness.</p>
+    <div class="cases">
+      <section>
+        <label for="input-a">A · 单行输入<span lang="en">Single line · spelling off</span></label>
+        <div class="stage"><div class="world"><div class="card">
+          <input id="input-a" type="text" maxlength="120" spellcheck="false" autocomplete="off" />
+        </div></div></div>
+      </section>
+      <section>
+        <label for="input-b">B · 多行输入<span lang="en">Multiline · spelling off</span></label>
+        <div class="stage"><div class="world"><div class="card">
+          <textarea id="input-b" rows="3" maxlength="120" spellcheck="false" autocomplete="off"></textarea>
+        </div></div></div>
+      </section>
+      <section>
+        <label for="input-c">C · 开启拼写检查<span lang="en">Multiline · spelling on</span></label>
+        <div class="stage"><div class="world"><div class="card">
+          <textarea id="input-c" rows="3" maxlength="120" spellcheck="true" autocomplete="off"></textarea>
+        </div></div></div>
+      </section>
+      <section class="transformed">
+        <label for="input-d">D · 再加画布缩放<span lang="en">Multiline · spelling on · scaled</span></label>
+        <div class="stage"><div class="world"><div class="card">
+          <textarea id="input-d" rows="3" maxlength="120" spellcheck="true" autocomplete="off"></textarea>
+        </div></div></div>
+      </section>
+    </div>
+    <p class="secondary">独立静态诊断页，无 JavaScript，不连接或读写画布，不保存或上传输入。这里没有自动调高、光标跟随或保存逻辑，也不能测量真实按键延迟。</p>
+    <p class="secondary" lang="en">Static diagnostic page: no JavaScript, canvas access, saving or uploading. No auto-resize, caret following or autosave. It does not measure physical key-to-screen latency.</p>
+  </body>
+</html>
