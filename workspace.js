@@ -1,4 +1,4 @@
-import { BOARD_VERSION, IMPORT_VERSIONS, blankBoard, createId, normalizeBoard, parseImportedBoard } from "./model.js?v=89p1";
+import { BOARD_VERSION, IMPORT_VERSIONS, blankBoard, createId, normalizeBoard, parseImportedBoard } from "./model.js?v=89";
 
 const LEGACY_BOARD_KEY = "scattered-board-v1";
 const LEGACY_WORKSPACE_KEY = "scattered-workspace-v1";

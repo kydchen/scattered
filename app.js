@@ -1,11 +1,11 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, pendingRecoveryBackup, quarantinePendingRecovery, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=89p1";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, pendingRecoveryBackup, quarantinePendingRecovery, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=89";
 import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=89p1";
+import { createDriveSync } from "./drive-sync.js?v=89";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
-import { applyTranslations, hasMessage, t } from "./i18n.js?v=89p1";
-import { mountLiveSharing } from "./share-ui.js?v=89p1";
+import { applyTranslations, hasMessage, t } from "./i18n.js?v=89";
+import { mountLiveSharing } from "./share-ui.js?v=89";
 import { mirroredEditorCaret, placeEditorCaretAtEnd, readEditorText, setEditorText } from "./note-editor.js?v=88";
 
 const THEME_KEY = "scattered-theme";

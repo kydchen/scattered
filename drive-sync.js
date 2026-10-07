@@ -1,4 +1,4 @@
-import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js?v=89p1";
+import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js?v=89";
 import {
   CLOUD_SNAPSHOT_FORMAT,
   CLOUD_SNAPSHOT_VERSION,
