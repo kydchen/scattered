@@ -212,6 +212,8 @@ button {
   height: 1px;
   overflow: visible;
   pointer-events: none;
+  /* Keep native scrolling from cancelling drags that start on a connection. */
+  touch-action: none;
 }
 
 #connections .edge-line,

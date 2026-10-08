@@ -501,7 +501,7 @@ cancelClearButton.addEventListener("click", (event) => {
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 fitButton.addEventListener("click", fitBoard);
-selectAllButton.addEventListener("click", selectAllNodes);
+selectAllButton.addEventListener("click", toggleSelectAllNodes);
 colorSelectionButton.addEventListener("click", (event) => {
   event.stopPropagation();
   openColorPalette([...selectedIds], event.currentTarget);
@@ -2575,6 +2575,13 @@ function selectAllNodes(event) {
   board.nodes.forEach((node) => selectedIds.add(node.id));
   selectionMode = selectedIds.size > 0;
   updateSelection();
+}
+
+function toggleSelectAllNodes(event) {
+  if (board.nodes.length > 0 && selectedIds.size === board.nodes.length) {
+    event.preventDefault();
+    selectNode(null);
+  } else selectAllNodes(event);
 }
 
 function paintSelection(ids) {

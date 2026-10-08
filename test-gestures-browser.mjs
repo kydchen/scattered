@@ -134,6 +134,17 @@ export async function checkCanvasGestures(context) {
   assert.equal(await cue.isVisible(), false, "Releasing without dragging removes the ready cue");
   await page.locator("#select-all").click();
   assert.deepEqual(await selected(), ["a", "b", "c"], "Hold and release blank space can select all without drawing a box");
+  await page.locator("#select-all").tap();
+  assert.deepEqual(await selected(), [], "Tapping the highlighted select-all button clears the whole selection");
+  assert.equal(await page.locator("#selection-bar").isVisible(), false);
+  await touch("touchStart", [[25, 190]]);
+  await cue.waitFor({ state: "visible" });
+  await touch("touchMove", [[335, 520]]);
+  await touch("touchEnd");
+  assert.deepEqual(await selected(), ["a", "b", "c"]);
+  assert.equal(await page.locator("#select-all").getAttribute("aria-pressed"), "true");
+  await page.locator("#select-all").tap();
+  assert.deepEqual(await selected(), [], "The same button clears all notes selected by a touch marquee");
 
   for (const cancel of ["touchCancel", "pinch", "blur"]) {
     await reset(fixture(true));
@@ -208,19 +219,49 @@ export async function checkCanvasGestures(context) {
 
   const touchEdgeBoard = fixture(true);
   touchEdgeBoard.edges = [{ id: "ab", from: "a", to: "b", arrow: false, label: "" }];
-  await reset(touchEdgeBoard);
-  const edgePoint = await page.locator('.edge[data-id="ab"] .edge-hit').evaluate(path => {
-    const p = path.getPointAtLength(path.getTotalLength() / 2).matrixTransform(path.getScreenCTM());
-    return [p.x, p.y];
-  });
-  await touch("touchStart", [edgePoint]); await touch("touchEnd");
-  assert.equal(await page.locator('.edge[data-id="ab"].selected').count(), 1, "Tapping still selects a connection");
-  const edgeView = await world();
-  await touch("touchStart", [edgePoint]);
-  await touch("touchMove", [[edgePoint[0] + 30, edgePoint[1] + 60]]);
-  await touch("touchEnd");
-  assert.notEqual(await world(), edgeView, "Dragging from a connection pans instead of trapping a finger");
-  assert.equal(await page.locator(".edge.selected").count(), 0);
+  for (const start of ["direct", "selected", "held"]) {
+    await reset(touchEdgeBoard);
+    const beforePan = await savedBoard();
+    const edgePoint = await page.locator('.edge[data-id="ab"] .edge-hit').evaluate(path => {
+      const p = path.getPointAtLength(path.getTotalLength() / 2).matrixTransform(path.getScreenCTM());
+      return [p.x, p.y];
+    });
+    if (start === "selected") {
+      await touch("touchStart", [edgePoint]); await touch("touchEnd");
+      assert.equal(await page.locator('.edge[data-id="ab"].selected').count(), 1, "Tapping still selects a connection");
+    }
+    await page.evaluate(() => {
+      window.edgeTouchTrace = [];
+      for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) {
+        document.addEventListener(type, event => edgeTouchTrace.push([type, event.clientX, event.clientY]), true);
+      }
+    });
+    const edgeView = await page.locator("#world").evaluate(element => {
+      const matrix = new DOMMatrix(getComputedStyle(element).transform);
+      return { x: matrix.e, y: matrix.f };
+    });
+    await touch("touchStart", [edgePoint]);
+    if (start === "held") await page.waitForTimeout(600);
+    // A single move can pass before the browser takes over native scrolling.
+    // Check the entire drag and explicitly reject a native pointercancel.
+    for (let step = 1; step <= 5; step++) {
+      await touch("touchMove", [[edgePoint[0] + 12 * step, edgePoint[1] + 18 * step]]);
+      const current = await page.locator("#world").evaluate(element => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { x: matrix.e, y: matrix.f };
+      });
+      assert.ok(Math.abs(current.x - edgeView.x - 12 * step) < 1 && Math.abs(current.y - edgeView.y - 18 * step) < 1,
+        `${start}: connection pan follows every move (${step}): ${JSON.stringify({ current, trace: await page.evaluate(() => edgeTouchTrace) })}`);
+    }
+    await touch("touchEnd");
+    assert.equal(await page.evaluate(() => edgeTouchTrace.some(event => event[0] === "pointercancel")), false,
+      "The browser must not take the connection's gesture away from the canvas");
+    assert.equal(await page.locator(".edge.selected").count(), 0);
+    assert.equal(await page.locator("#selection-bar").isVisible(), false, "Holding on a connection is not blank-space marquee selection");
+    const afterPan = await savedBoard();
+    assert.deepEqual(afterPan.nodes, beforePan.nodes, "Panning cannot edit notes");
+    assert.deepEqual(afterPan.edges, beforePan.edges, "Panning cannot change connections");
+  }
 
   await reset(fixture(true));
   await touch("touchStart", [[190, 190, 0]]);

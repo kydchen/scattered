@@ -182,6 +182,43 @@ async function exportJson(page) {
   await page.locator("#export-json-button").click();
 }
 try {
+  await check("gesture select-all toggles through its button but keyboard select-all remains idempotent", async context => {
+    const page = await gesturePage(context);
+    const base = (await gestureState(page)).board;
+    base.nodes.push(note("c", 120, 450));
+    const button = page.locator("#select-all");
+    for (const activation of ["click", "tap", "Enter", "Space"]) {
+      await page.evaluate(value => gestureTest.reset(value), base);
+      const before = await gestureState(page);
+      await page.locator('.node[data-id="b"]').click({ modifiers: ["Shift"] });
+      assert.deepEqual((await gestureState(page)).selected.sort(), ["a", "b"]);
+      assert.equal(await button.getAttribute("aria-pressed"), "false");
+      await button.click();
+      assert.deepEqual((await gestureState(page)).selected.sort(), ["a", "b", "c"]);
+      assert.equal(await button.getAttribute("aria-pressed"), "true");
+      if (activation === "click") await button.click();
+      else if (activation === "tap") await button.tap();
+      else await button.press(activation);
+      const cleared = await gestureState(page);
+      assert.deepEqual(cleared.selected, [], `${activation}: pressing the active select-all button clears selection`);
+      assert.equal(cleared.selectionMode, false);
+      assert.equal(await button.getAttribute("aria-pressed"), "false");
+      assert.equal(await page.locator("#selection-bar").isVisible(), false);
+      assert.deepEqual(cleared.board, before.board);
+      assert.deepEqual(cleared.undo, before.undo, "Selection cannot add an undo step");
+      assert.deepEqual(cleared.redo, before.redo, "Selection cannot invalidate redo");
+    }
+    for (const shortcut of ["Control+a", "Control+a", "Meta+a", "Meta+a"]) {
+      await page.keyboard.press(shortcut);
+      assert.deepEqual((await gestureState(page)).selected.sort(), ["a", "b", "c"], `${shortcut} always selects all`);
+    }
+    await page.evaluate(value => gestureTest.reset(value), base);
+    await page.mouse.move(80, 200); await page.mouse.down();
+    await page.mouse.move(1000, 540); await page.mouse.up();
+    assert.equal(await button.getAttribute("aria-pressed"), "true", "A marquee that contains every note activates the same button");
+    await button.click();
+    assert.deepEqual((await gestureState(page)).selected, [], "Select-all can clear an all-note marquee too");
+  }, { hasTouch: true });
   for (const kind of ["node", "resize", "link"]) {
     await check(`gesture cancellation restores ${kind} and both complete history stacks`, async context => {
       const page = await gesturePage(context);
