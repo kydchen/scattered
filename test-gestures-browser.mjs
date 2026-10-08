@@ -180,6 +180,49 @@ export async function checkCanvasGestures(context) {
   await touch("touchEnd");
 
   await reset(fixture(true));
+  await page.evaluate(() => {
+    window.pinchTrace = [];
+    for (const name of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) {
+      document.addEventListener(name, e => pinchTrace.push([name, e.pointerId, e.clientX, e.clientY]), true);
+    }
+  });
+  await touch("touchStart", [[180, 500, 0]]);
+  await touch("touchStart", [[180, 500, 0], [250, 550, 1]]);
+  await touch("touchMove", [[150, 470, 0], [300, 600, 1]]);
+  // End the lifted contact, not the contact that will continue panning.
+  await touch("touchEnd", [[300, 600, 1]]);
+  assert.equal(await page.evaluate(() => pinchTrace.filter(event => event[0] === "pointerup").length), 1,
+    "The browser must actually release exactly one pointer before testing the continuation");
+  const pinchView = await page.locator("#world").evaluate(element => ({
+    x: new DOMMatrix(getComputedStyle(element).transform).e,
+    y: new DOMMatrix(getComputedStyle(element).transform).f,
+  }));
+  await touch("touchMove", [[170, 500, 0]]);
+  const panView = await page.locator("#world").evaluate(element => ({
+    x: new DOMMatrix(getComputedStyle(element).transform).e,
+    y: new DOMMatrix(getComputedStyle(element).transform).f,
+  }));
+  assert.ok(Math.abs(panView.x - pinchView.x - 20) < 1 && Math.abs(panView.y - pinchView.y - 30) < 1,
+    `Native pinch transitions directly to a one-finger pan: ${JSON.stringify({ pinchView, panView, trace: await page.evaluate(() => pinchTrace) })}`);
+  await touch("touchEnd");
+
+  const touchEdgeBoard = fixture(true);
+  touchEdgeBoard.edges = [{ id: "ab", from: "a", to: "b", arrow: false, label: "" }];
+  await reset(touchEdgeBoard);
+  const edgePoint = await page.locator('.edge[data-id="ab"] .edge-hit').evaluate(path => {
+    const p = path.getPointAtLength(path.getTotalLength() / 2).matrixTransform(path.getScreenCTM());
+    return [p.x, p.y];
+  });
+  await touch("touchStart", [edgePoint]); await touch("touchEnd");
+  assert.equal(await page.locator('.edge[data-id="ab"].selected').count(), 1, "Tapping still selects a connection");
+  const edgeView = await world();
+  await touch("touchStart", [edgePoint]);
+  await touch("touchMove", [[edgePoint[0] + 30, edgePoint[1] + 60]]);
+  await touch("touchEnd");
+  assert.notEqual(await world(), edgeView, "Dragging from a connection pans instead of trapping a finger");
+  assert.equal(await page.locator(".edge.selected").count(), 0);
+
+  await reset(fixture(true));
   await touch("touchStart", [[190, 190, 0]]);
   await cue.waitFor({ state: "visible" });
   await touch("touchStart", [[190, 190, 0], [300, 550, 1]]);

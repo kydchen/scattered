@@ -111,6 +111,45 @@ const stored = page => page.evaluate(() => {
   const ws = JSON.parse(localStorage.getItem("scattered-workspace-v2"));
   return ws.boards.map(item => JSON.parse(localStorage.getItem(`scattered-document-v2:${item.id}`)));
 });
+// Expose history only in this isolated test response, never in the shipped app.
+async function gesturePage(context) {
+  await context.route("**/app.js?*", async route => route.fulfill({
+    contentType: "text/javascript",
+    body: await readFile(new URL("./app.js", import.meta.url), "utf8") + `
+      window.gestureTest = {
+        state: () => JSON.parse(JSON.stringify({ board, undo: undoStack, redo: redoStack, selected: [...selectedIds], selectionMode })),
+        reset: value => {
+          replaceBoard(value); selectNode("a");
+          const snapshot = JSON.parse(snapshotState());
+          undoStack.push(...Array.from({ length: 50 }, (_, i) => JSON.stringify({ ...snapshot, title: "undo-" + i })));
+          redoStack.push(...[0, 1].map(i => JSON.stringify({ ...snapshot, title: "redo-" + i })));
+          updateHistoryControls();
+        },
+        mode: () => mode?.type,
+        undo, redo, save: () => { boardDirty = true; return saveBoardNow(); },
+        stage: () => { boardDirty = true; stagePendingSave(); },
+      };`,
+  }));
+  return seed(context, [note("a", 120, 250), note("b", 650, 250)]);
+}
+const gestureState = page => page.evaluate(() => gestureTest.state());
+async function gesturePointer(page, type, point, pointerType = "mouse", pointerId = 11) {
+  await page.evaluate(({ type, point, pointerType, pointerId }) => {
+    const target = type === "down" ? document.elementFromPoint(...point) : document.querySelector("#viewport");
+    target.dispatchEvent(new PointerEvent(`pointer${type}`, { bubbles: true, cancelable: true,
+      pointerType, pointerId, isPrimary: pointerId === 11, clientX: point[0], clientY: point[1], buttons: type === "up" ? 0 : 1 }));
+  }, { type, point, pointerType, pointerId });
+}
+async function startGesture(page, kind, pointerType = "mouse") {
+  const selector = '.node[data-id="a"]' + (kind === "resize" ? " .resize-handle" : kind === "link" ? " .link-handle" : " .node-text");
+  const rect = await page.locator(selector).boundingBox();
+  const start = [rect.x + rect.width / 2, rect.y + rect.height / 2];
+  await gesturePointer(page, "down", start, pointerType);
+  const before = await gestureState(page);
+  const end = [start[0] + 100, start[1] + 85];
+  await gesturePointer(page, "move", end, pointerType);
+  return { before, start, end };
+}
 async function edit(page, text, finish = true) {
   await page.locator('.node[data-id="a"]').dblclick();
   await page.locator('.node[data-id="a"] .node-editor').fill(text);
@@ -143,6 +182,179 @@ async function exportJson(page) {
   await page.locator("#export-json-button").click();
 }
 try {
+  for (const kind of ["node", "resize", "link"]) {
+    await check(`gesture cancellation restores ${kind} and both complete history stacks`, async context => {
+      const page = await gesturePage(context);
+      const base = (await gestureState(page)).board;
+      for (const pointerType of ["mouse", "touch", "pen"]) {
+        for (const interrupt of ["Escape", "blur", "pointercancel", ...(pointerType === "touch" ? ["pinch"] : [])]) {
+          await page.evaluate(value => gestureTest.reset(value), base);
+          const { before, end } = await startGesture(page, kind, pointerType);
+          const preview = await gestureState(page);
+          assert.deepEqual(preview.undo, before.undo, `${kind}/${pointerType}: preview cannot evict old undo entries`);
+          assert.deepEqual(preview.redo, before.redo, `${kind}/${pointerType}: preview cannot erase redo`);
+          if (interrupt === "Escape") await page.keyboard.press("Escape");
+          else if (interrupt === "blur") await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+          else if (interrupt === "pointercancel") await gesturePointer(page, "cancel", end, pointerType);
+          else {
+            // A second finger on a card still transitions to pinch before hit handling.
+            const box = await page.locator('.node[data-id="b"]').boundingBox();
+            await gesturePointer(page, "down", [box.x + 20, box.y + 20], "touch", 12);
+            assert.equal(await page.evaluate(() => gestureTest.mode()), "pinch");
+          }
+          assert.deepEqual(await gestureState(page), before, `${kind}/${pointerType}/${interrupt}: restore state, not only stack length`);
+          assert.equal(await page.locator("#link-preview").isVisible(), false);
+          assert.equal(await page.locator(".drop-source, .link-target").count(), 0);
+          await gesturePointer(page, "up", end, pointerType);
+          await gesturePointer(page, "up", [900, 400], "touch", 12);
+          assert.deepEqual(await gestureState(page), before, "A late release cannot commit the cancelled gesture");
+        }
+      }
+    });
+  }
+  await check("gesture no-op and commit preserve or advance history exactly once", async context => {
+    const page = await gesturePage(context);
+    const base = (await gestureState(page)).board;
+    for (const kind of ["node", "resize"]) {
+      await page.evaluate(value => gestureTest.reset(value), base);
+      const { before, start } = await startGesture(page, kind);
+      await gesturePointer(page, "move", start);
+      await gesturePointer(page, "up", start);
+      assert.deepEqual(await gestureState(page), before, "Returning to the start must preserve redo and all 50 undo entries");
+      const { end } = await startGesture(page, kind);
+      await gesturePointer(page, "up", end);
+      const committed = await gestureState(page);
+      assert.notDeepEqual(committed.board.nodes, before.board.nodes);
+      assert.equal(committed.undo.length, 50);
+      assert.equal(committed.redo.length, 0);
+      assert.deepEqual(committed.undo.slice(0, -1), before.undo.slice(1));
+      await page.locator("#undo-button").click();
+      assert.deepEqual((await gestureState(page)).board, before.board);
+      await page.locator("#redo-button").click();
+      assert.deepEqual((await gestureState(page)).board, committed.board);
+    }
+  });
+  await check("gesture undo and redo cancel first including direct button entry points", async context => {
+    const page = await gesturePage(context);
+    const base = (await gestureState(page)).board;
+    for (const kind of ["node", "resize", "link"]) {
+      for (const action of ["Control+z", "Control+Shift+z", "Meta+z", "Meta+Shift+z", "undo", "redo"]) {
+        await page.evaluate(value => gestureTest.reset(value), base);
+        const { before, end } = await startGesture(page, kind);
+        if (["undo", "redo"].includes(action)) await page.locator(`#${action}-button`).evaluate(button => button.click());
+        else await page.keyboard.press(action);
+        const after = await gestureState(page);
+        const redo = action.includes("Shift") || action === "redo";
+        assert.equal(after.board.title, redo ? "redo-1" : "undo-49");
+        assert.deepEqual(after.board.nodes, before.board.nodes);
+        assert.deepEqual(after.board.edges, before.board.edges);
+        assert.equal(after[redo ? "undo" : "redo"].at(-1), JSON.stringify({
+          title: before.board.title, nodes: before.board.nodes, edges: before.board.edges, view: before.board.view,
+          selectedIds: before.selected, selectionMode: before.selectionMode,
+        }), "The opposite history stack must never contain a drag preview");
+        await gesturePointer(page, "up", end);
+        assert.deepEqual(await gestureState(page), after);
+      }
+    }
+  });
+  await check("gesture abandoned drafts and linked drafts never resurrect through history", async context => {
+    const page = await gesturePage(context);
+    const base = (await gestureState(page)).board;
+    for (const linked of [false, true]) {
+      await page.evaluate(value => gestureTest.reset(value), base);
+      const before = await gestureState(page);
+      if (linked) {
+        const { end } = await startGesture(page, "link");
+        await gesturePointer(page, "up", end);
+      } else {
+        await page.locator('.node[data-id="a"]').focus();
+        await page.keyboard.press("n");
+      }
+      assert.equal(await page.locator(".node.editing").count(), 1);
+      assert.equal(await page.locator("#redo-button").isDisabled(), true, "A pending creation cannot accept a draft and silently invalidate redo on click");
+      assert.equal((await gestureState(page)).board.edges.length, linked ? 1 : 0);
+      await page.keyboard.press("Escape");
+      const cancelled = await gestureState(page);
+      assert.deepEqual(cancelled.board.nodes, before.board.nodes);
+      assert.deepEqual(cancelled.board.edges, before.board.edges);
+      assert.deepEqual(cancelled.undo, before.undo);
+      assert.deepEqual(cancelled.redo, before.redo);
+      assert.equal(await page.locator("#redo-button").isEnabled(), true, "Cancelling the draft exposes the intact redo stack again");
+      await page.locator("#undo-button").click();
+      assert.equal(await page.locator(".node").count(), 2);
+      assert.equal((await gestureState(page)).board.edges.length, 0);
+      await page.locator("#redo-button").click();
+      assert.equal(await page.locator(".node").count(), 2);
+      assert.equal((await gestureState(page)).board.edges.length, 0);
+    }
+  });
+  await check("gesture pinch releases into one-finger pan without jumping or selecting", async context => {
+    const page = await gesturePage(context);
+    await gesturePointer(page, "down", [400, 450], "touch");
+    await gesturePointer(page, "down", [650, 450], "touch", 12);
+    await gesturePointer(page, "move", [700, 450], "touch", 12);
+    const before = await gestureState(page);
+    await gesturePointer(page, "up", [700, 450], "touch", 12);
+    assert.equal(await page.evaluate(() => gestureTest.mode()), "pan");
+    assert.deepEqual((await gestureState(page)).board.view, before.board.view);
+    await gesturePointer(page, "move", [420, 480], "touch");
+    const after = await gestureState(page);
+    assert.equal(after.board.view.x - before.board.view.x, 20);
+    assert.equal(after.board.view.y - before.board.view.y, 30);
+    await gesturePointer(page, "up", [420, 480], "touch");
+    assert.deepEqual((await gestureState(page)).selected, before.selected);
+  });
+  await check("gesture accepted drafts undo as one creation including text and incoming links", async context => {
+    const page = await gesturePage(context);
+    for (const linked of [false, true]) {
+      if (linked) {
+        await page.locator('.node[data-id="a"]').click();
+        const { end } = await startGesture(page, "link");
+        await gesturePointer(page, "up", end);
+      } else await page.keyboard.press("n");
+      assert.equal(await page.locator("#undo-button").isEnabled(), true, "The first pending draft is undoable through the toolbar");
+      const editor = page.locator(".node.editing .node-editor");
+      await editor.fill("新卡片\nAccepted note");
+      await page.locator("#undo-button").click();
+      assert.equal(await page.locator(".node").count(), 2);
+      assert.equal((await gestureState(page)).board.edges.length, 0);
+      await page.locator("#redo-button").click();
+      const after = await gestureState(page);
+      assert.equal(after.board.nodes.length, 3);
+      assert.equal(after.board.nodes.at(-1).text, "新卡片\nAccepted note");
+      assert.equal(after.board.edges.length, linked ? 1 : 0);
+      await page.locator("#undo-button").click();
+    }
+  });
+  await check("gesture pending saves exclude width and edge-pan previews", async context => {
+    const page = await gesturePage(context);
+    const base = (await gestureState(page)).board;
+    for (const kind of ["node", "resize", "link"]) {
+      await page.evaluate(value => gestureTest.reset(value), base);
+      const { before, end } = await startGesture(page, kind);
+      if (kind !== "resize") {
+        await gesturePointer(page, "move", [1270, end[1]]);
+        await page.waitForFunction(view => JSON.stringify(gestureTest.state().board.view) !== JSON.stringify(view), before.board.view);
+        assert.notDeepEqual((await gestureState(page)).board.view, before.board.view);
+      }
+      await page.evaluate(() => gestureTest.stage());
+      const replayed = await page.evaluate(async () => {
+        const { loadWorkspace } = await import("./workspace.js?v=89");
+        // Replay a copy so this assertion cannot repair or overwrite the live storage.
+        const values = new Map(Object.entries(localStorage));
+        const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)),
+          removeItem: key => values.delete(key), key: i => [...values.keys()][i] ?? null, get length() { return values.size; } };
+        return loadWorkspace(storage).board;
+      });
+      assert.deepEqual(replayed.nodes, before.board.nodes, "A background journal cannot recover an uncommitted drag or width");
+      assert.deepEqual(replayed.view, before.board.view, "A background journal cannot recover edge-pan preview offsets");
+      await gesturePointer(page, "cancel", end);
+      assert.deepEqual((await gestureState(page)).board, before.board);
+      await page.evaluate(() => gestureTest.save());
+      assert.deepEqual((await stored(page))[0].nodes, before.board.nodes);
+      assert.deepEqual((await stored(page))[0].view, before.board.view);
+    }
+  });
   await check("pending delta: real lifecycle stages only changed cards and recovers after closing the writer", async context => {
     const nodes = [note("a", 100, 200), ...Array.from({ length: 100 }, (_, i) => note(`b${i}`, 800 + i * 300, 900, "Unchanged ".repeat(100)))];
     const page = await seed(context, nodes, [{ id: "e", from: "a", to: "b0", arrow: false, label: "Context" }]);

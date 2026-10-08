@@ -1285,9 +1285,9 @@ assert.match(pointerDownSource, /if \(keyboardLinkSourceIds\)[\s\S]*?connectKeyb
 assert.match(pointerMoveSource, /keyboardLinkSourceIds[\s\S]*?updateLinkPreview\(keyboardLinkSourceIds, event\.clientX, event\.clientY\)[\s\S]*?updateLinkTarget\(keyboardLinkSourceIds, event\.clientX, event\.clientY\)/);
 assert.match(finishKeyboardLinkSource, /linkPreview\.toggleAttribute\("hidden", true\)[\s\S]*?\.node\.link-target/);
 assert.match(app, /function updateLinkPreview\(sourceIds, screenX, screenY\)[\s\S]*?sourceIds\.flatMap/);
-assert.match(app, /currentMode\?\.type === "link"[\s\S]*?isBlankCanvasTarget\(hit\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", currentMode\.sourceIds\)/);
+assert.match(app, /currentMode\?\.type === "link"[\s\S]*?isBlankCanvasTarget\(hit\)[\s\S]*?createNode\(point\.x, point\.y, event\.pointerType === "pen", currentMode\.sourceIds, currentMode\.snapshot\)/);
 assert.match(app, /function isBlankCanvasTarget\(element\) \{\s*return element\?\.id === "gesture-surface";/);
-assert.match(app, /function createNode\(centerX, centerY, fromPen = false, sourceIds = \[\]\)[\s\S]*?centerX - DEFAULT_NODE_WIDTH \/ 2[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?softlyRevealNode\(node\.id\)/);
+assert.match(app, /function createNode\(centerX, centerY, fromPen = false, sourceIds = \[\], creationSnapshot = null\)[\s\S]*?centerX - DEFAULT_NODE_WIDTH \/ 2[\s\S]*?toggleConnectionsToTarget\(board\.edges, sourceIds, node\.id\)[\s\S]*?softlyRevealNode\(node\.id\)/);
 assert.match(app, /function beginWorkspaceAction\(\)[\s\S]*?\["node", "resize", "pan", "pinch"\]\.includes\(mode\?\.type\)[\s\S]*?boardDirty = true[\s\S]*?cancelGesture\(\);/);
 assert.match(app, /function endWorkspaceAction\(\)[\s\S]*?disabled = false/);
 assert.match(app, /\["beforeinput", "click", "dblclick", "pointerdown", "pointermove", "pointerup", "wheel", "paste", "keydown"\][\s\S]*?blockWorkspaceInteraction[\s\S]*?capture: true/);
@@ -1304,9 +1304,16 @@ const dragSaveSource = app.match(/function boardWithoutDragPreview\(\) \{[\s\S]*
 const dragSaveState = { board: { nodes: [{ id: "a", x: 400, y: 200, text: "fresh text" }, { id: "b", x: 400, y: 200 }] }, mode: null };
 const boardForSave = vm.runInNewContext(`${dragSaveSource}; boardWithoutDragPreview`, dragSaveState);
 assert.equal(boardForSave(), dragSaveState.board);
-dragSaveState.mode = { type: "node", moved: true, positions: [{ id: "a", x: 10, y: 20 }] };
+dragSaveState.mode = { type: "node", moved: true, positions: [{ id: "a", x: 10, y: 20 }],
+  snapshot: JSON.stringify({ nodes: [{ id: "a", x: 10, y: 20 }], view: { x: 0, y: 0, scale: 1 } }) };
 assert.equal(JSON.stringify(boardForSave().nodes), JSON.stringify([{ id: "a", x: 10, y: 20, text: "fresh text" }, { id: "b", x: 400, y: 200 }]));
 assert.equal(dragSaveState.board.nodes[0].x, 400, "Saving cannot mutate the live drag preview");
+assert.equal(JSON.stringify(boardForSave().view), JSON.stringify({ x: 0, y: 0, scale: 1 }), "Auto-pan remains a preview until the gesture ends");
+dragSaveState.mode = { type: "resize", id: "a", moved: true,
+  snapshot: JSON.stringify({ nodes: [{ id: "a", width: 218 }], view: { x: 0, y: 0, scale: 1 } }) };
+dragSaveState.board.nodes[0].width = 320;
+assert.equal(boardForSave().nodes[0].width, 218, "Autosave and pending recovery must not commit a width preview");
+assert.equal(dragSaveState.board.nodes[0].width, 320);
 assert.match(saveBoardNowSource, /candidate = boardWithoutDragPreview\(\)[\s\S]*?saveDocument\(workspaceStorage, workspace, candidate/);
 assert.match(syncOpenInputsSource, /if \(changed\) boardDirty = true;[\s\S]*?return changed;/);
 assert.match(saveBoardNowSource, /saveDocument[\s\S]*?clearPendingDocument\(workspaceStorage\)/);
@@ -1461,15 +1468,15 @@ assert.equal(messages.en.storageRecoveryTrimmed, "Some older recovery copies wer
 assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(html, /<script type="module" src="app\.js\?v=89"><\/script>/);
+assert.match(html, /<script type="module" src="app\.js\?v=90p1"><\/script>/);
 assert.match(app, /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/drive-sync\.js\?v=89"/);
 assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /const CACHE = "scattered-v89";/);
+assert.match(serviceWorker, /const CACHE = "scattered-v90p1";/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
-assert.match(serviceWorker, /\.\/app\.js\?v=89"/);
+assert.match(serviceWorker, /\.\/app\.js\?v=90p1"/);
 assert.match(serviceWorker, /\.\/note-editor\.js\?v=88"/);
 assert.match(app, /from "\.\/note-editor\.js\?v=88"/);
 assert.match(serviceWorker, /\.\/styles\.css\?v=88"/);

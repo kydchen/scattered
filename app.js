@@ -637,7 +637,7 @@ function onPointerDown(event) {
   if (event.target.closest(".menu, .menu-button, .theme-button, .history-tools, .selection-bar, .color-palette, .node-actions")) return;
 
   const edgeElement = event.target.closest(".edge");
-  if (edgeElement) {
+  if (edgeElement && event.pointerType !== "touch") {
     event.preventDefault();
     finishEditing();
     selectEdge(edgeElement.dataset.id);
@@ -674,14 +674,7 @@ function onPointerDown(event) {
 
   const touches = activeTouches();
   if (shouldPinch(touches.map((pointer) => pointer.type))) {
-    clearLongPress();
-    if (mode?.type === "node" && mode.moved) {
-      restoreDraggedNodes(mode);
-      scheduleSave();
-    }
-    clearNodeDropTarget();
-    hideLasso();
-    stopDragAutoPan();
+    cancelGesture({ keepPointers: true });
     const [a, b] = touches;
     mode = {
       type: "pinch",
@@ -744,6 +737,7 @@ function onPointerDown(event) {
       x: event.clientX,
       y: event.clientY,
       moved: false,
+      snapshot: snapshotState(),
     };
     updateLinkPreview(sourceIds, event.clientX, event.clientY);
     return;
@@ -813,8 +807,9 @@ function onPointerDown(event) {
           viewY: board.view.y,
           pointerType: event.pointerType,
           moved: false,
+          tapEdgeId: edgeElement?.dataset.id,
         };
-    if (event.pointerType === "touch") {
+    if (event.pointerType === "touch" && !edgeElement) {
       const pending = mode;
       pending.longPressTimer = setTimeout(() => {
         if (mode !== pending || pending.moved || pointers.size !== 1) return;
@@ -884,7 +879,7 @@ function onPointerMove(event) {
   if (mode?.type === "resize" && mode.pointerId === event.pointerId) {
     const screenDx = event.clientX - mode.startX;
     if (!mode.moved && Math.abs(screenDx) > 2) {
-      checkpoint();
+      mode.snapshot = snapshotState();
       mode.moved = true;
     }
     if (!mode.moved) return;
@@ -897,7 +892,7 @@ function onPointerMove(event) {
     const screenDy = event.clientY - mode.startY;
     if (!mode.moved && hasDragIntent(mode.pointerType, screenDx, screenDy)) {
       clearLongPress(mode);
-      checkpoint();
+      mode.snapshot = snapshotState();
       mode.moved = true;
     }
     if (!mode.moved) return;
@@ -1075,7 +1070,12 @@ function onPointerUp(event) {
   pointers.delete(event.pointerId);
 
   if (currentMode?.type === "pinch") {
-    if (pointers.size === 0) {
+    const remaining = [...pointers.entries()].filter(([, pointer]) => pointer.type === "touch");
+    if (remaining.length === 1) {
+      const [pointerId, pointer] = remaining[0];
+      mode = { type: "pan", pointerId, pointerType: "touch", startX: pointer.x, startY: pointer.y,
+        viewX: board.view.x, viewY: board.view.y, moved: true };
+    } else if (pointers.size === 0) {
       mode = null;
       scheduleSave();
       updateHistoryControls();
@@ -1091,7 +1091,8 @@ function onPointerUp(event) {
     else if (currentMode.type === "lasso" || currentMode.tapCanvas) handleCanvasTap();
     hideLasso();
   } else if (currentMode?.type === "pan") {
-    if (!currentMode.moved) handleCanvasTap();
+    if (!currentMode.moved && currentMode.tapEdgeId) selectEdge(currentMode.tapEdgeId);
+    else if (!currentMode.moved) handleCanvasTap();
     else scheduleSave();
   } else if (currentMode?.type === "node") {
     if (currentMode.moved) {
@@ -1125,7 +1126,7 @@ function onPointerUp(event) {
     const target = hit?.closest(".node");
     if (target) {
       if (!currentMode.sourceIds.includes(target.dataset.id)) {
-        checkpoint();
+        checkpoint(currentMode.snapshot);
         board.edges = toggleConnectionsToTarget(board.edges, currentMode.sourceIds, target.dataset.id);
         queueEdgeRender();
         scheduleSave();
@@ -1135,35 +1136,59 @@ function onPointerUp(event) {
         || hasDragIntent(currentMode.pointerType, event.clientX - currentMode.startX, event.clientY - currentMode.startY);
       if (moved && isBlankCanvasTarget(hit)) {
         const point = screenToWorld({ x: event.clientX, y: event.clientY }, board.view);
-        createNode(point.x, point.y, event.pointerType === "pen", currentMode.sourceIds);
+        createNode(point.x, point.y, event.pointerType === "pen", currentMode.sourceIds, currentMode.snapshot);
       }
     }
     linkPreview.toggleAttribute("hidden", true);
     document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
   }
 
+  if (["node", "resize"].includes(currentMode?.type) && currentMode.snapshot && currentMode.snapshot !== snapshotState()) {
+    checkpoint(currentMode.snapshot);
+  }
   if (currentMode?.autoPanned) scheduleSave();
   mode = null;
   viewport.classList.remove("panning");
   updateHistoryControls();
 }
 
-function cancelGesture() {
+function cancelGesture({ keepPointers = false } = {}) {
   finishRevealMotion();
   const autoPanned = mode?.autoPanned;
   const movedNode = mode?.type === "node" && mode.moved;
+  const resized = mode?.type === "resize" && mode.moved;
   if (movedNode) restoreDraggedNodes(mode);
+  if (mode?.snapshot) {
+    const before = JSON.parse(mode.snapshot);
+    if (resized) {
+      const node = findNode(mode.id, false);
+      const original = before.nodes.find(node => node.id === mode.id);
+      if (node && original) {
+        node.width = original.width;
+        nodeElements.get(node.id)?.style.setProperty("--node-width", `${node.width || 218}px`);
+        queueEdgeRender();
+      }
+    }
+    board.view = before.view;
+    applyView();
+  }
   clearNodeDropTarget();
   stopDragAutoPan();
   clearLongPress();
-  pointers.clear();
+  if (!keepPointers) {
+    for (const id of pointers.keys()) {
+      if (viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id);
+    }
+    pointers.clear();
+  }
   mode = null;
   finishKeyboardLink();
   viewport.classList.remove("panning");
   linkPreview.toggleAttribute("hidden", true);
   hideLasso();
   document.querySelectorAll(".node.link-target").forEach((element) => element.classList.remove("link-target"));
-  if (autoPanned || movedNode) scheduleSave();
+  if (autoPanned || movedNode || resized) scheduleSave();
+  updateHistoryControls();
 }
 
 function onWheel(event) {
@@ -1958,8 +1983,9 @@ function onDoubleClick(event) {
   createNode(point.x, point.y, fromPen);
 }
 
-function createNode(centerX, centerY, fromPen = false, sourceIds = []) {
-  checkpoint();
+function createNode(centerX, centerY, fromPen = false, sourceIds = [], creationSnapshot = null) {
+  finishEditing();
+  const before = creationSnapshot || snapshotState();
   const node = {
     id: createId(),
     text: "",
@@ -1971,12 +1997,14 @@ function createNode(centerX, centerY, fromPen = false, sourceIds = []) {
   board.nodes.push(node);
   if (sourceIds.length) board.edges = toggleConnectionsToTarget(board.edges, sourceIds, node.id);
   updateEmptyState();
-  renderNode(node, true);
+  const element = renderNode(node, true);
+  // A new note and its incoming links become one history entry when accepted.
+  element.creationSnapshot = before;
   if (sourceIds.length) queueEdgeRender();
-  updateHistoryControls();
   selectNode(node.id);
   editNode(node.id, true, fromPen);
   softlyRevealNode(node.id);
+  updateHistoryControls();
   scheduleSave();
 }
 
@@ -2338,7 +2366,7 @@ function finishEditing(onlyId = null, explicitCancel = false) {
     const node = findNode(element.dataset.id);
     const editor = element.querySelector(".node-editor");
     const nextText = readEditorText(editor).slice(0, 20_000);
-    if (node.text !== nextText) checkpoint();
+    if (!element.creationSnapshot && node.text !== nextText) checkpoint();
     node.text = nextText;
     element.classList.remove("editing");
     editor.blur();
@@ -2346,8 +2374,12 @@ function finishEditing(onlyId = null, explicitCancel = false) {
     // no longer be an undo target while another card owns the text selection.
     editor.contentEditable = "false";
     if (shouldDiscardDraft(node.text, element.dataset.new === "true", explicitCancel)) {
-      deleteNode(node.id);
+      deleteNode(node.id, false);
       return;
+    }
+    if (element.creationSnapshot) {
+      checkpoint(element.creationSnapshot);
+      delete element.creationSnapshot;
     }
     element.dataset.new = "false";
     syncNodeContent(element, node);
@@ -2969,6 +3001,17 @@ function isComposingKeyEvent(event) {
 function onKeyDown(event) {
   if (isComposingKeyEvent(event)) return;
   if (document.querySelector("dialog[open]")) return;
+  if (mode && event.key === "Escape") {
+    event.preventDefault();
+    cancelGesture();
+    return;
+  }
+  if (mode && (event.metaKey || event.ctrlKey) && ["z", "y"].includes(event.key.toLowerCase())) {
+    event.preventDefault();
+    if (event.shiftKey || event.key.toLowerCase() === "y") redo();
+    else undo();
+    return;
+  }
   if (["lasso", "marquee"].includes(mode?.type)) {
     // A preview is not committed: do not edit the old selection behind it.
     event.preventDefault();
@@ -3105,11 +3148,15 @@ function clearScheduledSave() {
 }
 
 function boardWithoutDragPreview() {
-  if (mode?.type !== "node" || !mode.moved) return board;
-  const original = new Map(mode.positions.map((position) => [position.id, position]));
-  return { ...board, nodes: board.nodes.map((node) => {
-    const position = original.get(node.id);
-    return position ? { ...node, x: position.x, y: position.y } : node;
+  if (!mode?.snapshot) return board;
+  const before = JSON.parse(mode.snapshot);
+  const original = new Map(before.nodes.map(node => [node.id, node]));
+  const dragged = new Set(mode.positions?.map(position => position.id));
+  return { ...board, view: before.view, nodes: board.nodes.map((node) => {
+    const saved = original.get(node.id);
+    if (!saved) return node;
+    if (mode.type === "resize" && mode.id === node.id) return { ...node, width: saved.width };
+    return dragged.has(node.id) ? { ...node, x: saved.x, y: saved.y } : node;
   }) };
 }
 
@@ -3264,8 +3311,7 @@ function snapshotState() {
   });
 }
 
-function checkpoint() {
-  const snapshot = snapshotState();
+function checkpoint(snapshot = snapshotState()) {
   if (undoStack.at(-1) !== snapshot) undoStack.push(snapshot);
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
@@ -3273,6 +3319,7 @@ function checkpoint() {
 }
 
 function undo() {
+  cancelGesture();
   hideColorPalette();
   finishBoardTitle();
   finishEdgeLabel();
@@ -3281,6 +3328,7 @@ function undo() {
 }
 
 function redo() {
+  cancelGesture();
   hideColorPalette();
   finishBoardTitle();
   finishEdgeLabel();
@@ -3324,8 +3372,9 @@ function updateHistoryControls() {
     && Math.abs(board.view.y - targetView.y) < 0.5
     && Math.abs(board.view.scale - targetView.scale) < 0.001
   );
-  undoButton.disabled = undoStack.length === 0;
-  redoButton.disabled = redoStack.length === 0;
+  const pendingCreation = Boolean(document.querySelector(".node.editing")?.creationSnapshot);
+  undoButton.disabled = undoStack.length === 0 && !pendingCreation;
+  redoButton.disabled = redoStack.length === 0 || pendingCreation;
   historyTools.hidden = board.nodes.length === 0 && undoStack.length === 0 && redoStack.length === 0;
 }
 
