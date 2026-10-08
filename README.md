@@ -44,6 +44,10 @@ Scattered uses the same model across devices, with controls adapted to each inpu
 
 Box and lasso selections highlight notes while you drag, using each note's center rather than requiring the whole card to fit inside. Mouse, touch, and Pencil use the same highlight; release to confirm, or cancel to keep the previous selection.
 
+Tap the highlighted select-all button again to clear the selection; `Cmd/Ctrl+A` still always selects all. On touchscreens, tap a connection to select it or drag from it to pan. After pinching, the remaining finger can continue panning.
+
+Escape or an interrupted gesture cancels an in-progress move, connection drag, or resize without adding an undo step. Abandoned empty drafts, including those created by dragging a connection, no longer reappear when you undo.
+
 Notes use a native plain-text editor, preserving line breaks and blank lines without importing rich-text formatting. Enter and Escape used to confirm or cancel an input-method candidate are protected from canvas shortcuts.
 
 ## Local data and privacy
