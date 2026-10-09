@@ -4,15 +4,15 @@ import {
   CLOUD_SNAPSHOT_VERSION,
   cloudSnapshotHeads,
   createCloudSnapshot,
+  findCommonBaseCandidates,
   findCommonBaseIndex,
   fingerprintSyncWorkspace,
   indexSyncWorkspace,
   isDisposableSyncWorkspace,
   mergeSnapshotHistory,
   mergeSyncWorkspaces,
-  parseSyncIndex,
   snapshotLineage,
-} from "./sync-model.js?v=79";
+} from "./sync-model.js?v=91p1";
 
 const SESSION_KEY = "scattered-drive-session-v1";
 const DEVICE_KEY = "scattered-drive-device-v1";
@@ -222,8 +222,7 @@ export function createDriveSync(options) {
     const local = await options.getWorkspace();
     ensureSyncActive(generation);
     syncStage = "prepare";
-    const [localIndex, localFingerprint, files] = await Promise.all([
-      indexSyncWorkspace(local),
+    const [localFingerprint, files] = await Promise.all([
       fingerprintSyncWorkspace(local),
       listDeviceFiles(),
     ]);
@@ -274,7 +273,7 @@ export function createDriveSync(options) {
     }
 
     syncStage = "merge";
-    const combined = await combineHeads(heads);
+    const combined = await combineHeads(heads, snapshots);
     const remote = combined.snapshot;
     const remoteLineage = new Set(heads.flatMap(snapshotLineage));
     const remoteContainsLast = Boolean(state.lastSnapshotId && remoteLineage.has(state.lastSnapshotId));
@@ -291,10 +290,10 @@ export function createDriveSync(options) {
         parents: state.parents || [],
         ancestors: state.ancestors || [],
         history: state.history || [],
-        index: localIndex,
-        workspace: local,
+        // This ID names our saved checkpoint, NOT the currently edited contents.
+        // Its historical index comes from state.history or the downloaded file.
       };
-      const baseIndex = state.lastSnapshotId ? findCommonBaseIndex(localSnapshot, remote) : [];
+      const baseIndex = state.lastSnapshotId ? findCommonBaseIndex(localSnapshot, remote, snapshots) : [];
       const merged = await mergeSyncWorkspaces(local, remote.workspace, baseIndex);
       nextWorkspace = merged.workspace;
       conflicts += merged.conflicts;
@@ -313,10 +312,9 @@ export function createDriveSync(options) {
           const knownLineage = new Set(ownSnapshot ? snapshotLineage(ownSnapshot)
             : [state.lastSnapshotId, ...state.parents, ...state.ancestors]);
           const mergeBases = heads.filter((head) => !knownLineage.has(head.snapshotId)).flatMap((head) => {
-            const remoteIds = new Set(snapshotLineage(head));
-            const base = [...state.history, ...head.history].find((entry) =>
-              knownLineage.has(entry.snapshotId) && remoteIds.has(entry.snapshotId));
-            return base ? [base] : [];
+            return findCommonBaseCandidates(ownSnapshot || {
+              snapshotId: state.lastSnapshotId, parents: state.parents, ancestors: state.ancestors, history: state.history,
+            }, head, snapshots);
           });
           const snapshot = await createCloudSnapshot(local, {
             deviceId,
@@ -361,12 +359,12 @@ export function createDriveSync(options) {
     });
   }
 
-  async function combineHeads(heads) {
+  async function combineHeads(heads, snapshots) {
     const ordered = [...heads].sort((left, right) => left.snapshotId.localeCompare(right.snapshotId));
     let current = ordered[0];
     let conflicts = 0;
     for (const next of ordered.slice(1)) {
-      const baseIndex = findCommonBaseIndex(current, next);
+      const baseIndex = findCommonBaseIndex(current, next, snapshots);
       const merged = await mergeSyncWorkspaces(current.workspace, next.workspace, baseIndex);
       const index = await indexSyncWorkspace(merged.workspace);
       conflicts += merged.conflicts;
@@ -380,9 +378,9 @@ export function createDriveSync(options) {
           ...(next.ancestors || []),
         ]),
         history: mergeSnapshotHistory(
-          [{ snapshotId: current.snapshotId, index: current.index }],
+          [current],
           current.history || [],
-          [{ snapshotId: next.snapshotId, index: next.index }],
+          [next],
           next.history || [],
         ),
         index,
@@ -434,14 +432,14 @@ export function createDriveSync(options) {
     try { workspace = parseSyncWorkspace(value.workspace); } catch { throw syncError("snapshot-invalid"); }
     const index = await indexSyncWorkspace(workspace);
     const history = mergeSnapshotHistory(
-      [{ snapshotId: value.snapshotId, index }],
+      [{ snapshotId: value.snapshotId, index, parents: value.parents, ancestors: value.ancestors }],
       Array.isArray(value.history) ? value.history.filter((item) => validCloudToken(item?.snapshotId)) : [],
     );
     const snapshot = {
       snapshotId: value.snapshotId,
       deviceId: value.deviceId,
       createdAt: Number(value.createdAt) || 0,
-      parents: unique(value.parents || []),
+      ...(value.parents !== undefined ? { parents: unique(value.parents) } : {}),
       ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
       history,
       index,
@@ -606,11 +604,7 @@ function readState(storage, accountKey, allowLegacy = false) {
       lastFingerprint: typeof value.lastFingerprint === "string" ? value.lastFingerprint : null,
       parents: unique(Array.isArray(value.parents) ? value.parents.filter(validCloudToken) : []),
       ancestors: unique(Array.isArray(value.ancestors) ? value.ancestors.filter(validCloudToken) : []).slice(0, 48),
-      history: Array.isArray(value.history) ? value.history.flatMap((entry) => (
-        validCloudToken(entry?.snapshotId) && parseSyncIndex(entry.index).length > 0
-          ? [{ snapshotId: entry.snapshotId, index: parseSyncIndex(entry.index) }]
-          : []
-      )).slice(0, 8) : [],
+      history: mergeSnapshotHistory(Array.isArray(value.history) ? value.history : []),
       fileId: typeof value.fileId === "string" ? value.fileId : null,
       pendingUpload: validCloudToken(value.pendingUpload?.snapshotId)
         && typeof value.pendingUpload?.fingerprint === "string"

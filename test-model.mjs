@@ -5,7 +5,7 @@ import { EMPTY_NOTE_PROMPTS, EMPTY_NOTE_PROMPT_LANGS, MAX_IMPORT_BYTES, MAX_IMPO
 import { createDriveSync } from "./drive-sync.js";
 import { createBoardSvg, wrapSvgText } from "./svg-export.js";
 import { MAX_WORKSPACE_IMPORT_BOARDS, addImportedWorkspace, applySyncWorkspace, captureRecovery, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceBackup, createWorkspaceSlots, deleteDocument, duplicateDocument, hasRecovery, loadWorkspace, parseImportedWorkspace, parseSyncWorkspace, readRecovery, replaceDocument, restoreLatest, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js";
-import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
+import { cloudSnapshotHeads, createCloudSnapshot, findCommonBaseCandidates, findCommonBaseIndex, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSnapshotHistory, mergeSyncWorkspaces } from "./sync-model.js";
 import { messages, t } from "./i18n.js";
 
 const nodes = [{ id: "a", text: "A", x: 10, y: 20, color: "yellow", width: 340 }, { id: "b", text: "B", x: 30, y: 40, color: "neon" }];
@@ -1470,22 +1470,22 @@ assert.equal(messages.en.storageRecoveryTrimmed, "Some older recovery copies wer
 assert.doesNotMatch(app, /driveSyncErrorCode/);
 assert.doesNotMatch(app, /window\.print|beforeprint|preparePrintView|createBoardPdf|application\/pdf/);
 const serviceWorker = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
-assert.match(html, /<script type="module" src="app\.js\?v=90"><\/script>/);
-assert.match(app, /from "\.\/sync-model\.js\?v=79"/);
-assert.match(app, /from "\.\/drive-sync\.js\?v=89"/);
-assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=79"/);
-assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
+assert.match(html, /<script type="module" src="app\.js\?v=91p1"><\/script>/);
+assert.match(app, /from "\.\/sync-model\.js\?v=91p1"/);
+assert.match(app, /from "\.\/drive-sync\.js\?v=91p1"/);
+assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=91p1"/);
+assert.match(app, /from "\.\/sync-config\.js\?v=91p1"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /const CACHE = "scattered-v90";/);
+assert.match(serviceWorker, /const CACHE = "scattered-v91p1";/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
-assert.match(serviceWorker, /\.\/app\.js\?v=90"/);
+assert.match(serviceWorker, /\.\/app\.js\?v=91p1"/);
 assert.match(serviceWorker, /\.\/note-editor\.js\?v=88"/);
 assert.match(app, /from "\.\/note-editor\.js\?v=88"/);
 assert.match(serviceWorker, /\.\/styles\.css\?v=90"/);
-assert.match(serviceWorker, /\.\/sync-config\.js\?v=68/);
+assert.match(serviceWorker, /\.\/sync-config\.js\?v=91p1/);
 assert.match(serviceWorker, /\.\/workspace\.js/);
-assert.match(serviceWorker, /\.\/sync-model\.js\?v=79/);
-assert.match(serviceWorker, /\.\/drive-sync\.js\?v=89/);
+assert.match(serviceWorker, /\.\/sync-model\.js\?v=91p1/);
+assert.match(serviceWorker, /\.\/drive-sync\.js\?v=91p1/);
 assert.match(serviceWorker, /origin !== self\.location\.origin/);
 assert.match(serviceWorker, /\.\/svg-export\.js/);
 assert.match(serviceWorker, /\.\/i18n\.js/);
@@ -1697,6 +1697,112 @@ assert.deepEqual(findCommonBaseIndex(leftCloud, rightCloud), syncBaseIndex);
 assert.deepEqual(new Set(cloudSnapshotHeads([baseCloud, leftCloud, rightCloud]).map((item) => item.snapshotId)), new Set([leftCloud.snapshotId, rightCloud.snapshotId]));
 const joinedCloud = await createCloudSnapshot(independentMerge.workspace, { deviceId: "one", parents: [leftCloud, rightCloud], createdAt: 4 });
 assert.deepEqual(cloudSnapshotHeads([baseCloud, leftCloud, rightCloud, joinedCloud]).map((item) => item.snapshotId), [joinedCloud.snapshotId]);
+
+// List order, UUID order and wall-clock time are not causal evidence.
+const oldIndex = [{ id: "other", kind: "board", hash: "R0" }];
+const recentIndex = [{ id: "other", kind: "board", hash: "R1" }];
+const oldRecord = { snapshotId: "dormant", index: oldIndex, parents: [] };
+const recentRecord = { snapshotId: "recent", index: recentIndex, parents: ["dormant"] };
+const branch = (id, history = [oldRecord, recentRecord]) => ({
+  snapshotId: id, parents: ["dormant", "recent"], ancestors: [], history,
+});
+for (const reverse of [false, true]) {
+  const left = branch("left"), right = branch("right");
+  if (reverse) { left.parents.reverse(); right.history.reverse(); }
+  assert.deepEqual(findCommonBaseIndex(left, right), recentIndex, "Exclude a proved older common base, irrespective of order");
+  assert.deepEqual(findCommonBaseIndex(right, left), recentIndex, "Swapping branches cannot change the base");
+}
+assert.deepEqual(findCommonBaseIndex(branch("left", [oldRecord]), branch("right", [oldRecord])), [],
+  "A missing recent index must not silently fall back to the dormant index");
+assert.deepEqual(findCommonBaseIndex(branch("left", [oldRecord]), branch("right", [oldRecord]), [recentRecord]), recentIndex,
+  "Already downloaded non-head snapshots can supply missing evidence");
+const commonState = { id: "same", kind: "board", hash: "same" };
+const incomparable = [
+  { snapshotId: "dormant", index: [...oldIndex, commonState], parents: [] },
+  { snapshotId: "recent", index: [...recentIndex, commonState], parents: [] },
+];
+assert.deepEqual(findCommonBaseIndex(branch("left", incomparable), branch("right", incomparable)), [commonState],
+  "Incomparable possible bases allow only per-board consensus");
+const missingParents = [{ snapshotId: "dormant", index: oldIndex }, { snapshotId: "recent", index: recentIndex }];
+assert.deepEqual(findCommonBaseIndex(branch("left", missingParents), branch("right", missingParents)), [],
+  "Legacy history cannot prove which different base is newer");
+const enriched = mergeSnapshotHistory(missingParents, [recentRecord, oldRecord]);
+assert.deepEqual(enriched.find(item => item.snapshotId === "recent").parents, ["dormant"],
+  "A later consistent duplicate enriches the history record rather than being discarded");
+const contradictory = mergeSnapshotHistory([recentRecord], [{ ...recentRecord, parents: [] }], [oldRecord]);
+assert.deepEqual(findCommonBaseIndex(branch("left", contradictory), branch("right", contradictory)), [],
+  "Contradictory parent lists are not unioned into invented proof");
+const repeatedContradiction = mergeSnapshotHistory(JSON.parse(JSON.stringify(contradictory)), [recentRecord]);
+assert.deepEqual(findCommonBaseIndex(branch("left", repeatedContradiction), branch("right", repeatedContradiction)), [],
+  "Serialization and another richer record cannot erase contradictory evidence");
+const cyclic = [recentRecord, { ...oldRecord, parents: ["recent"] }];
+assert.deepEqual(findCommonBaseIndex(branch("left", cyclic), branch("right", cyclic)), [],
+  "Cycles cannot prove a newer base or hang traversal");
+const badIndex = [{ ...recentRecord, index: [...recentIndex, { id: "bad" }] }, oldRecord];
+assert.deepEqual(findCommonBaseIndex(branch("left", badIndex), branch("right", badIndex)), [],
+  "A partly invalid index cannot be used as a complete baseline");
+const clashingIndex = mergeSnapshotHistory([recentRecord], [{ ...recentRecord, index: oldIndex }], [oldRecord]);
+assert.deepEqual(findCommonBaseIndex(branch("left", clashingIndex), branch("right", clashingIndex)), [],
+  "Conflicting hashes for one immutable snapshot cannot select either side as baseline");
+const orderedIndex = mergeSnapshotHistory([{ ...recentRecord, index: [...recentIndex, commonState], parents: ["y", "x"] }],
+  [{ ...recentRecord, index: [commonState, ...recentIndex], parents: ["x", "y", "x"] }]);
+assert.ok(Array.isArray(orderedIndex[0].index));
+assert.deepEqual(orderedIndex[0].parents, ["x", "y"], "Set ordering and duplicate parent IDs are not contradictions");
+const indirect = [oldRecord, { snapshotId: "middle", parents: ["dormant"] }, { ...recentRecord, parents: ["middle"] }];
+assert.deepEqual(findCommonBaseIndex(branch("left", indirect), branch("right", indirect)), recentIndex,
+  "Parent proofs can pass through an intermediate snapshot without an index");
+const clippedHistory = [recentRecord, ...Array.from({ length: 8 }, (_, i) => ({ snapshotId: `filler-${i}`, index: oldIndex }))];
+assert.equal(mergeSnapshotHistory(clippedHistory, [{ ...recentRecord, parents: [] }])[0].parents, null,
+  "Duplicate consistency must be checked before the history limit discards later records");
+assert.deepEqual(JSON.parse(JSON.stringify(leftCloud)).history.find(item => item.snapshotId === leftCloud.snapshotId).parents,
+  [baseCloud.snapshotId], "New cloud histories serialize their own direct parents");
+const priorIds = Array.from({ length: 48 }, (_, i) => `prior-${i}`);
+const warmHistory = mergeSnapshotHistory([{ snapshotId: "warm-base", index: recentIndex, parents: ["prior-0"], ancestors: priorIds }]);
+const warmLeft = { snapshotId: "warm-left", parents: ["warm-base"], ancestors: priorIds, history: warmHistory };
+const warmRight = { ...warmLeft, snapshotId: "warm-right" };
+assert.deepEqual(findCommonBaseIndex(warmLeft, warmRight), recentIndex,
+  "Historical ancestry proves old shared IDs obsolete even after their intermediate records roll out");
+assert.equal(mergeSnapshotHistory(priorIds.map(snapshotId => ({ snapshotId })), warmHistory)[0].snapshotId, "warm-base",
+  "Index-free candidates must not crowd a usable baseline out of bounded history");
+assert.equal(warmHistory[0].ancestors.length, 48);
+const noLatestIndex = [{ snapshotId: "warm-base", ancestors: priorIds }, { snapshotId: "prior-0", index: oldIndex }];
+assert.deepEqual(findCommonBaseIndex({ ...warmLeft, history: noLatestIndex }, { ...warmRight, history: noLatestIndex }), [],
+  "Historical ancestry must not turn missing newest content into permission to fall back");
+const inconsistentAncestry = mergeSnapshotHistory(warmHistory, [{ ...warmHistory[0], ancestors: [] }]);
+assert.equal(inconsistentAncestry[0].ancestors, null);
+assert.deepEqual(findCommonBaseIndex({ ...warmLeft, history: inconsistentAncestry }, { ...warmRight, history: inconsistentAncestry }), [],
+  "Contradictory ancestry cannot make unsupported old candidates disappear");
+assert.equal(mergeSnapshotHistory(inconsistentAncestry, warmHistory)[0].ancestors, null);
+const compactedUnknown = mergeSnapshotHistory([{ snapshotId: "warm-base" }],
+  priorIds.map(snapshotId => ({ snapshotId, index: oldIndex })));
+assert.equal(compactedUnknown.length, 8);
+assert.deepEqual(findCommonBaseIndex({ ...warmLeft, history: compactedUnknown }, { ...warmRight, history: compactedUnknown }), [],
+  "Evicting an index-free history record does not remove its ID from the possible common bases");
+assert.ok(mergeSnapshotHistory([{ snapshotId: "limited", ancestors: priorIds.concat(["outside-window"]) }])[0].ancestors.length <= 48);
+
+// Compare against a complete DAG oracle computed at creation time. This checks
+// criss-cross ancestry and swapped inputs without assuming a single latest base.
+let graphSeed = 0x782a91;
+const graphRandom = (limit) => { graphSeed = (Math.imul(graphSeed, 1664525) + 1013904223) >>> 0; return graphSeed % limit; };
+for (let trial = 0; trial < 100; trial += 1) {
+  const graph = [], ancestry = new Map();
+  for (let i = 0; i < 18; i += 1) {
+    const snapshotId = `graph-${i}`;
+    const parents = i ? [...new Set([`graph-${graphRandom(i)}`, `graph-${graphRandom(i)}`])] : [];
+    ancestry.set(snapshotId, new Set(parents.flatMap(id => [id, ...ancestry.get(id)])));
+    graph.push({ snapshotId, parents, index: [{ id: "canvas", kind: "board", hash: String(graphRandom(4)) }] });
+  }
+  const left = graph[16], right = graph[17];
+  const rightIds = new Set([right.snapshotId, ...ancestry.get(right.snapshotId)]);
+  const common = [left.snapshotId, ...ancestry.get(left.snapshotId)].filter(id => rightIds.has(id));
+  const maximal = common.filter(id => !common.some(other => ancestry.get(other).has(id))).sort();
+  const evidence = JSON.parse(JSON.stringify(graph)).reverse();
+  assert.deepEqual(findCommonBaseCandidates(left, right, evidence).map(item => item.snapshotId), maximal);
+  assert.deepEqual(findCommonBaseCandidates(right, left, evidence.reverse()).map(item => item.snapshotId), maximal);
+  const indices = maximal.map(id => graph.find(item => item.snapshotId === id).index);
+  const consensus = indices.length && indices.every(index => index[0].hash === indices[0][0].hash) ? indices[0] : [];
+  assert.deepEqual(findCommonBaseIndex(left, right, graph), consensus);
+}
 
 const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
 const readmeZh = readFileSync(new URL("./README.zh-CN.md", import.meta.url), "utf8");

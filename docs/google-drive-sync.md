@@ -36,6 +36,12 @@ Cloud snapshots are validated before merging. If any listed Drive snapshot canno
 
 For local testing, keep `http://localhost:4173/` in `APP_URLS`; the production OAuth callback still points to the Worker. Run `npm test` before deployment.
 
+### Isolated sync preview
+
+The fixed test origin is `https://codex-sync-preview.scattered.pages.dev/`. Both `sync-config.js` and the Worker's `APP_URLS` allow only this exact preview origin, not arbitrary Pages previews. The OAuth callback and `drive.appdata` scope stay unchanged.
+
+Use a separate Google test account and synthetic canvases on every test device. **Never connect an account containing production notes to the preview.** Browser storage is separate by origin, but the preview uses the same Drive application-data namespace for a connected account. This preview fixes common-base selection only; concurrent changes to different cards on the same canvas may still create a whole-canvas conflict copy. It is not card-level merging.
+
 ## Security and operating boundary
 
 - The OAuth scope is limited to `https://www.googleapis.com/auth/drive.appdata`.
@@ -58,3 +64,9 @@ Google 账号是工作区的上一级边界。浏览器首次连接账号时，�
 云端快照会先经过验证再参与合并。只要列出的任一 Drive 快照无法读取或解析，同步就会暂停且不会上传覆盖。本地仍可编辑，本地保存失败会另行提示。如果远端删除所需的恢复副本无法保存，同步会在执行删除前中止。支持原生 Web Locks API 的浏览器还会把同一安装中多个标签页的同步依次执行。
 
 部署步骤与上方一致。正式开启前尤其要注意：建议使用独立域名或自定义域名。GitHub Pages 中同一个 `username.github.io` 下的不同项目路径属于同一浏览器 origin，也会共享 `localStorage`；路径本身不能形成安全隔离。
+
+### 独立同步测试版
+
+固定测试地址为 `https://codex-sync-preview.scattered.pages.dev/`。前端 `sync-config.js` 和中转服务的 `APP_URLS` 只开放这一个预览域名，不开放任意 Pages 预览。OAuth 回调地址及 `drive.appdata` 权限范围保持不变。
+
+所有测试设备都应使用同一个专用 Google 测试账号及合成画布，**不能在测试站连接存有正式笔记的账号**。不同域名的浏览器本地存储彼此独立，但同一账号在测试版和正式版使用的是同一份 Drive 应用数据。这一测试版只修复共同基准的选择；两台设备修改同一画布里的不同卡片时，仍可能保留整张画布的冲突副本，尚未实现卡片级合并。

@@ -40,17 +40,52 @@ export function parseSyncIndex(value) {
   });
 }
 
-export function findCommonBaseIndex(left, right) {
-  const rightLineage = new Set(snapshotLineage(right));
-  const history = new Map();
-  [...(left.history || []), ...(right.history || [])].forEach((entry) => {
-    if (typeof entry?.snapshotId !== "string" || !entry.snapshotId || history.has(entry.snapshotId)) return;
-    history.set(entry.snapshotId, parseSyncIndex(entry.index));
-  });
-  return snapshotLineage(left)
-    .filter((id) => rightLineage.has(id))
-    .map((id) => history.get(id))
-    .find(Boolean) || [];
+export function findCommonBaseIndex(left, right, observedSnapshots = []) {
+  const candidates = findCommonBaseCandidates(left, right, observedSnapshots);
+  // A missing latest index is uncertainty, not permission to use an older one.
+  if (!candidates.length || candidates.some(item => !Array.isArray(item.index))) return [];
+  const alternatives = candidates.slice(1).map(item => new Map(item.index.map(state => [state.id, state])));
+  // Multiple maximal common ancestors are possible. Use only the board states
+  // on which ALL candidates agree; other boards retain conflict-copy protection.
+  return candidates[0].index.filter(state => alternatives.every(index => {
+    const other = index.get(state.id);
+    return other && statesEqual(state, other);
+  }));
+}
+
+export function findCommonBaseCandidates(left, right, observedSnapshots = []) {
+  const snapshots = [left, right, ...observedSnapshots];
+  const records = collectHistory(snapshots.flatMap(snapshot => [snapshot, ...(snapshot.history || [])]));
+  // Keep the same bounded ancestry proof after a full device snapshot becomes
+  // history. Direct-parent chains alone break when intermediate records expire.
+  const graph = new Map([...records].map(([id, record]) => [id, {
+    parents: record.parents === null ? null : unique([
+      ...(record.parents || []), ...(record.ancestors || []),
+    ]),
+  }]));
+  const ancestors = (starts) => {
+    const seen = new Set(), pending = [...starts];
+    while (pending.length) {
+      const id = pending.pop();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const parents = graph.get(id)?.parents;
+      if (Array.isArray(parents)) pending.push(...parents);
+    }
+    return seen;
+  };
+  const rightIds = ancestors(snapshotLineage(right));
+  const common = [...ancestors(snapshotLineage(left))].filter(id => rightIds.has(id)).sort();
+  const older = new Set();
+  // Cyclic metadata is not causal proof. Keep all possibilities instead of
+  // pruning both sides of a cycle or trusting paths through corrupt history.
+  if (!historyHasCycle(graph)) {
+    for (const id of common) {
+      const parents = graph.get(id)?.parents;
+      if (Array.isArray(parents)) for (const ancestor of ancestors(parents)) older.add(ancestor);
+    }
+  }
+  return common.filter(id => !older.has(id)).map(snapshotId => records.get(snapshotId) || { snapshotId });
 }
 
 export function snapshotLineage(snapshot) {
@@ -172,10 +207,10 @@ export async function createCloudSnapshot(workspace, options = {}) {
   ]).filter((id) => id !== snapshotId).slice(0, ANCESTOR_LIMIT);
   const currentIndex = await indexSyncWorkspace(workspace);
   const history = mergeHistory([
-    { snapshotId, index: currentIndex },
+    { snapshotId, index: currentIndex, parents, ancestors },
     ...(options.history || []),
     ...parentSnapshots.flatMap((item) => [
-      { snapshotId: item.snapshotId, index: item.index || [] },
+      item,
       ...(item.history || []),
     ]),
   ]);
@@ -264,14 +299,70 @@ function availableTitle(title, titles) {
 }
 
 function mergeHistory(entries) {
-  const seen = new Set();
-  return entries.flatMap((entry) => {
-    if (typeof entry?.snapshotId !== "string" || !entry.snapshotId || seen.has(entry.snapshotId)) return [];
-    const index = parseSyncIndex(entry.index);
-    if (index.length === 0) return [];
-    seen.add(entry.snapshotId);
-    return [{ snapshotId: entry.snapshotId, index }];
-  }).slice(0, HISTORY_LIMIT);
+  // Enrich duplicates before truncating. Old clients omit optional parents;
+  // absence means unknown, whereas [] describes a known root.
+  // Index-free proofs can fill spare slots, but cannot displace usable bases.
+  // Their IDs remain in lineage, so dropping a record never proves it obsolete.
+  return [...collectHistory(entries).values()]
+    .sort((a, b) => Number(Array.isArray(b.index)) - Number(Array.isArray(a.index)))
+    .slice(0, HISTORY_LIMIT);
+}
+
+function collectHistory(entries) {
+  const records = new Map();
+  for (const entry of entries) {
+    if (!validSnapshotId(entry?.snapshotId)) continue;
+    const record = records.get(entry.snapshotId) || { snapshotId: entry.snapshotId };
+    let index;
+    if (entry.index !== undefined) {
+      const parsed = parseSyncIndex(entry.index);
+      index = Array.isArray(entry.index) && parsed.length === entry.index.length
+        ? parsed.sort((a, b) => a.id.localeCompare(b.id)) : null;
+    }
+    const parents = entry.parents === undefined ? undefined
+      : Array.isArray(entry.parents) && entry.parents.every(id => validSnapshotId(id) && id !== entry.snapshotId)
+        ? unique(entry.parents).sort() : null;
+    const ancestors = entry.ancestors === undefined ? undefined
+      : Array.isArray(entry.ancestors) && entry.ancestors.every(id => validSnapshotId(id) && id !== entry.snapshotId)
+        ? unique(entry.ancestors).slice(0, ANCESTOR_LIMIT).sort() : null;
+    for (const [key, value] of [["index", index], ["parents", parents], ["ancestors", ancestors]]) {
+      if (value === undefined) continue;
+      // null is deliberately persistent: contradictory evidence must not become
+      // trustworthy again after serialization or another richer duplicate.
+      if (record[key] === undefined) record[key] = value;
+      else if (JSON.stringify(record[key]) !== JSON.stringify(value)) record[key] = null;
+    }
+    records.set(entry.snapshotId, record);
+  }
+  return records;
+}
+
+function historyHasCycle(records) {
+  const counts = new Map(), children = new Map();
+  for (const [id, record] of records) {
+    const parents = Array.isArray(record.parents) ? record.parents : [];
+    counts.set(id, parents.length);
+    for (const parent of parents) {
+      if (!counts.has(parent)) counts.set(parent, 0);
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(id);
+    }
+  }
+  const ready = [...counts.keys()].filter(id => counts.get(id) === 0);
+  let visited = 0;
+  while (ready.length) {
+    const id = ready.pop(); visited += 1;
+    for (const child of children.get(id) || []) {
+      const count = counts.get(child) - 1;
+      counts.set(child, count);
+      if (count === 0) ready.push(child);
+    }
+  }
+  return visited !== counts.size;
+}
+
+function validSnapshotId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
 }
 
 async function hashBoardContent(board) {

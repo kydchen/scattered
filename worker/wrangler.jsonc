@@ -15,6 +15,6 @@
     { "name": "SHARE_CREATES", "namespace_id": "7101002", "simple": { "limit": 60, "period": 60 } }
   ],
   "vars": {
-    "APP_URLS": "https://scatterednote.space/,https://www.scatterednote.space/,https://scattered.pages.dev/,http://localhost:4173/"
+    "APP_URLS": "https://scatterednote.space/,https://www.scatterednote.space/,https://scattered.pages.dev/,http://localhost:4173/,https://codex-sync-preview.scattered.pages.dev/"
   }
 }
