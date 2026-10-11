@@ -1,4 +1,4 @@
-const CACHE = "scattered-v90";
+const CACHE = "scattered-v90.1";
 const ASSETS = ["./", "./index.html", "./about.html", "./privacy.html", "./styles.css?v=90", "./sharing.css?v=78", "./model.js", "./model.js?v=89", "./workspace.js?v=89", "./sync-model.js?v=79", "./drive-sync.js?v=89", "./sync-config.js?v=68", "./svg-export.js", "./svg-export.js?v=75", "./i18n.js?v=89", "./app.js?v=90", "./note-editor.js?v=88", "./share-ui.js?v=89", "./live-share.js", "./share-model.js", "./share-config.js", "./present.html", "./present.js?v=89", "./manifest.webmanifest", "./icon.svg", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -25,7 +25,10 @@ self.addEventListener("fetch", (event) => {
     await cache.put(event.request, copy);
   }).catch(() => {}));
   event.respondWith((async () => {
-    const cached = await caches.open(CACHE).then(cache => cache.match(event.request)).catch(() => undefined);
+    const stored = await caches.open(CACHE).then(cache => cache.match(event.request)).catch(() => undefined);
+    // Hosts may redirect page.html to /page. Browsers reject a redirected
+    // response for a navigation, so serve the cached page as a fresh response.
+    const cached = stored?.redirected ? new Response(stored.body, stored) : stored;
     if (!cached) return network;
     if (self.navigator.onLine === false) return cached;
     // Radios and captive networks can stay "online" while fetch hangs. Bound

@@ -28,7 +28,7 @@ function worker({ cached = "cached shell", online = true, failCacheWrite = false
   const network = deferred();
   let nextTimer = 0;
   const cache = {
-    match: async () => cached === null ? undefined : new Response(cached),
+    match: async () => cached === null ? undefined : typeof cached === "function" ? cached() : new Response(cached),
     put: async (request, response) => {
       if (failCacheWrite) throw new Error("quota");
       writes.push(await response.text());
@@ -39,6 +39,7 @@ function worker({ cached = "cached shell", online = true, failCacheWrite = false
     caches: { open: async () => cache, match: cache.match },
     fetch: () => network.promise,
     URL,
+    Response,
     setTimeout: (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     clearTimeout: id => timers.delete(id),
   });
@@ -115,6 +116,24 @@ test("cache-write failure does not discard a successful network response", async
   w.network.resolve(new Response("fresh shell"));
   assert.equal(await (await event.response).text(), "fresh shell");
   await Promise.all(event.lifetime);
+});
+
+test("a cached redirected page is served as a non-redirected response", async () => {
+  for (const online of [false, true]) {
+    const w = worker({ online, cached: () => {
+      const response = new Response("viewer page");
+      Object.defineProperty(response, "redirected", { value: true });
+      return response;
+    } });
+    const event = w.request(`${origin}/present.html`);
+    // A navigation's own fetch yields an opaque redirect, which is not ok.
+    if (online) w.network.resolve(new Response(null, { status: 404 }));
+    const response = await event.response;
+    assert.equal(response.redirected, false, "Navigations reject redirected responses (net::ERR_FAILED)");
+    assert.equal(await response.text(), "viewer page");
+    if (!online) w.network.reject(new Error("offline"));
+    await Promise.all(event.lifetime);
+  }
 });
 
 test("cross-origin and non-GET requests are not intercepted", () => {

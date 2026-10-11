@@ -1476,7 +1476,7 @@ assert.match(app, /from "\.\/drive-sync\.js\?v=89"/);
 assert.match(readFileSync(new URL("./drive-sync.js", import.meta.url), "utf8"), /from "\.\/sync-model\.js\?v=79"/);
 assert.match(app, /from "\.\/sync-config\.js\?v=68"/);
 assert.match(app, /classList\.add\("edge-underlay"\)[\s\S]*?group\.append\(hitPath, underlayPath, linePath\)/);
-assert.match(serviceWorker, /const CACHE = "scattered-v90";/);
+assert.match(serviceWorker, /const CACHE = "scattered-v90\.1";/);
 assert.match(serviceWorker, /\.\/svg-export\.js\?v=75/);
 assert.match(serviceWorker, /\.\/app\.js\?v=90"/);
 assert.match(serviceWorker, /\.\/note-editor\.js\?v=88"/);
