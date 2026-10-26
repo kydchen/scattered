@@ -1,8 +1,8 @@
 import { MIN_VIEW_SCALE, applyLassoSelection, blankBoard, boardToMermaidMarkdown, clamp, connectionCurve, copySelectedGraph, createId, emptyNotePrompt, emptyNotePromptLanguage, fitBoundsToViewport, hasDragIntent, minimumRevealDelta, nextArrowState, normalizeBoard, overviewLevel, parseImportedBoard, pasteSelectedGraph, pointInPolygon, rectIntersectsViewport, removeConnectionsForNodes, screenToWorld, shouldDiscardDraft, shouldPinch, shouldResetPointers, toggleArrowsForNodes, toggleConnectionsToTarget } from "./model.js";
 import { createBoardSvg } from "./svg-export.js";
-import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, pendingRecoveryBackup, quarantinePendingRecovery, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=89";
-import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=79";
-import { createDriveSync } from "./drive-sync.js?v=89";
+import { MAX_WORKSPACE_IMPORT_BYTES, addImportedWorkspace, applySyncWorkspace, clearPendingDocument, createDocument, createSyncWorkspace, createWorkspaceSlots, deleteDocument, duplicateDocument, isStorageQuotaError, loadWorkspace, parseCanvasBackup, parseImportedWorkspace, pendingRecoveryBackup, quarantinePendingRecovery, readRecovery, refreshWorkspace, replaceDocument, requestPersistentStorage, restoreRecovery, saveDocument, stagePendingDocument, switchDocument, withWorkspaceLock } from "./workspace.js?v=90.3";
+import { fingerprintSyncWorkspace, isDisposableSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js?v=90.3";
+import { createDriveSync } from "./drive-sync.js?v=90.3";
 import { DRIVE_SYNC_API } from "./sync-config.js?v=68";
 import { applyTranslations, hasMessage, t } from "./i18n.js?v=89";
 import { mountLiveSharing } from "./share-ui.js?v=89";
@@ -171,7 +171,11 @@ const driveSync = createDriveSync({
     if (isStorageQuotaError(error)) markSaveFailure(t("errorStorageFull"));
     else if (error?.code === "state-storage") markSaveFailure(t("errorSyncStorage"));
     else if (error?.syncStage === "apply") markSaveFailure(t("errorSave"));
-    else if (!saveFailureMessage) showToast(t(error?.code === "auth" || error?.code === "account" ? "driveReconnect" : "driveSyncFailed"));
+    // A fast upload failure must not erase the just-saved conflict notice; the cloud control still shows the error.
+    else if (!saveFailureMessage && !(error?.syncStage === "upload" && !["auth", "account"].includes(error?.code)
+      && !toast.hidden && toast.textContent === t("driveConflict"))) {
+      showToast(t(error?.code === "auth" || error?.code === "account" ? "driveReconnect" : "driveSyncFailed"));
+    }
   },
 });
 
@@ -1380,20 +1384,21 @@ function canApplyDriveWorkspace() {
     && edgeLabelEditor.hidden;
 }
 
-async function applyDriveWorkspace(nextWorkspace, expectedFingerprint) {
+async function applyDriveWorkspace(nextWorkspace, expectedFingerprint, movedBoards = new Map()) {
   if (!canApplyDriveWorkspace() || !beginWorkspaceAction()) throw driveBusyError();
   try {
-    const previousActiveId = workspace.activeId;
-    const incomingActive = nextWorkspace.boards.find((item) => item.id === workspace.activeId)?.board || null;
-    const activeWouldChange = !incomingActive || syncBoardContent(incomingActive) !== syncBoardContent(board);
     const applied = await withWorkspaceLock(async (workspaceStorage) => {
       const latest = createSyncWorkspace(workspaceStorage, workspace);
       if (await fingerprintSyncWorkspace(latest) !== expectedFingerprint) throw driveBusyError();
+      const previousActiveId = workspace.activeId;
       const localIds = new Set(latest.boards.map((item) => item.id));
-      const nextBoard = applySyncWorkspace(workspaceStorage, workspace, nextWorkspace);
-      return { nextBoard, fitIncoming: !localIds.has(workspace.activeId) };
+      const nextBoard = applySyncWorkspace(workspaceStorage, workspace, nextWorkspace, Date.now, {
+        activeId: movedBoards.get(previousActiveId),
+      });
+      return { nextBoard, previousActiveId, fitIncoming: !localIds.has(workspace.activeId),
+        activeWouldChange: workspace.activeId !== previousActiveId || syncBoardContent(nextBoard) !== syncBoardContent(board) };
     }, workspaceStorage, reportRecoveryEviction);
-    if (activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming, workspace.activeId === previousActiveId);
+    if (applied.activeWouldChange) replaceBoard(applied.nextBoard, applied.fitIncoming, workspace.activeId === applied.previousActiveId);
     else renderBoardList();
     clearSaveFailure();
     updateRecoveryControl();

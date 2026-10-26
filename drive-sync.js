@@ -1,10 +1,11 @@
-import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js?v=89";
+import { MAX_WORKSPACE_IMPORT_BYTES, parseSyncWorkspace } from "./workspace.js?v=90.3";
 import {
   CLOUD_SNAPSHOT_FORMAT,
   CLOUD_SNAPSHOT_VERSION,
   cloudSnapshotHeads,
   createCloudSnapshot,
   findCommonBaseIndex,
+  findMovedBoards,
   fingerprintSyncWorkspace,
   indexSyncWorkspace,
   isDisposableSyncWorkspace,
@@ -12,7 +13,7 @@ import {
   mergeSyncWorkspaces,
   parseSyncIndex,
   snapshotLineage,
-} from "./sync-model.js?v=79";
+} from "./sync-model.js?v=90.3";
 
 const SESSION_KEY = "scattered-drive-session-v1";
 const DEVICE_KEY = "scattered-drive-device-v1";
@@ -171,7 +172,6 @@ export function createDriveSync(options) {
         setStatus("connected");
         schedule();
       } else setStatus("synced");
-      if (result.conflicts > 0) options.onConflict?.(result.conflicts);
       return true;
     } catch (error) {
       onStorage();
@@ -332,8 +332,17 @@ export function createDriveSync(options) {
         throw busyError();
       }
       syncStage = "apply";
+      const movedBoards = await findMovedBoards(local, nextWorkspace);
       ensureSyncActive(generation);
-      await options.applyWorkspace(nextWorkspace, localFingerprint);
+      await options.applyWorkspace(nextWorkspace, localFingerprint, movedBoards);
+      ensureSyncActive(generation);
+      // Local receipt is the notification boundary, even if the subsequent upload fails.
+      const knownIds = new Set([...local.boards, ...local.tombstones].map(item => item.id));
+      const newCopies = conflicts > 0
+        ? nextWorkspace.boards.filter(item => item.id.startsWith("sync-") && !knownIds.has(item.id)).length
+        : 0;
+      const noticeCount = Math.max(newCopies, movedBoards.size);
+      if (noticeCount) options.onConflict?.(noticeCount);
     }
 
     if (shouldUpload || !ownFile) {

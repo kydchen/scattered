@@ -3,14 +3,60 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { createDriveSync } from "./drive-sync.js";
 import { blankBoard, normalizeBoard } from "./model.js";
-import { cloudSnapshotHeads, createCloudSnapshot, fingerprintSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
-import { parseSyncWorkspace } from "./workspace.js";
+import { cloudSnapshotHeads, createCloudSnapshot, fingerprintSyncWorkspace, indexSyncWorkspace, mergeSyncWorkspaces } from "./sync-model.js";
+import { applySyncWorkspace, createSyncWorkspace, loadWorkspace, parseSyncWorkspace, saveDocument, switchDocument } from "./workspace.js";
+import * as workspaceModel from "./workspace.js";
+
+const appSource = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+const applyDriveSource = appSource.slice(appSource.indexOf("async function applyDriveWorkspace("), appSource.indexOf("\nasync function switchDriveAccount("));
 
 class MemoryStorage {
   constructor(entries = []) { this.values = new Map(entries); }
+  get length() { return this.values.size; }
+  key(index) { return [...this.values.keys()][index] ?? null; }
   getItem(key) { return this.values.get(key) ?? null; }
   setItem(key, value) { this.values.set(key, String(value)); }
   removeItem(key) { this.values.delete(key); }
+}
+
+// Continuation regressions cross real document serialization, not just an in-memory workspace object.
+function persistedDevice(lab, id, initial) {
+  const device = lab.device(id, initial);
+  let clock = 1000;
+  const now = () => clock++;
+  applySyncWorkspace(device.storage, loadWorkspace(device.storage, now).workspace, device.workspace, now);
+  Object.defineProperty(device, "workspace", {
+    get: () => createSyncWorkspace(device.storage, loadWorkspace(device.storage, now).workspace),
+    set: value => applySyncWorkspace(device.storage, loadWorkspace(device.storage, now).workspace, value, now),
+  });
+  const edit = (boardId, change) => {
+    const { workspace } = loadWorkspace(device.storage, now);
+    const { board } = switchDocument(device.storage, workspace, boardId, now);
+    change(board);
+    saveDocument(device.storage, workspace, board, now);
+  };
+  device.edit = (text, boardId = "canvas") => edit(boardId, board => { board.nodes[0].text = text; });
+  device.rename = (title, boardId = "canvas") => edit(boardId, board => { board.title = title; });
+  device.select = boardId => {
+    const { workspace } = loadWorkspace(device.storage, now);
+    switchDocument(device.storage, workspace, boardId, now);
+  };
+  // Run the actual page callback; the harness must not compute or apply its own follow mapping.
+  device.apply = async (incoming, expected, movedBoards) => {
+    await device.beforeApply?.();
+    const loaded = loadWorkspace(device.storage, now);
+    const context = vm.createContext({
+      ...workspaceModel, fingerprintSyncWorkspace, ...loaded, workspaceStorage: device.storage,
+      syncBoardContent: value => { const { view, ...content } = value; return JSON.stringify(content); },
+      canApplyDriveWorkspace: () => device.canApply, beginWorkspaceAction: () => true,
+      driveBusyError: () => Object.assign(new Error("busy"), { code: "busy" }),
+      replaceBoard(value) { context.board = value; }, renderBoardList() {},
+      updateRecoveryControl() {}, clearSaveFailure() {}, endWorkspaceAction() {}, reportRecoveryEviction() {},
+    });
+    await vm.runInContext(`${applyDriveSource}\napplyDriveWorkspace`, context)(incoming, expected, movedBoards);
+    device.visible = context.board;
+  };
+  return device;
 }
 
 function createAccountBinding(initial = null) {
@@ -326,7 +372,7 @@ function syncLab() {
     failNextUpload() { failUpload = true; },
     device(id, initial = seed, storage = sessionStorage(id)) {
       const binding = createAccountBinding();
-      const device = { workspace: structuredClone(initial), conflicts: 0, storage, errors: [], canApply: true, canSync: true, statuses: [], requests: [] };
+      const device = { workspace: structuredClone(initial), conflicts: 0, notices: [], storage, errors: [], canApply: true, canSync: true, statuses: [], requests: [] };
       const options = {
         apiUrl: "https://broker.test",
         storage: device.storage,
@@ -337,12 +383,13 @@ function syncLab() {
         canSync: () => device.canSync,
         canApply: () => device.canApply,
         hasPendingChanges: () => device.pendingChanges,
-        applyWorkspace: async (incoming, expected) => {
+        applyWorkspace: async (incoming, expected, movedBoards) => {
           assert.ok(device.canApply, "Never replace an active editor or gesture");
           assert.equal(await fingerprintSyncWorkspace(device.workspace), expected);
+          if (device.apply) return device.apply(incoming, expected, movedBoards);
           device.workspace = structuredClone(incoming);
         },
-        onConflict: (count) => { device.conflicts += count; },
+        onConflict: (count) => { device.conflicts += count; device.notices.push(count); device.onConflict?.(count); },
         onStatus: (status) => { device.statuses.push(status); },
         onError: (error) => { device.errors.push(error); },
         fetch: async (url, init = {}) => {
@@ -397,7 +444,6 @@ function syncLab() {
 }
 
 // Use the actual app guards, not an always-idle approximation of the UI.
-const appSource = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const ui = {
   storageReady: true, workspaceActionPending: false, boardDirty: false, mode: null, pendingRecoveryError: null,
   selectedIds: new Set(["note"]), selectedEdgeId: "edge", keyboardLinkSourceIds: null,
@@ -815,6 +861,188 @@ assert.equal(writer.workspace.boards.length, 2);
 assert.equal(dormant.workspace.boards.length, 2);
 assert.equal(dormant.conflicts, 1);
 
+// An idle peer repeatedly merges a busy writer; every draft must continue one verified copy.
+for (const scenario of ["edit", "delete", "lost-receipt"]) {
+  const lab = syncLab(), office = persistedDevice(lab, `continuation-office-${scenario}`);
+  const initial = office.workspace;
+  initial.boards.push({ ...structuredClone(initial.boards[0]), id: "other" });
+  office.workspace = initial;
+  const home = persistedDevice(lab, `continuation-home-${scenario}`, boardWorkspace("blank", "Untitled"));
+  try {
+    await office.sync(); await home.sync(); await office.sync();
+    const drafts = Array.from({ length: 12 }, (_, n) => `home draft ${n} 结束123`);
+    const draftHashes = await Promise.all(drafts.map(async text => {
+      const workspace = home.workspace;
+      workspace.boards.find(item => item.id === "canvas").board.nodes[0].text = text;
+      return (await indexSyncWorkspace(workspace)).find(item => item.id === "canvas").hash;
+    }));
+    const minimum = draftHashes.sort()[0];
+    let ordered = false;
+    for (let n = 0; n < 10000; n += 1) {
+      office.edit(`office version ${n}`);
+      if ((await indexSyncWorkspace(office.workspace)).find(item => item.id === "canvas").hash < minimum) { ordered = true; break; }
+    }
+    assert.ok(ordered, "Force the busy writer into a copy for every draft, independent of random snapshot IDs");
+    const officeText = office.workspace.boards.find(item => item.id === "canvas").board.nodes[0].text;
+    if (scenario === "delete") {
+      const deleted = office.workspace;
+      deleted.boards = deleted.boards.filter(item => item.id !== "canvas");
+      deleted.activeId = "other";
+      deleted.tombstones.push({ id: "canvas", deletedAt: 9999 });
+      office.workspace = deleted;
+    }
+    await office.sync();
+    home.canApply = false;
+    let copyId;
+    for (const [n, text] of drafts.entries()) {
+      home.edit(text);
+      if (scenario === "lost-receipt" && n === 5) {
+        home.respond = async (url, init) => {
+          const path = new URL(url).pathname;
+          if (!path.startsWith("/session/")) return null;
+          const id = path.split("/").at(-1);
+          lab.files.set(id, JSON.parse(init.body));
+          lab.versions.set(id, String(Number(lab.versions.get(id) || 0) + 1));
+          home.respond = null;
+          throw new TypeError("Simulated lost upload response");
+        };
+      }
+      await home.sync(false);
+      await office.sync();
+      const copies = office.workspace.boards.filter(item => item.id.startsWith("sync-"));
+      assert.equal(copies.length, 1, `${scenario}: draft ${n} must not create another copy`);
+      copyId ||= copies[0].id;
+      assert.equal(copies[0].id, copyId);
+      assert.equal(copies[0].board.nodes[0].text, text);
+      if (n === 5) { home.restart(); office.restart(); }
+    }
+    home.canApply = true;
+    for (let n = 0; n < 4; n += 1) { await home.sync(); await office.sync(); }
+    assert.equal(home.workspace.activeId, copyId, "The real page callback follows the saved latest draft");
+    assert.equal(home.visible.nodes[0].text, drafts.at(-1));
+    assert.deepEqual(home.notices, [1], "Continuation reports the move once even when the peer already created the copy");
+    for (const peer of [home, office]) {
+      peer.restart();
+      assert.equal(peer.workspace.boards.find(item => item.id === copyId).board.nodes[0].text, drafts.at(-1));
+      if (scenario === "delete") {
+        assert.ok(!peer.workspace.boards.some(item => item.id === "canvas"));
+        assert.ok(peer.workspace.tombstones.some(item => item.id === "canvas"));
+      } else assert.equal(peer.workspace.boards.find(item => item.id === "canvas").board.nodes[0].text, officeText);
+    }
+    assert.equal(await fingerprintSyncWorkspace(home.workspace), await fingerprintSyncWorkspace(office.workspace));
+    const uploads = lab.uploads;
+    for (let n = 0; n < 3; n += 1) { await home.sync(); await office.sync(); }
+    assert.deepEqual(home.notices, [1], "Retry and reload must not repeat the move notice");
+    assert.equal(lab.uploads, uploads, "A settled continuation must not ping-pong uploads");
+    assert.equal(office.errors.length, 0);
+    assert.equal(home.errors.length, scenario === "lost-receipt" ? 1 : 0);
+  } finally { home.stop(); office.stop(); }
+}
+
+for (const scenario of ["twins", "rename"]) {
+  const lab = syncLab(), office = persistedDevice(lab, `preserve-office-${scenario}`);
+  const initial = office.workspace;
+  initial.boards[0].board.title = "甲";
+  initial.boards[0].board.nodes[0].text = "before shared template";
+  if (scenario === "twins") initial.boards.push({ ...structuredClone(initial.boards[0]), id: "beta",
+    board: { ...structuredClone(initial.boards[0].board), title: "乙", nodes: [{ ...initial.boards[0].board.nodes[0], text: "shared template" }] } });
+  office.workspace = initial;
+  const home = persistedDevice(lab, `preserve-home-${scenario}`, boardWorkspace("blank", "Untitled"));
+  try {
+    await office.sync(); await home.sync(); await office.sync();
+    home.edit("shared template");
+    await home.sync();
+    const hash = (await indexSyncWorkspace(home.workspace)).find(item => item.id === "canvas").hash;
+    let ordered = false;
+    for (let n = 0; n < 10000; n += 1) {
+      office.edit(`holder alpha ${n}`);
+      if ((await indexSyncWorkspace(office.workspace)).find(item => item.id === "canvas").hash < hash) { ordered = true; break; }
+    }
+    assert.ok(ordered);
+    if (scenario === "twins") office.edit("holder beta", "beta");
+    await office.sync();
+    const carrier = office.workspace.boards.filter(item => item.id.startsWith("sync-"));
+    assert.equal(carrier.length, 1);
+    assert.equal(carrier[0].board.nodes[0].text, "shared template");
+    home.edit("LATEST-ALPHA-MUST-SURVIVE");
+    if (scenario === "twins") home.edit("LATEST-BETA-MUST-SURVIVE", "beta");
+    else home.rename("USER-RENAMED-TITLE");
+    for (let n = 0; n < 4; n += 1) { await home.sync(); await office.sync(); }
+    for (const peer of [home, office]) {
+      peer.restart();
+      const texts = peer.workspace.boards.map(item => item.board.nodes[0].text);
+      assert.ok(texts.includes("LATEST-ALPHA-MUST-SURVIVE"));
+      if (scenario === "twins") assert.ok(texts.includes("LATEST-BETA-MUST-SURVIVE"));
+      else assert.ok(peer.workspace.boards.some(item => item.board.title === "USER-RENAMED-TITLE"
+        && item.board.nodes[0].text === "LATEST-ALPHA-MUST-SURVIVE"));
+      assert.equal(peer.errors.length, 0, "The old patch dropped content without reporting an error");
+    }
+    assert.equal(await fingerprintSyncWorkspace(home.workspace), await fingerprintSyncWorkspace(office.workspace));
+  } finally { home.stop(); office.stop(); }
+}
+
+for (const scenario of ["one-draft", "office-rename", "home-rename", "switch-before-apply", "stale-before-apply", "save-failure"]) {
+  const lab = syncLab(), office = persistedDevice(lab, `follow-office-${scenario}`);
+  const initial = office.workspace;
+  initial.boards.push({ ...structuredClone(initial.boards[0]), id: "other",
+    board: { ...structuredClone(initial.boards[0].board), title: "Other" } });
+  office.workspace = initial;
+  const home = persistedDevice(lab, `follow-home-${scenario}`, boardWorkspace("blank", "Untitled"));
+  try {
+    await office.sync(); await home.sync(); await office.sync();
+    home.edit("home latest 结束123");
+    if (scenario === "home-rename") home.rename("甲新");
+    if (scenario === "office-rename") office.rename("Office renamed");
+    const sourceHash = (await indexSyncWorkspace(home.workspace)).find(item => item.id === "canvas").hash;
+    let ordered = false;
+    for (let n = 0; n < 10000; n++) {
+      office.edit(`office-${n}`);
+      if ((await indexSyncWorkspace(office.workspace)).find(item => item.id === "canvas").hash < sourceHash) { ordered = true; break; }
+    }
+    assert.ok(ordered);
+    await office.sync();
+    home.canApply = false;
+    await home.sync(false); await office.sync();
+    const copy = office.workspace.boards.find(item => item.id.startsWith("sync-"));
+    assert.ok(copy);
+    home.canApply = true;
+    if (scenario === "switch-before-apply") home.beforeApply = () => { home.beforeApply = null; home.select("other"); };
+    if (scenario === "stale-before-apply") {
+      home.beforeApply = () => { home.beforeApply = null; home.edit("new input before lock"); };
+      await home.sync(false);
+      assert.deepEqual(home.notices, []);
+      assert.equal(home.workspace.activeId, "canvas");
+      assert.equal(home.workspace.boards.find(item => item.id === "canvas").board.nodes[0].text, "new input before lock");
+    }
+    if (scenario === "save-failure") {
+      const setItem = home.storage.setItem.bind(home.storage);
+      home.storage.setItem = (key, value) => {
+        if (key === `scattered-document-v2:${copy.id}`) throw Object.assign(new Error("Access denied"), { name: "SecurityError" });
+        setItem(key, value);
+      };
+      await home.sync(false);
+      assert.deepEqual(home.notices, []);
+      assert.equal(home.workspace.activeId, "canvas");
+      assert.equal(home.workspace.boards.length, 2);
+      home.storage.setItem = setItem;
+    }
+    home.onConflict = () => assert.equal(home.workspace.activeId, scenario === "switch-before-apply" ? "other" : copy.id,
+      "The notice can only run after the active choice and documents have been saved");
+    await home.sync();
+    assert.equal(home.workspace.activeId, scenario === "switch-before-apply" ? "other" : copy.id);
+    assert.equal(home.visible.nodes[0].text, scenario === "switch-before-apply" ? "initial"
+      : scenario === "stale-before-apply" ? "new input before lock" : "home latest 结束123");
+    if (scenario === "home-rename") assert.equal(home.visible.title, "甲新");
+    assert.deepEqual(home.notices, [1]);
+    home.onConflict = null;
+    home.select("other");
+    home.restart();
+    for (let n = 0; n < 3; n++) { await office.sync(); await home.sync(); }
+    assert.equal(home.workspace.activeId, "other", "An already-received copy must not steal the user's later selection");
+    assert.deepEqual(home.notices, [1]);
+  } finally { home.stop(); office.stop(); }
+}
+
 // Genuine simultaneous uploads remain distinct heads until merged.
 const concurrent = syncLab();
 const peers = [concurrent.device("left"), concurrent.device("right"), concurrent.device("third")];
@@ -867,10 +1095,12 @@ await retryA.sync();
 retry.failNextUpload();
 await retryB.sync(false);
 assert.equal(retryB.workspace.boards.length, 2);
+assert.deepEqual(retryB.notices, [1], "Notify after local application, before an upload which can fail");
 retryB.restart();
 await retryB.sync(); await retryA.sync();
 assert.equal(retryB.workspace.boards.length, 2);
 assert.equal(await fingerprintSyncWorkspace(retryA.workspace), await fingerprintSyncWorkspace(retryB.workspace));
+assert.deepEqual(retryB.notices, [1], "A lost upload cannot repeat a locally delivered notice");
 
 // Migration: even with no usable ancestry, legacy copies are retained and reused.
 const legacy = syncLab();

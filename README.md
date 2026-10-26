@@ -8,6 +8,13 @@ Scattered is a minimalist, local-first canvas for freely arranging and connectin
 
 There is no account requirement, template, or forced hierarchy. By default, boards stay in the current browser and remain available offline after the app has been loaded once. On the recommended hosted version, connecting Google Drive once on each device can optionally keep the workspace in sync; each Google account has its own isolated workspace. The [GitHub Pages version](https://kydchen.github.io/scattered/) disables Google sync. Both versions stay local unless you explicitly connect Drive or enable a live presentation link.
 
+## v90.3 update
+
+- Google Drive sync can continue later drafts in an existing conflict copy after verifying its origin and content, avoiding a new canvas for each draft. When your content moves into a copy, Scattered follows it and shows the conflict notice once.
+- Presentation links no longer show a canvas-name tooltip under the pointer. The canvas keeps its accessible name.
+
+Reload Scattered on every open device, especially a computer left running, so all devices use the new sync rules. Existing copies are not automatically removed. Conflicting edits can still require separate canvases; this update does not merge individual notes across devices.
+
 ## Install it like an app
 
 You can use Scattered directly in a browser, but installing the web app gives it its own icon and standalone window without requiring an App Store download.

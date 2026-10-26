@@ -79,6 +79,10 @@ function render(payload) {
   if (next.localName !== "svg") throw new Error("shareInvalid");
   const box = next.getAttribute("viewBox").split(" ").map(Number);
   bounds = { left: box[0], top: box[1], right: box[0] + box[2], bottom: box[1] + box[3] };
+  // The export keeps <title> for files; inline it would follow the pointer as a tooltip.
+  for (const element of next.querySelectorAll("title")) element.remove();
+  next.removeAttribute("aria-labelledby");
+  next.setAttribute("aria-label", payload.board.title);
   next.setAttribute("width", "100%");
   next.setAttribute("height", "100%");
   next.setAttribute("preserveAspectRatio", "none");

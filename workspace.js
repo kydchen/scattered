@@ -334,7 +334,7 @@ export function parseSyncWorkspace(value) {
   return validateSyncWorkspace(candidate);
 }
 
-export function applySyncWorkspace(storage, workspace, value, now = Date.now) {
+export function applySyncWorkspace(storage, workspace, value, now = Date.now, options = {}) {
   const incoming = parseSyncWorkspace(value);
   const current = mergeWorkspace(storage, workspace);
   const tombstones = mergeTombstones(current.tombstones || [], incoming.tombstones || []);
@@ -365,11 +365,14 @@ export function applySyncWorkspace(storage, workspace, value, now = Date.now) {
     targetBoards.push({ id, revision: createId(), updatedAt: now(), board });
   }
   const targetIds = new Set(targetBoards.map((item) => item.id));
-  const activeId = targetIds.has(workspace.activeId)
-    ? workspace.activeId
-    : targetIds.has(incoming.activeId)
-      ? incoming.activeId
-      : targetBoards[0].id;
+  // The caller can follow a verified copy, but never a missing or deleted target.
+  const activeId = targetIds.has(options.activeId)
+    ? options.activeId
+    : targetIds.has(workspace.activeId)
+      ? workspace.activeId
+      : targetIds.has(incoming.activeId)
+        ? incoming.activeId
+        : targetBoards[0].id;
   const nextWorkspace = {
     version: 1,
     ...(current.appliedPending?.length ? { appliedPending: current.appliedPending } : {}),

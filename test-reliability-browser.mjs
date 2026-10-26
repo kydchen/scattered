@@ -158,7 +158,7 @@ async function edit(page, text, finish = true) {
 }
 async function setRecoveryQuota(page) {
   await page.evaluate(async () => {
-    const w = await import("./workspace.js?v=89");
+    const w = await import("./workspace.js?v=90.3");
     const { board } = w.loadWorkspace(localStorage);
     for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
       ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
@@ -376,7 +376,7 @@ try {
       }
       await page.evaluate(() => gestureTest.stage());
       const replayed = await page.evaluate(async () => {
-        const { loadWorkspace } = await import("./workspace.js?v=89");
+        const { loadWorkspace } = await import("./workspace.js?v=90.3");
         // Replay a copy so this assertion cannot repair or overwrite the live storage.
         const values = new Map(Object.entries(localStorage));
         const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)),
@@ -429,7 +429,7 @@ try {
   await check("pending delta: simultaneous startup waits for the native lock and replays a conflict only once", async context => {
     const holder = await seed(context);
     await holder.evaluate(async () => {
-      const w = await import("./workspace.js?v=89");
+      const w = await import("./workspace.js?v=90.3");
       const { workspace, board } = w.loadWorkspace(localStorage);
       const pending = structuredClone(board); pending.nodes[0].text = "Pending edit";
       w.stagePendingDocument(localStorage, workspace, pending, Date.now, { baseBoard: board });
@@ -517,7 +517,7 @@ try {
   await check("pending delta: a newer format is retained across reload, then recovers when readable", async context => {
     const page = await seed(context);
     await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=89"), { workspace, board } = w.loadWorkspace(localStorage);
+      const w = await import("./workspace.js?v=90.3"), { workspace, board } = w.loadWorkspace(localStorage);
       w.stagePendingDocument(localStorage, workspace, { ...board, title: "Newer edits" }, Date.now, { baseBoard: board });
       const key = Object.keys(localStorage).find(k => k.startsWith("scattered-pending"));
       const p = JSON.parse(localStorage.getItem(key)); (p.board || p.delta).version += 1;
@@ -614,7 +614,7 @@ try {
     const page = await seed(context);
     for (const text of ["", "\n", "\n\n", "a\n", "a\n\n", "  spaces  \n\t中文🙂 e\u0301\n", '<img src=x onerror="alert(1)">\n<script>bad()</script>']) {
       await page.evaluate(async text => {
-        const w = await import("./workspace.js?v=89");
+        const w = await import("./workspace.js?v=90.3");
         const { workspace, board } = w.loadWorkspace(localStorage);
         board.nodes[0].text = text;
         w.saveDocument(localStorage, workspace, board);
@@ -1015,7 +1015,7 @@ try {
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
     await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=89");
+      const w = await import("./workspace.js?v=90.3");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
         ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],
@@ -1123,7 +1123,7 @@ try {
       };
     });
     await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=89");
+      const w = await import("./workspace.js?v=90.3");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, board, "delete", () => i);
     });
@@ -1240,14 +1240,18 @@ try {
     await check(`storage quota: persistence respects the ${calls ? "FxiOS" : "Firefox"} user agent across reload`, async context => {
       await context.addInitScript(() => {
         window.persistenceCalls = 0;
+        window.persistenceChecks = 0;
         if (!navigator.storage) return;
-        Object.defineProperty(navigator.storage, "persisted", { configurable: true, value: async () => false });
+        Object.defineProperty(navigator.storage, "persisted", { configurable: true, value: async () => { window.persistenceChecks++; return false; } });
         Object.defineProperty(navigator.storage, "persist", { configurable: true, value: async () => { window.persistenceCalls++; return false; } });
       });
       const page = await seed(context);
+      // The persistence request is asynchronous and is not part of painting the first note.
+      await page.waitForFunction(checks => window.persistenceChecks >= checks, calls ? 2 : 1);
       assert.equal(await page.evaluate(() => window.persistenceCalls), calls);
       await page.reload();
       await page.locator('.node[data-id="a"]').waitFor();
+      await page.waitForFunction(checks => window.persistenceChecks >= checks, calls ? 2 : 1);
       assert.equal(await page.evaluate(() => window.persistenceCalls), calls);
     }, { userAgent });
   }
@@ -1257,7 +1261,7 @@ try {
     await page.locator('.node[data-id="a"]').dblclick();
     await settleReveal(page);
     const filled = await page.evaluate(async () => {
-      const w = await import("./workspace.js?v=89");
+      const w = await import("./workspace.js?v=90.3");
       const { board } = w.loadWorkspace(localStorage);
       for (let i = 1; i <= 3; i++) w.captureRecovery(localStorage, `old-${i}`, {
         ...board, nodes: [{ ...board.nodes[0], text: String(i).repeat(4000) }],

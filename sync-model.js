@@ -80,11 +80,26 @@ export async function mergeSyncWorkspaces(local, remote, baseIndex = []) {
   const copies = [];
   let conflicts = 0;
 
+  const continued = new Map();
+  for (const { id, holder, source, target, replaceActive } of await findCopyContinuations(localStates, remoteStates, baseStates)) {
+    const item = clone(source.item);
+    item.id = target.id;
+    item.board.title = target.item.board.title;
+    item.revision = await continuationRevision(id, target.id, source.hash);
+    continued.set(id, holder);
+    continued.set(target.id, { kind: "board", id: target.id, item });
+    if (replaceActive) activeReplacements.set(id, target.id);
+  }
+
   for (const id of ids) {
     const localState = localStates.get(id) || absentState(id);
     const remoteState = remoteStates.get(id) || absentState(id);
     const baseState = baseStates.get(id) || absentState(id);
 
+    if (continued.has(id)) {
+      appendState(continued.get(id), localState, boards, tombstones, titles);
+      continue;
+    }
     if (statesEqual(localState, remoteState)) {
       appendState(localState, localState, boards, tombstones, titles);
       continue;
@@ -232,9 +247,76 @@ function newerDeletion(left, right) {
   return (Number(left.deletedAt) || 0) >= (Number(right.deletedAt) || 0) ? left : right;
 }
 
+async function findCopyContinuations(localStates, remoteStates, baseStates) {
+  const routes = [];
+  const claims = new Map();
+  for (const [id, base] of baseStates) {
+    const local = localStates.get(id), remote = remoteStates.get(id);
+    if (base.kind !== "board" || ![local, remote].every(state => ["board", "deleted"].includes(state?.kind))
+      || statesEqual(local, remote) || statesEqual(local, base) || statesEqual(remote, base)) continue;
+    const candidates = [];
+    for (const [holderStates, sourceStates] of [[localStates, remoteStates], [remoteStates, localStates]]) {
+      const source = sourceStates.get(id);
+      if (source.kind !== "board") continue;
+      for (const target of holderStates.values()) {
+        if (target.kind !== "board" || target.id === id
+          || baseStates.has(target.id) || sourceStates.has(target.id)) continue;
+        if (!await isVerifiedCopy(target.item, id, base.hash, source.item.board.title)) continue;
+        candidates.push({ id, holder: holderStates.get(id), source, target, replaceActive: sourceStates === localStates });
+      }
+    }
+    if (candidates.length !== 1) continue;
+    const route = candidates[0];
+    routes.push(route);
+    claims.set(route.target.id, (claims.get(route.target.id) || 0) + 1);
+  }
+  // Reject all competing claims, including short-ID collisions, rather than let map order discard a writer.
+  return routes.filter(route => claims.get(route.target.id) === 1);
+}
+
+export async function findMovedBoards(local, incoming) {
+  const knownIds = new Set([...local.boards, ...local.tombstones, ...incoming.tombstones].map(item => item.id));
+  const fresh = incoming.boards.filter(item => item.id.startsWith("sync-") && !knownIds.has(item.id));
+  const moved = new Map();
+  if (!fresh.length) return moved;
+  const incomingById = new Map(incoming.boards.map(item => [item.id, item]));
+  const claims = new Map();
+  for (const item of local.boards) {
+    const hash = await hashBoardContent(item.board);
+    const kept = incomingById.get(item.id);
+    if (kept && await hashBoardContent(kept.board) === hash) continue;
+    const matches = [];
+    for (const copy of fresh) {
+      if (await isVerifiedCopy(copy, item.id, hash, item.board.title)) matches.push(copy.id);
+    }
+    if (matches.length !== 1) continue;
+    moved.set(item.id, matches[0]);
+    claims.set(matches[0], (claims.get(matches[0]) || 0) + 1);
+  }
+  for (const [id, copyId] of moved) if (claims.get(copyId) > 1) moved.delete(id);
+  return moved;
+}
+
+async function isVerifiedCopy(copy, originalId, hash, title) {
+  const bound = copy.revision.startsWith("sync-cont-")
+    ? copy.revision === await continuationRevision(originalId, copy.id, hash)
+    : new RegExp(`^${conflictCopyId(originalId, hash)}(?:-(?:[2-9]|[1-9][0-9]+))?$`).test(copy.id);
+  // Provenance alone is insufficient: compare full content using only the source's title.
+  return bound && await hashBoardContent({ ...copy.board, title }) === hash;
+}
+
+function conflictCopyId(originalId, hash) {
+  return `sync-${stableHash(`${originalId}:${hash}`)}`;
+}
+
+async function continuationRevision(originalId, copyId, sourceHash) {
+  // Revisions survive storage/cloud round trips; bind each continued draft to both IDs and its full source hash.
+  return `sync-cont-${await hashText(JSON.stringify([originalId, copyId, sourceHash]))}`;
+}
+
 async function conflictCopy(item, hash, originalId, titles, usedIds, preserved) {
   const copy = clone(item);
-  const baseId = `sync-${stableHash(`${originalId}:${hash}`)}`;
+  const baseId = conflictCopyId(originalId, hash);
   copy.id = baseId;
   let suffix = 2;
   while (usedIds.has(copy.id)) {

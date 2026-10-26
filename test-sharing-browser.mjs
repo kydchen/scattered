@@ -147,6 +147,8 @@ try {
   await viewer.goto(url);
   await viewer.waitForFunction(() => document.querySelector("#presentation-title").textContent === "Seminar presentation");
   assert.equal(await viewer.locator("[title]").count(), 0, "Viewer controls and heading do not display hover text");
+  assert.equal(await viewer.locator("#presentation title").count(), 0, "An SVG <title> would follow the pointer as a tooltip");
+  assert.equal(await viewer.locator("#presentation svg").getAttribute("aria-label"), "Seminar presentation", "The canvas keeps an accessible name");
   const localBefore = await viewer.evaluate(() => JSON.stringify(localStorage));
   assert.equal(localBefore, "{}", "Viewer must not initialize a local workspace");
   assert.equal(await viewer.locator("textarea, [contenteditable], #menu-button, #drive-sync-button, img").count(), 0);
