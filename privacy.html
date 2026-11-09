@@ -25,15 +25,20 @@
   <body>
     <main>
       <h1>Privacy / 隐私</h1>
-      <p class="updated">Last updated: September 7, 2026 / 最后更新：2026 年 9 月 7 日</p>
+      <p class="updated">Last updated: November 5, 2026 / 最后更新：2026 年 11 月 5 日</p>
       <h2>Local data / 本地数据</h2>
-      <p>Boards, recovery copies, preferences, and account-specific local workspaces are stored in your browser. Scattered does not require an account. Clearing browser or site data may remove this local data, so export important boards as JSON.</p>
-      <p lang="zh-Hans">画布、恢复副本、偏好设置及按账号隔离的本地工作区保存在浏览器中。Scattered 无需账户。清除浏览器或网站数据可能删除这些内容，请将重要画布导出为 JSON。</p>
+      <p>Boards, recovery copies, preferences, and account-specific local workspaces are stored in your browser or locally in the iPhone and iPad app. Scattered does not require an account. Clearing browser or site data may remove this local data, so export important boards as JSON.</p>
+      <p lang="zh-Hans">画布、恢复副本、偏好设置及按账号隔离的工作区保存在浏览器或 iPhone、iPad App 本机。Scattered 无需账户。清除浏览器或网站数据可能删除这些内容，请将重要画布导出为 JSON。</p>
       <h2>Optional Google Drive sync / 可选的 Google Drive 同步</h2>
-      <p>If you explicitly connect Google Drive, Scattered requests only the <code>drive.appdata</code> scope and writes versioned workspace snapshots to the hidden app-data folder in your own Drive. The browser sends canvas content directly to Google Drive. Cloudflare Worker OAuth endpoints only exchange credentials and do not receive workspace content.</p>
+      <p>If you explicitly connect Google Drive, Scattered uses the <code>drive.appdata</code> file permission and writes versioned workspace snapshots to the hidden app-data folder in your own Drive. The browser sends canvas content directly to Google Drive. Cloudflare Worker OAuth endpoints only exchange credentials and do not receive workspace content.</p>
       <p lang="zh-Hans">只有在你主动连接 Google Drive 后，Scattered 才会申请 <code>drive.appdata</code> 权限，并把版本化工作区快照写入你自己 Drive 的隐藏应用数据目录。画布内容由浏览器直接发送给 Google Drive，Cloudflare Worker 的 OAuth 接口仅交换凭据，不接收工作区内容。</p>
       <p>Disconnecting removes the credential from this browser but does not delete local boards or existing Drive app data. You can revoke access and remove app data through your Google Account and Google Drive settings.</p>
       <p lang="zh-Hans">断开连接会从当前浏览器删除凭据，但不会删除本地画布或 Drive 中已有的应用数据。你可以在 Google 账号及 Google Drive 设置中撤销授权并删除应用数据。</p>
+      <p>On iPhone and iPad, Google handles sign-in in a system window. The app uses your Google account information to identify your workspace and show your email. Sign-in credentials stay in the device keychain. The app exchanges canvases directly with Google Drive.</p>
+      <p lang="zh-Hans">在 iPhone 和 iPad 上，Google 登录在系统窗口中完成。App 用 Google 账号信息识别画布并显示你的邮箱。登录凭据保存在设备钥匙串，画布直接与 Google Drive 同步。</p>
+      <h2>Optional iCloud sync on iPhone and iPad / iPhone 和 iPad 可选的 iCloud 同步</h2>
+      <p>If you choose iCloud, the app stores workspace snapshots in your Apple Account’s private CloudKit database. This device syncs with one service at a time. Switching services opens that account’s canvases. You can switch back to see your previous canvases.</p>
+      <p lang="zh-Hans">选择 iCloud 后，App 将工作区快照存入你的 Apple 账号的私有 CloudKit 数据库。每台设备一次使用一种同步服务。切换后会打开对应账号的画布，切回即可查看之前的画布。</p>
       <h2>Optional live presentation links / 可选的实时展示链接</h2>
       <p>Only after you enable sharing, the title, notes, positions, colors, and connections of that canvas are sent to Cloudflare and stored in D1. Other canvases and Google credentials are not included. Anyone holding the unlisted link can view, forward, or save its contents without signing in. This is read-only sharing, not access-controlled confidential storage.</p>
       <p lang="zh-Hans">仅在主动开启分享后，当前画布的标题、卡片内容、位置、颜色和连线才会发送到 Cloudflare 并保存在 D1 中，不包含其他画布或 Google 凭据。链接不公开列出，但任何拿到链接的人都能免登录查看、转发或保存内容。只读分享不等于有身份权限控制的保密存储。</p>
